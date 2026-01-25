@@ -1,0 +1,7 @@
+{
+  "name": "TeamSync Pro - Smart Scheduling & Attendance",
+  "description": "A professional HR management system featuring AI-powered shift scheduling and secure WiFi-verified check-ins for corporate environments.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
