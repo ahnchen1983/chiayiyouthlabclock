@@ -4,10 +4,16 @@ export enum UserRole {
   EMPLOYEE = 'EMPLOYEE'
 }
 
+export enum EmployeeType {
+  FULL_TIME = 'Full-Time',
+  PART_TIME = 'Part-Time'
+}
+
 export interface User {
   id: string;
   name: string;
   role: UserRole;
+  employeeType: EmployeeType;
   email: string;
 }
 
@@ -18,7 +24,7 @@ export interface Shift {
   date: string; // ISO format YYYY-MM-DD
   startTime: string; // HH:mm
   endTime: string; // HH:mm
-  type: 'Morning' | 'Afternoon' | 'Night';
+  type: string; // Flexible type string
 }
 
 export interface AttendanceRecord {

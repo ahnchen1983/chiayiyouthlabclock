@@ -2,58 +2,41 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { User, UserRole, Shift, AttendanceRecord, NetworkInfo } from './types';
 import { MOCK_USERS, TRUSTED_IP_PREFIX, COMPANY_WIFI_NAME } from './constants';
+import { useStore } from './contexts/StoreContext';
 import Dashboard from './components/Dashboard';
 import AdminPanel from './components/AdminPanel';
 import ClockInPanel from './components/ClockInPanel';
-import { 
-  LayoutDashboard, 
-  CalendarCheck, 
-  Settings, 
-  LogOut, 
-  ShieldCheck, 
-  Network 
+import ScheduleCalendar from './components/ScheduleCalendar';
+import {
+  LayoutDashboard,
+  CalendarCheck,
+  Settings,
+  LogOut,
+  ShieldCheck,
+  Network,
+  Calendar
 } from 'lucide-react';
 
 const App: React.FC = () => {
-  const [currentUser, setCurrentUser] = useState<User>(MOCK_USERS[1]); // Default to Employee for demo
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'attendance' | 'admin'>('dashboard');
-  const [shifts, setShifts] = useState<Shift[]>([]);
-  const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
+  // Initialize from store users or fallback to MOCK[0] if store not ready (though store is sync)
+  // We'll trust store always has something because of initialization logic.
+  const [currentUser, setCurrentUser] = useState<User>(MOCK_USERS[0]);
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'attendance' | 'calendar' | 'admin'>('dashboard');
+  const { users, shifts, attendance, setShifts, clockIn } = useStore();
+
+  // Note: currentUser is initialized from the FIRST user in the store.
+  // In a real app, this would be a login process.
+  // We use useEffect to sync currentUser if users in store change (e.g. edited).
+  useEffect(() => {
+    const found = users.find(u => u.id === currentUser.id);
+    if (found) setCurrentUser(found);
+  }, [users, currentUser.id]);
   const [networkStatus, setNetworkStatus] = useState<NetworkInfo>({
     isInternal: false,
     publicIp: '123.45.67.89'
   });
 
-  // Load mock data
-  useEffect(() => {
-    const savedShifts = localStorage.getItem('shifts');
-    if (savedShifts) {
-      setShifts(JSON.parse(savedShifts));
-    } else {
-      const initialShifts: Shift[] = [
-        { id: 's1', userId: '2', userName: 'John Doe', date: new Date().toISOString().split('T')[0], startTime: '08:00', endTime: '16:00', type: 'Morning' },
-        { id: 's2', userId: '3', userName: 'Jane Smith', date: new Date().toISOString().split('T')[0], startTime: '14:00', endTime: '22:00', type: 'Afternoon' },
-      ];
-      setShifts(initialShifts);
-      localStorage.setItem('shifts', JSON.stringify(initialShifts));
-    }
 
-    const savedAttendance = localStorage.getItem('attendance');
-    if (savedAttendance) {
-      setAttendance(JSON.parse(savedAttendance));
-    }
-  }, []);
-
-  const handleUpdateShifts = (newShifts: Shift[]) => {
-    setShifts(newShifts);
-    localStorage.setItem('shifts', JSON.stringify(newShifts));
-  };
-
-  const handleClockIn = (record: AttendanceRecord) => {
-    const newAttendance = [...attendance, record];
-    setAttendance(newAttendance);
-    localStorage.setItem('attendance', JSON.stringify(newAttendance));
-  };
 
   const toggleNetwork = () => {
     setNetworkStatus(prev => ({
@@ -71,31 +54,38 @@ const App: React.FC = () => {
           <div className="bg-indigo-500 p-2 rounded-lg">
             <ShieldCheck className="w-6 h-6" />
           </div>
-          <h1 className="text-xl font-bold tracking-tight">TeamSync Pro</h1>
+          <h1 className="text-xl font-bold tracking-tight">TeamSync Pro 團隊同步</h1>
         </div>
 
         <div className="flex-1 space-y-2">
-          <button 
+          <button
             onClick={() => setActiveTab('dashboard')}
             className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl transition ${activeTab === 'dashboard' ? 'bg-indigo-700 shadow-lg' : 'hover:bg-indigo-800'}`}
           >
             <LayoutDashboard className="w-5 h-5" />
-            <span className="font-medium">Dashboard</span>
+            <span className="font-medium">儀表板</span>
           </button>
-          <button 
+          <button
             onClick={() => setActiveTab('attendance')}
             className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl transition ${activeTab === 'attendance' ? 'bg-indigo-700 shadow-lg' : 'hover:bg-indigo-800'}`}
           >
             <CalendarCheck className="w-5 h-5" />
-            <span className="font-medium">Attendance</span>
+            <span className="font-medium">出勤打卡</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('calendar')}
+            className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl transition ${activeTab === 'calendar' ? 'bg-indigo-700 shadow-lg' : 'hover:bg-indigo-800'}`}
+          >
+            <Calendar className="w-5 h-5" />
+            <span className="font-medium">班表</span>
           </button>
           {currentUser.role === UserRole.ADMIN && (
-            <button 
+            <button
               onClick={() => setActiveTab('admin')}
               className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl transition ${activeTab === 'admin' ? 'bg-indigo-700 shadow-lg' : 'hover:bg-indigo-800'}`}
             >
               <Settings className="w-5 h-5" />
-              <span className="font-medium">Admin Panel</span>
+              <span className="font-medium">管理後台</span>
             </button>
           )}
         </div>
@@ -103,25 +93,27 @@ const App: React.FC = () => {
         <div className="pt-4 border-t border-indigo-800 space-y-4">
           <div className="px-4 py-2 bg-indigo-800/50 rounded-lg text-xs">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-indigo-300">Network Verification</span>
+              <span className="text-indigo-300">網路驗證</span>
               <Network className={`w-4 h-4 ${networkStatus.isInternal ? 'text-green-400' : 'text-red-400'}`} />
             </div>
             <p className="font-mono truncate">{networkStatus.publicIp}</p>
-            <button 
+            <button
               onClick={toggleNetwork}
               className="mt-2 text-indigo-200 hover:text-white underline"
             >
-              Simulate {networkStatus.isInternal ? 'External' : 'Office'} WiFi
+              模擬 {networkStatus.isInternal ? '外部' : '辦公室'} 網路
             </button>
           </div>
-          
+
           <div className="flex items-center space-x-3 px-4">
             <div className="w-10 h-10 rounded-full bg-indigo-500 flex items-center justify-center font-bold">
               {currentUser.name.charAt(0)}
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-semibold truncate">{currentUser.name}</p>
-              <p className="text-xs text-indigo-300 truncate">{currentUser.role}</p>
+              <p className="text-xs text-indigo-300 truncate">
+                {currentUser.role === 'ADMIN' ? '管理員' : '員工'}
+              </p>
             </div>
             <button className="text-indigo-400 hover:text-white">
               <LogOut className="w-5 h-5" />
@@ -134,38 +126,45 @@ const App: React.FC = () => {
       <main className="flex-1 p-4 md:p-8 overflow-y-auto">
         <header className="mb-8 flex justify-between items-center">
           <div>
-            <h2 className="text-2xl font-bold text-slate-800 capitalize">{activeTab}</h2>
-            <p className="text-slate-500">Welcome back, {currentUser.name}</p>
+            <h2 className="text-2xl font-bold text-slate-800 capitalize">
+              {activeTab === 'dashboard' ? '儀表板' :
+                activeTab === 'attendance' ? '出勤打卡' :
+                  activeTab === 'calendar' ? '班表' : '管理後台'}
+            </h2>
+            <p className="text-slate-500">歡迎回來，{currentUser.name}</p>
           </div>
           <div className="hidden md:block">
             <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex items-center space-x-2">
               <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-              <span className="text-sm font-medium text-slate-600">Office Systems Active</span>
+              <span className="text-sm font-medium text-slate-600">辦公室系統運作中</span>
             </div>
           </div>
         </header>
 
         {activeTab === 'dashboard' && (
-          <Dashboard 
-            shifts={shifts.filter(s => s.userId === currentUser.id)} 
+          <Dashboard
+            shifts={shifts.filter(s => s.userId === currentUser.id)}
             attendance={attendance.filter(a => a.userId === currentUser.id)}
           />
         )}
         {activeTab === 'attendance' && (
-          <ClockInPanel 
+          <ClockInPanel
             currentUser={currentUser}
             networkStatus={networkStatus}
-            onClockIn={handleClockIn}
+            onClockIn={clockIn}
             currentAttendance={attendance.find(a => a.userId === currentUser.id && a.date === new Date().toISOString().split('T')[0])}
           />
         )}
         {activeTab === 'admin' && currentUser.role === UserRole.ADMIN && (
-          <AdminPanel 
-            shifts={shifts} 
-            users={MOCK_USERS} 
-            onUpdateShifts={handleUpdateShifts}
+          <AdminPanel
+            shifts={shifts}
+            users={users}
+            onUpdateShifts={setShifts}
             attendance={attendance}
           />
+        )}
+        {activeTab === 'calendar' && (
+          <ScheduleCalendar shifts={shifts} />
         )}
       </main>
     </div>
