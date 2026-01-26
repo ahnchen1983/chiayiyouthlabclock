@@ -1,0 +1,7 @@
+{
+  "name": "HR & Scheduling System",
+  "description": "An HR management system for employee scheduling, clock-in/out, and attendance tracking for 嘉義市有事青年實驗室, using Google Sheets as a backend.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
