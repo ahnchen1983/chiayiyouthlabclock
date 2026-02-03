@@ -1,14 +1,19 @@
 
-import { 
-    User, 
-    UserRole, 
-    ClockStatus, 
-    ScheduleEvent, 
-    ClockRecord, 
-    LeaveRequest, 
-    LeaveStatus, 
+import {
+    User,
+    UserRole,
+    ClockStatus,
+    ScheduleEvent,
+    ClockRecord,
+    LeaveRequest,
+    LeaveStatus,
     LeaveType,
     PartTimeHourInfo,
+    Employee,
+    EmployeeStatus,
+    TodayAttendanceComparison,
+    PendingItem,
+    DashboardStats,
 } from '../types';
 
 // This is a mock implementation of the Google Apps Script API.
@@ -21,6 +26,14 @@ const mockUsers: User[] = [
     { id: 'EMP003', name: '張小美', role: UserRole.Employee, position: '兼職人員' },
     { id: 'EMP004', name: '陳大文', role: UserRole.Employee, position: '兼職人員' },
     { id: 'EMP005', name: '林小芬', role: UserRole.Employee, position: '兼職人員' },
+];
+
+let mockEmployees: Employee[] = [
+    { id: 'EMP001', name: '王小明', phone: '0912-345-678', email: 'wang@example.com', hourlyRate: 0, hireDate: '2023-01-15', status: '在職' as EmployeeStatus, position: '專責人員', role: UserRole.Admin },
+    { id: 'EMP002', name: '李小華', phone: '0923-456-789', email: 'lee@example.com', hourlyRate: 0, hireDate: '2023-02-01', status: '在職' as EmployeeStatus, position: '專責人員', role: UserRole.Admin },
+    { id: 'EMP003', name: '張小美', phone: '0934-567-890', email: 'chang@example.com', hourlyRate: 183, hireDate: '2023-06-01', status: '在職' as EmployeeStatus, position: '兼職人員', role: UserRole.Employee },
+    { id: 'EMP004', name: '陳大文', phone: '0945-678-901', email: 'chen@example.com', hourlyRate: 183, hireDate: '2023-07-15', status: '在職' as EmployeeStatus, position: '兼職人員', role: UserRole.Employee },
+    { id: 'EMP005', name: '林小芬', phone: '0956-789-012', email: 'lin@example.com', hourlyRate: 183, hireDate: '2024-01-01', status: '在職' as EmployeeStatus, position: '兼職人員', role: UserRole.Employee },
 ];
 
 let mockClockRecords: ClockRecord[] = [
@@ -199,14 +212,95 @@ export const apiSubmitLeaveRequest = (request: Omit<LeaveRequest, 'id' | 'reques
     });
 };
 
-export const apiGetDashboardStats = (): Promise<{ todayClockedIn: number, monthlyTotalHours: number, pendingLeaves: number, hourWarnings: number }> => {
+export const apiGetDashboardStats = (): Promise<DashboardStats> => {
     return new Promise(resolve => {
         setTimeout(() => {
+            const today = new Date().toISOString().slice(0, 10);
+            const dayOfWeek = new Date().getDay();
+            const todaySchedule = mockSchedules[dayOfWeek];
+
+            // 計算今日排班人員
+            const scheduledStaff: string[] = [];
+            if (todaySchedule.staffA) scheduledStaff.push(todaySchedule.staffA);
+            if (todaySchedule.staffB) scheduledStaff.push(todaySchedule.staffB);
+            scheduledStaff.push(...todaySchedule.partTime);
+
+            // 今日打卡紀錄
+            const todayRecords = mockClockRecords.filter(r => r.date === today);
+
+            // 建立今日出勤對照表
+            const todayAttendance: TodayAttendanceComparison[] = mockUsers.map(user => {
+                const isScheduled = scheduledStaff.includes(user.name);
+                const record = todayRecords.find(r => r.empId === user.id);
+                const leaveToday = mockLeaveRequests.find(
+                    lr => lr.empId === user.id &&
+                    lr.status === LeaveStatus.Approved &&
+                    lr.startDate.slice(0, 10) <= today &&
+                    lr.endDate.slice(0, 10) >= today
+                );
+
+                let status: TodayAttendanceComparison['status'] = '未排班';
+                if (leaveToday) {
+                    status = '休假';
+                } else if (isScheduled) {
+                    if (record?.clockInTime) {
+                        status = record.status === '遲到' ? '遲到' : (record.status === '早退' ? '早退' : '已到');
+                    } else {
+                        status = '未到';
+                    }
+                }
+
+                return {
+                    empId: user.id,
+                    name: user.name,
+                    position: user.position,
+                    scheduledShift: isScheduled ? todaySchedule.shiftTime : null,
+                    clockInTime: record?.clockInTime || null,
+                    clockOutTime: record?.clockOutTime || null,
+                    status
+                };
+            });
+
+            // 待處理事項
+            const pendingItems: PendingItem[] = [];
+
+            // 待審核請假
+            mockLeaveRequests.filter(r => r.status === LeaveStatus.Pending).forEach(lr => {
+                pendingItems.push({
+                    id: lr.id,
+                    type: '請假審核',
+                    title: `${lr.name} 申請${lr.leaveType}`,
+                    description: `${lr.startDate.slice(0, 10)} ~ ${lr.endDate.slice(0, 10)}`,
+                    date: lr.requestDate,
+                    priority: 'high'
+                });
+            });
+
+            // 時數警示（接近上限的兼職人員）
+            const partTimers = mockUsers.filter(u => u.position === '兼職人員');
+            partTimers.forEach(pt => {
+                const scheduledHours = Math.random() * 60 + 10;
+                const remainingHours = 80 - scheduledHours;
+                if (remainingHours <= 10) {
+                    pendingItems.push({
+                        id: `WARN-${pt.id}`,
+                        type: '時數警示',
+                        title: `${pt.name} 時數接近上限`,
+                        description: `本月已排 ${scheduledHours.toFixed(1)} 小時，剩餘 ${remainingHours.toFixed(1)} 小時`,
+                        date: today,
+                        priority: 'medium'
+                    });
+                }
+            });
+
             resolve({
-                todayClockedIn: 2,
+                todayClockedIn: todayRecords.length,
+                todayScheduled: scheduledStaff.length,
                 monthlyTotalHours: 320.5,
                 pendingLeaves: mockLeaveRequests.filter(r => r.status === LeaveStatus.Pending).length,
-                hourWarnings: 1
+                hourWarnings: 1,
+                todayAttendance,
+                pendingItems
             });
         }, MOCK_DELAY);
     });
@@ -297,6 +391,175 @@ export const apiGetAllPartTimeHours = (yearMonth: string): Promise<PartTimeHourI
                     status: remainingHours <= 10 ? '接近上限' : '正常'
                 }
             }));
+        }, MOCK_DELAY);
+    });
+};
+
+// ==================== 員工管理 CRUD API ====================
+
+export const apiGetAllEmployeesDetail = (): Promise<Employee[]> => {
+    return new Promise(resolve => {
+        setTimeout(() => {
+            resolve([...mockEmployees]);
+        }, MOCK_DELAY);
+    });
+};
+
+export const apiGetEmployee = (empId: string): Promise<Employee | null> => {
+    return new Promise(resolve => {
+        setTimeout(() => {
+            const employee = mockEmployees.find(e => e.id === empId);
+            resolve(employee || null);
+        }, MOCK_DELAY);
+    });
+};
+
+export const apiCreateEmployee = (employee: Omit<Employee, 'id'>): Promise<Employee> => {
+    return new Promise(resolve => {
+        setTimeout(() => {
+            const newId = `EMP${String(mockEmployees.length + 1).padStart(3, '0')}`;
+            const newEmployee: Employee = { ...employee, id: newId };
+            mockEmployees.push(newEmployee);
+            // 同步更新 mockUsers
+            mockUsers.push({
+                id: newId,
+                name: employee.name,
+                role: employee.role,
+                position: employee.position
+            });
+            resolve(newEmployee);
+        }, MOCK_DELAY);
+    });
+};
+
+export const apiUpdateEmployee = (empId: string, updates: Partial<Employee>): Promise<Employee | null> => {
+    return new Promise(resolve => {
+        setTimeout(() => {
+            const index = mockEmployees.findIndex(e => e.id === empId);
+            if (index !== -1) {
+                mockEmployees[index] = { ...mockEmployees[index], ...updates };
+                // 同步更新 mockUsers
+                const userIndex = mockUsers.findIndex(u => u.id === empId);
+                if (userIndex !== -1 && updates.name) {
+                    mockUsers[userIndex].name = updates.name;
+                }
+                if (userIndex !== -1 && updates.position) {
+                    mockUsers[userIndex].position = updates.position;
+                }
+                if (userIndex !== -1 && updates.role) {
+                    mockUsers[userIndex].role = updates.role;
+                }
+                resolve(mockEmployees[index]);
+            } else {
+                resolve(null);
+            }
+        }, MOCK_DELAY);
+    });
+};
+
+export const apiDeleteEmployee = (empId: string): Promise<boolean> => {
+    return new Promise(resolve => {
+        setTimeout(() => {
+            const index = mockEmployees.findIndex(e => e.id === empId);
+            if (index !== -1) {
+                mockEmployees.splice(index, 1);
+                // 同步刪除 mockUsers
+                const userIndex = mockUsers.findIndex(u => u.id === empId);
+                if (userIndex !== -1) {
+                    mockUsers.splice(userIndex, 1);
+                }
+                resolve(true);
+            } else {
+                resolve(false);
+            }
+        }, MOCK_DELAY);
+    });
+};
+
+// ==================== 排班 vs 出勤對照 API ====================
+
+export interface ScheduleAttendanceComparison {
+    date: string;
+    dayOfWeek: string;
+    status: '營運' | '休館';
+    employees: {
+        empId: string;
+        name: string;
+        position: '專責人員' | '兼職人員';
+        scheduled: boolean;
+        scheduledShift: string | null;
+        clockInTime: string | null;
+        clockOutTime: string | null;
+        workHours: number | null;
+        attendanceStatus: '正常' | '遲到' | '早退' | '缺勤' | '休假' | '-';
+    }[];
+}
+
+export const apiGetScheduleAttendanceComparison = (yearMonth: string): Promise<ScheduleAttendanceComparison[]> => {
+    return new Promise(resolve => {
+        setTimeout(() => {
+            const [year, month] = yearMonth.split('-').map(Number);
+            const daysInMonth = new Date(year, month, 0).getDate();
+            const result: ScheduleAttendanceComparison[] = [];
+
+            for (let day = 1; day <= daysInMonth; day++) {
+                const date = new Date(year, month - 1, day);
+                const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                const dayOfWeekIndex = date.getDay();
+                const scheduleTemplate = mockSchedules[dayOfWeekIndex];
+
+                const scheduledStaff: string[] = [];
+                if (scheduleTemplate.staffA) scheduledStaff.push(scheduleTemplate.staffA);
+                if (scheduleTemplate.staffB) scheduledStaff.push(scheduleTemplate.staffB);
+                scheduledStaff.push(...scheduleTemplate.partTime);
+
+                const dayRecords = mockClockRecords.filter(r => r.date === dateStr);
+
+                const employees = mockUsers.map(user => {
+                    const isScheduled = scheduledStaff.includes(user.name);
+                    const record = dayRecords.find(r => r.empId === user.id);
+                    const leaveOnDay = mockLeaveRequests.find(
+                        lr => lr.empId === user.id &&
+                        lr.status === LeaveStatus.Approved &&
+                        lr.startDate.slice(0, 10) <= dateStr &&
+                        lr.endDate.slice(0, 10) >= dateStr
+                    );
+
+                    let attendanceStatus: '正常' | '遲到' | '早退' | '缺勤' | '休假' | '-' = '-';
+                    if (scheduleTemplate.status === '休館') {
+                        attendanceStatus = '-';
+                    } else if (leaveOnDay) {
+                        attendanceStatus = '休假';
+                    } else if (isScheduled) {
+                        if (record) {
+                            attendanceStatus = record.status;
+                        } else {
+                            attendanceStatus = '缺勤';
+                        }
+                    }
+
+                    return {
+                        empId: user.id,
+                        name: user.name,
+                        position: user.position,
+                        scheduled: isScheduled,
+                        scheduledShift: isScheduled ? scheduleTemplate.shiftTime : null,
+                        clockInTime: record?.clockInTime || null,
+                        clockOutTime: record?.clockOutTime || null,
+                        workHours: record?.workHours || null,
+                        attendanceStatus
+                    };
+                });
+
+                result.push({
+                    date: dateStr,
+                    dayOfWeek: dayOfWeekMap[dayOfWeekIndex],
+                    status: scheduleTemplate.status,
+                    employees
+                });
+            }
+
+            resolve(result);
         }, MOCK_DELAY);
     });
 };

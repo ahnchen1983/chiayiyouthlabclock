@@ -76,3 +76,51 @@ export interface LeaveRequest {
     approver?: string;
     approvalDate?: string;
 }
+
+// 員工詳細資料（用於員工管理）
+export type EmployeeStatus = '在職' | '離職' | '留停';
+
+export interface Employee {
+    id: string;
+    name: string;
+    phone: string;
+    email: string;
+    hourlyRate: number;
+    hireDate: string;
+    resignDate?: string;
+    status: EmployeeStatus;
+    position: '專責人員' | '兼職人員';
+    role: UserRole;
+}
+
+// 今日排班與出勤對照
+export interface TodayAttendanceComparison {
+    empId: string;
+    name: string;
+    position: '專責人員' | '兼職人員';
+    scheduledShift: string | null;  // 排班時段 e.g. "08:30-17:30"
+    clockInTime: string | null;
+    clockOutTime: string | null;
+    status: '已到' | '未到' | '遲到' | '早退' | '休假' | '未排班';
+}
+
+// 待處理事項
+export interface PendingItem {
+    id: string;
+    type: '請假審核' | '時數警示' | '缺勤異常';
+    title: string;
+    description: string;
+    date: string;
+    priority: 'high' | 'medium' | 'low';
+}
+
+// 儀表板統計
+export interface DashboardStats {
+    todayClockedIn: number;
+    todayScheduled: number;
+    monthlyTotalHours: number;
+    pendingLeaves: number;
+    hourWarnings: number;
+    todayAttendance: TodayAttendanceComparison[];
+    pendingItems: PendingItem[];
+}

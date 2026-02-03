@@ -6,9 +6,17 @@ import ScheduleManager from '../components/admin/ScheduleManager';
 import AttendanceLog from '../components/admin/AttendanceLog';
 import LeaveApprovalQueue from '../components/admin/LeaveApprovalQueue';
 import EmployeeManager from '../components/admin/EmployeeManager';
+import ScheduleComparison from '../components/admin/ScheduleComparison';
 import { DashboardIcon, CalendarIcon, ListIcon, CheckSquareIcon, UsersIcon, LogOutIcon } from '../components/icons';
 
-type AdminView = 'overview' | 'schedule' | 'attendance' | 'leave' | 'employees';
+// 對照表圖示
+const CompareIcon: React.FC<{ className?: string }> = ({ className }) => (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+    </svg>
+);
+
+type AdminView = 'overview' | 'schedule' | 'attendance' | 'leave' | 'employees' | 'comparison';
 
 const AdminDashboard: React.FC = () => {
   const { user, logout } = useAuth();
@@ -21,6 +29,7 @@ const AdminDashboard: React.FC = () => {
       case 'attendance': return <AttendanceLog />;
       case 'leave': return <LeaveApprovalQueue />;
       case 'employees': return <EmployeeManager />;
+      case 'comparison': return <ScheduleComparison />;
       default: return <AdminOverview />;
     }
   };
@@ -56,6 +65,7 @@ const AdminDashboard: React.FC = () => {
           <ul className="space-y-2">
             <NavItem view="overview" icon={<DashboardIcon className="w-6 h-6" />} label="總覽儀表板" />
             <NavItem view="schedule" icon={<CalendarIcon className="w-6 h-6" />} label="排班管理" />
+            <NavItem view="comparison" icon={<CompareIcon className="w-6 h-6" />} label="排班對照表" />
             <NavItem view="attendance" icon={<ListIcon className="w-6 h-6" />} label="出勤紀錄" />
             <NavItem view="leave" icon={<CheckSquareIcon className="w-6 h-6" />} label="請假審核" />
             <NavItem view="employees" icon={<UsersIcon className="w-6 h-6" />} label="員工管理" />
