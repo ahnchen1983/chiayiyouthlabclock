@@ -6,9 +6,10 @@ import MyScheduleCalendar from '../components/employee/MyScheduleCalendar';
 import MyRecords from '../components/employee/MyRecords';
 import LeaveRequestForm from '../components/employee/LeaveRequestForm';
 import FullScheduleCalendar from '../components/employee/FullScheduleCalendar';
-import { ClockIcon, CalendarIcon, ListIcon, SendIcon, LogOutIcon, UsersIcon } from '../components/icons';
+import MySalary from '../components/employee/MySalary';
+import { ClockIcon, CalendarIcon, ListIcon, SendIcon, LogOutIcon, UsersIcon, DollarIcon } from '../components/icons';
 
-type View = 'clock' | 'schedule' | 'records' | 'leave' | 'fullSchedule';
+type View = 'clock' | 'schedule' | 'records' | 'leave' | 'fullSchedule' | 'salary';
 
 const EmployeeDashboard: React.FC = () => {
   const { user, logout } = useAuth();
@@ -26,6 +27,8 @@ const EmployeeDashboard: React.FC = () => {
         return <MyRecords />;
       case 'leave':
         return <LeaveRequestForm />;
+      case 'salary':
+        return <MySalary />;
       default:
         return <ClockIn />;
     }
@@ -38,11 +41,10 @@ const EmployeeDashboard: React.FC = () => {
   }> = ({ view, icon, label }) => (
     <button
       onClick={() => setCurrentView(view)}
-      className={`flex flex-col items-center justify-center w-full py-2 space-y-1 transition-colors duration-200 ${
-        currentView === view
+      className={`flex flex-col items-center justify-center w-full py-2 space-y-1 transition-colors duration-200 ${currentView === view
           ? 'text-brand-green-dark border-b-4 border-brand-green-dark font-semibold'
           : 'text-gray-500 hover:bg-green-50'
-      }`}
+        }`}
     >
       {icon}
       <span className="text-xs sm:text-sm">{label}</span>
@@ -74,6 +76,7 @@ const EmployeeDashboard: React.FC = () => {
         <NavItem view="fullSchedule" icon={<UsersIcon className="w-6 h-6" />} label="總班表" />
         <NavItem view="records" icon={<ListIcon className="w-6 h-6" />} label="打卡紀錄" />
         <NavItem view="leave" icon={<SendIcon className="w-6 h-6" />} label="請假申請" />
+        <NavItem view="salary" icon={<DollarIcon className="w-6 h-6" />} label="薪資明細" />
       </nav>
     </div>
   );

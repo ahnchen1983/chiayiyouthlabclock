@@ -124,3 +124,29 @@ export interface DashboardStats {
     todayAttendance: TodayAttendanceComparison[];
     pendingItems: PendingItem[];
 }
+
+// 薪資明細
+export interface SalaryDetail {
+    empId: string;
+    name: string;
+    position: '專責人員' | '兼職人員';
+    yearMonth: string;
+    // 出勤統計
+    totalWorkDays: number;
+    totalWorkHours: number;
+    totalLeaveHours: number;
+    leaveDetails: { type: string; hours: number }[];
+    overtimeHours: number;
+    // 薪資項目
+    baseSalary: number;
+    overtimePay: number;
+    grossSalary: number;
+    // 扣除項目（勞基法）
+    laborInsurance: number;
+    healthInsurance: number;
+    laborPensionSelf: number;
+    leaveDeduction: number;
+    totalDeductions: number;
+    // 最終
+    netSalary: number;
+}

@@ -14,6 +14,7 @@ import {
     TodayAttendanceComparison,
     PendingItem,
     DashboardStats,
+    SalaryDetail,
 } from '../types';
 
 // This is a mock implementation of the Google Apps Script API.
@@ -28,17 +29,17 @@ const mockUsers: User[] = [
     { id: 'EMP005', name: '林小芬', role: UserRole.Employee, position: '兼職人員' },
 ];
 
-let mockEmployees: Employee[] = [
-    { id: 'EMP001', name: '王小明', phone: '0912-345-678', email: 'wang@example.com', hourlyRate: 0, hireDate: '2023-01-15', status: '在職' as EmployeeStatus, position: '專責人員', role: UserRole.Admin },
-    { id: 'EMP002', name: '李小華', phone: '0923-456-789', email: 'lee@example.com', hourlyRate: 0, hireDate: '2023-02-01', status: '在職' as EmployeeStatus, position: '專責人員', role: UserRole.Admin },
+let mockEmployees: (Employee & { monthlySalary?: number })[] = [
+    { id: 'EMP001', name: '王小明', phone: '0912-345-678', email: 'wang@example.com', hourlyRate: 0, monthlySalary: 38000, hireDate: '2023-01-15', status: '在職' as EmployeeStatus, position: '專責人員', role: UserRole.Admin },
+    { id: 'EMP002', name: '李小華', phone: '0923-456-789', email: 'lee@example.com', hourlyRate: 0, monthlySalary: 36000, hireDate: '2023-02-01', status: '在職' as EmployeeStatus, position: '專責人員', role: UserRole.Admin },
     { id: 'EMP003', name: '張小美', phone: '0934-567-890', email: 'chang@example.com', hourlyRate: 183, hireDate: '2023-06-01', status: '在職' as EmployeeStatus, position: '兼職人員', role: UserRole.Employee },
     { id: 'EMP004', name: '陳大文', phone: '0945-678-901', email: 'chen@example.com', hourlyRate: 183, hireDate: '2023-07-15', status: '在職' as EmployeeStatus, position: '兼職人員', role: UserRole.Employee },
     { id: 'EMP005', name: '林小芬', phone: '0956-789-012', email: 'lin@example.com', hourlyRate: 183, hireDate: '2024-01-01', status: '在職' as EmployeeStatus, position: '兼職人員', role: UserRole.Employee },
 ];
 
 let mockClockRecords: ClockRecord[] = [
-    { id: 'CLK1', empId: 'EMP003', name: '張小美', date: '2024-07-24', clockInTime: '08:30', clockOutTime: '17:30', verificationMethod: 'IP', verificationData: '127.0.0.1', workHours: 8, status: '正常'},
-    { id: 'CLK2', empId: 'EMP004', name: '陳大文', date: '2024-07-24', clockInTime: '10:05', clockOutTime: '20:00', verificationMethod: 'GPS', verificationData: '23.4,120.4', workHours: 8.9, status: '遲到'},
+    { id: 'CLK1', empId: 'EMP003', name: '張小美', date: '2024-07-24', clockInTime: '08:30', clockOutTime: '17:30', verificationMethod: 'IP', verificationData: '127.0.0.1', workHours: 8, status: '正常' },
+    { id: 'CLK2', empId: 'EMP004', name: '陳大文', date: '2024-07-24', clockInTime: '10:05', clockOutTime: '20:00', verificationMethod: 'GPS', verificationData: '23.4,120.4', workHours: 8.9, status: '遲到' },
 ];
 
 let mockLeaveRequests: LeaveRequest[] = [
@@ -136,24 +137,24 @@ export const apiValidateGPS = (lat: number, lng: number): Promise<{ isValid: boo
             const φ2 = (centerLat * Math.PI) / 180;
             const Δφ = ((centerLat - lat) * Math.PI) / 180;
             const Δλ = ((centerLng - lng) * Math.PI) / 180;
-        
+
             const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
             const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
             const distance = R * c;
-            
+
             resolve({ isValid: distance <= allowedRange, distance });
         }, MOCK_DELAY);
     });
 };
 
 export const apiGetEmployeeSchedule = (empId: string, yearMonth: string): Promise<ScheduleEvent[]> => {
-     return new Promise(resolve => {
+    return new Promise(resolve => {
         setTimeout(() => {
             const [year, month] = yearMonth.split('-').map(Number);
             const daysInMonth = new Date(year, month, 0).getDate();
             const schedule: ScheduleEvent[] = [];
             const user = mockUsers.find(u => u.id === empId);
-            if(!user) return resolve([]);
+            if (!user) return resolve([]);
 
             for (let day = 1; day <= daysInMonth; day++) {
                 const date = new Date(year, month - 1, day);
@@ -161,13 +162,13 @@ export const apiGetEmployeeSchedule = (empId: string, yearMonth: string): Promis
                 const eventTemplate = mockSchedules[dayOfWeekIndex];
 
                 if (eventTemplate.staffA === user.name || eventTemplate.staffB === user.name || eventTemplate.partTime.includes(user.name)) {
-                     schedule.push({
+                    schedule.push({
                         date: `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
                         dayOfWeek: dayOfWeekMap[dayOfWeekIndex],
                         ...eventTemplate
                     });
-                } else if(eventTemplate.status === '休館') {
-                     schedule.push({
+                } else if (eventTemplate.status === '休館') {
+                    schedule.push({
                         date: `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
                         dayOfWeek: dayOfWeekMap[dayOfWeekIndex],
                         ...eventTemplate
@@ -188,7 +189,7 @@ export const apiGetClockRecords = (empId: string, yearMonth: string): Promise<Cl
 };
 
 export const apiGetEmployeeLeaveRequests = (empId: string): Promise<LeaveRequest[]> => {
-     return new Promise(resolve => {
+    return new Promise(resolve => {
         setTimeout(() => {
             resolve(mockLeaveRequests.filter(r => r.empId === empId));
         }, MOCK_DELAY);
@@ -234,9 +235,9 @@ export const apiGetDashboardStats = (): Promise<DashboardStats> => {
                 const record = todayRecords.find(r => r.empId === user.id);
                 const leaveToday = mockLeaveRequests.find(
                     lr => lr.empId === user.id &&
-                    lr.status === LeaveStatus.Approved &&
-                    lr.startDate.slice(0, 10) <= today &&
-                    lr.endDate.slice(0, 10) >= today
+                        lr.status === LeaveStatus.Approved &&
+                        lr.startDate.slice(0, 10) <= today &&
+                        lr.endDate.slice(0, 10) >= today
                 );
 
                 let status: TodayAttendanceComparison['status'] = '未排班';
@@ -327,7 +328,7 @@ export const apiGetMonthlySchedule = (yearMonth: string): Promise<ScheduleEvent[
 };
 
 export const apiUpdateSchedule = (updatedEvent: ScheduleEvent): Promise<boolean> => {
-     return new Promise(resolve => {
+    return new Promise(resolve => {
         setTimeout(() => {
             // In a real app, you'd find and update the schedule in the backend.
             console.log('Updating schedule for:', updatedEvent.date, updatedEvent);
@@ -337,7 +338,7 @@ export const apiUpdateSchedule = (updatedEvent: ScheduleEvent): Promise<boolean>
 }
 
 export const apiGetAllEmployees = (): Promise<User[]> => {
-     return new Promise(resolve => {
+    return new Promise(resolve => {
         setTimeout(() => {
             resolve(mockUsers);
         }, MOCK_DELAY);
@@ -345,7 +346,7 @@ export const apiGetAllEmployees = (): Promise<User[]> => {
 };
 
 export const apiGetAllClockRecords = (yearMonth: string): Promise<ClockRecord[]> => {
-     return new Promise(resolve => {
+    return new Promise(resolve => {
         setTimeout(() => {
             resolve(mockClockRecords.filter(r => r.date.startsWith(yearMonth)));
         }, MOCK_DELAY);
@@ -353,7 +354,7 @@ export const apiGetAllClockRecords = (yearMonth: string): Promise<ClockRecord[]>
 };
 
 export const apiGetAllLeaveRequests = (): Promise<LeaveRequest[]> => {
-     return new Promise(resolve => {
+    return new Promise(resolve => {
         setTimeout(() => {
             resolve(mockLeaveRequests);
         }, MOCK_DELAY);
@@ -361,7 +362,7 @@ export const apiGetAllLeaveRequests = (): Promise<LeaveRequest[]> => {
 };
 
 export const apiApproveLeave = (requestId: string, status: LeaveStatus, approverName: string): Promise<boolean> => {
-     return new Promise(resolve => {
+    return new Promise(resolve => {
         setTimeout(() => {
             const request = mockLeaveRequests.find(r => r.id === requestId);
             if (request) {
@@ -520,9 +521,9 @@ export const apiGetScheduleAttendanceComparison = (yearMonth: string): Promise<S
                     const record = dayRecords.find(r => r.empId === user.id);
                     const leaveOnDay = mockLeaveRequests.find(
                         lr => lr.empId === user.id &&
-                        lr.status === LeaveStatus.Approved &&
-                        lr.startDate.slice(0, 10) <= dateStr &&
-                        lr.endDate.slice(0, 10) >= dateStr
+                            lr.status === LeaveStatus.Approved &&
+                            lr.startDate.slice(0, 10) <= dateStr &&
+                            lr.endDate.slice(0, 10) >= dateStr
                     );
 
                     let attendanceStatus: '正常' | '遲到' | '早退' | '缺勤' | '休假' | '-' = '-';
@@ -560,6 +561,129 @@ export const apiGetScheduleAttendanceComparison = (yearMonth: string): Promise<S
             }
 
             resolve(result);
+        }, MOCK_DELAY);
+    });
+};
+
+// ==================== 薪資計算 API ====================
+
+const calculateSalaryForEmployee = (emp: (Employee & { monthlySalary?: number }), yearMonth: string): SalaryDetail => {
+    // 模擬出勤資料
+    const [year, month] = yearMonth.split('-').map(Number);
+    const daysInMonth = new Date(year, month, 0).getDate();
+
+    // 計算排班天數與工時
+    let totalWorkDays = 0;
+    let totalWorkHours = 0;
+    for (let day = 1; day <= daysInMonth; day++) {
+        const date = new Date(year, month - 1, day);
+        const dow = date.getDay();
+        const template = mockSchedules[dow];
+        if (template.status === '休館') continue;
+        const staffList = [template.staffA, template.staffB, ...template.partTime];
+        if (staffList.includes(emp.name)) {
+            totalWorkDays++;
+            if (template.shiftTime) {
+                const [start, end] = template.shiftTime.split('-');
+                const [sh, sm] = start.split(':').map(Number);
+                const [eh, em] = end.split(':').map(Number);
+                totalWorkHours += (eh + em / 60) - (sh + sm / 60);
+            }
+        }
+    }
+
+    // 模擬請假
+    const empLeaves = mockLeaveRequests.filter(
+        lr => lr.empId === emp.id && lr.status === LeaveStatus.Approved && lr.startDate.slice(0, 7) === yearMonth
+    );
+    const totalLeaveHours = empLeaves.reduce((sum, lr) => sum + lr.hours, 0);
+    const leaveDetails = empLeaves.map(lr => ({ type: lr.leaveType, hours: lr.hours }));
+
+    // 加班（模擬: 超過 8 小時的部分）
+    const regularHoursPerDay = 8;
+    const overtimeHours = Math.max(0, totalWorkHours - totalWorkDays * regularHoursPerDay);
+
+    // 底薪計算
+    let baseSalary: number;
+    if (emp.position === '專責人員') {
+        baseSalary = emp.monthlySalary || 30000;
+    } else {
+        baseSalary = Math.round((totalWorkHours - overtimeHours) * emp.hourlyRate);
+    }
+
+    // 加班費（勞基法: 前 2 小時 1.34 倍，之後 1.67 倍，簡化為 1.34 倍）
+    const hourlyForOT = emp.position === '專責人員'
+        ? Math.round((emp.monthlySalary || 30000) / 30 / 8)
+        : emp.hourlyRate;
+    const overtimePay = Math.round(overtimeHours * hourlyForOT * 1.34);
+
+    const grossSalary = baseSalary + overtimePay;
+
+    // 請假扣薪（事假扣薪，病假扣半薪，特休不扣）
+    let leaveDeduction = 0;
+    const hourlyWage = emp.position === '專責人員'
+        ? Math.round((emp.monthlySalary || 30000) / 30 / 8)
+        : emp.hourlyRate;
+    empLeaves.forEach(lr => {
+        if (lr.leaveType === LeaveType.Personal) {
+            leaveDeduction += lr.hours * hourlyWage;
+        } else if (lr.leaveType === LeaveType.Sick) {
+            leaveDeduction += Math.round(lr.hours * hourlyWage * 0.5);
+        }
+    });
+
+    // 勞基法扣除項目（簡化計算，依投保薪資級距）
+    const insuredSalary = grossSalary; // 簡化：以應發薪資作為投保薪資
+    const laborInsurance = Math.round(insuredSalary * 0.023);  // 勞保自付 ~2.3% (含就業保險)
+    const healthInsurance = Math.round(insuredSalary * 0.0211); // 健保自付 ~2.11%
+    const laborPensionSelf = Math.round(insuredSalary * 0.06);  // 勞退自提 6%
+
+    const totalDeductions = laborInsurance + healthInsurance + laborPensionSelf + leaveDeduction;
+    const netSalary = grossSalary - totalDeductions;
+
+    return {
+        empId: emp.id,
+        name: emp.name,
+        position: emp.position,
+        yearMonth,
+        totalWorkDays,
+        totalWorkHours: Math.round(totalWorkHours * 10) / 10,
+        totalLeaveHours,
+        leaveDetails,
+        overtimeHours: Math.round(overtimeHours * 10) / 10,
+        baseSalary,
+        overtimePay,
+        grossSalary,
+        laborInsurance,
+        healthInsurance,
+        laborPensionSelf,
+        leaveDeduction,
+        totalDeductions,
+        netSalary,
+    };
+};
+
+// 管理者: 取得所有員工薪資明細
+export const apiGetAllSalaryDetails = (yearMonth: string): Promise<SalaryDetail[]> => {
+    return new Promise(resolve => {
+        setTimeout(() => {
+            const activeEmployees = mockEmployees.filter(e => e.status === '在職');
+            const salaries = activeEmployees.map(emp => calculateSalaryForEmployee(emp, yearMonth));
+            resolve(salaries);
+        }, MOCK_DELAY);
+    });
+};
+
+// 員工: 取得自己的薪資明細
+export const apiGetEmployeeSalary = (empId: string, yearMonth: string): Promise<SalaryDetail | null> => {
+    return new Promise(resolve => {
+        setTimeout(() => {
+            const emp = mockEmployees.find(e => e.id === empId);
+            if (!emp) {
+                resolve(null);
+                return;
+            }
+            resolve(calculateSalaryForEmployee(emp, yearMonth));
         }, MOCK_DELAY);
     });
 };
