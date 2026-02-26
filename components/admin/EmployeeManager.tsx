@@ -4,7 +4,8 @@ import {
     apiGetAllEmployeesDetail,
     apiCreateEmployee,
     apiUpdateEmployee,
-    apiDeleteEmployee
+    apiDeleteEmployee,
+    apiResetPassword
 } from '../../services/googleAppsScriptAPI';
 import { Employee, EmployeeStatus, UserRole } from '../../types';
 import { UsersIcon } from '../icons';
@@ -31,6 +32,12 @@ const TrashIcon: React.FC<{ className?: string }> = ({ className }) => (
 const XIcon: React.FC<{ className?: string }> = ({ className }) => (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+    </svg>
+);
+
+const KeyIcon: React.FC<{ className?: string }> = ({ className }) => (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
     </svg>
 );
 
@@ -62,7 +69,7 @@ const PositionBadge: React.FC<{ position: '專責人員' | '兼職人員' }> = (
 interface EmployeeFormModalProps {
     employee: Employee | null;
     onClose: () => void;
-    onSave: (data: Omit<Employee, 'id'> | Employee) => void;
+    onSave: (data: Omit<Employee, 'id'> | Employee, initialPassword?: string) => void;
     isNew: boolean;
 }
 
@@ -78,6 +85,7 @@ const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({ employee, onClose
         position: employee?.position || '兼職人員',
         role: employee?.role || UserRole.Employee,
     });
+    const [initialPassword, setInitialPassword] = useState('password');
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
         const { name, value } = e.target;
@@ -90,7 +98,11 @@ const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({ employee, onClose
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         if (isNew) {
-            onSave(formData);
+            if (initialPassword.length < 4) {
+                alert('初始密碼至少需要 4 個字元');
+                return;
+            }
+            onSave(formData, initialPassword);
         } else {
             onSave({ ...formData, id: employee!.id });
         }
@@ -258,6 +270,25 @@ const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({ employee, onClose
                         </select>
                     </div>
 
+                    {/* 初始密碼（僅新增時顯示） */}
+                    {isNew && (
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                初始密碼 <span className="text-red-500">*</span>
+                            </label>
+                            <input
+                                type="text"
+                                value={initialPassword}
+                                onChange={(e) => setInitialPassword(e.target.value)}
+                                minLength={4}
+                                required
+                                className="w-full p-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                placeholder="預設密碼"
+                            />
+                            <p className="text-xs text-gray-500 mt-1">至少 4 個字元，該員工可於登入後自行修改。</p>
+                        </div>
+                    )}
+
                     {/* 按鈕 */}
                     <div className="flex justify-end gap-3 pt-4 border-t">
                         <button
@@ -312,11 +343,73 @@ const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({ employee, onClo
     </div>
 );
 
+// 重設密碼 Modal
+interface ResetPasswordModalProps {
+    employee: Employee;
+    onClose: () => void;
+    onConfirm: (newPassword: string) => void;
+}
+
+const ResetPasswordModal: React.FC<ResetPasswordModalProps> = ({ employee, onClose, onConfirm }) => {
+    const [newPassword, setNewPassword] = useState('');
+
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        if (newPassword.length < 4) {
+            alert('新密碼至少需要 4 個字元');
+            return;
+        }
+        onConfirm(newPassword);
+    };
+
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4 p-6">
+                <h3 className="text-lg font-bold text-gray-800 mb-4">
+                    重設 <span className="text-blue-600">{employee.name}</span> 的密碼
+                </h3>
+                <form onSubmit={handleSubmit}>
+                    <div className="mb-4">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                            新密碼 <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                            type="text"
+                            value={newPassword}
+                            onChange={(e) => setNewPassword(e.target.value)}
+                            minLength={4}
+                            required
+                            className="w-full p-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            placeholder="輸入新密碼"
+                        />
+                    </div>
+                    <div className="flex justify-end gap-3 mt-6">
+                        <button
+                            type="button"
+                            onClick={onClose}
+                            className="px-4 py-2 text-gray-600 bg-gray-100 rounded-md hover:bg-gray-200"
+                        >
+                            取消
+                        </button>
+                        <button
+                            type="submit"
+                            className="px-4 py-2 text-white bg-blue-500 rounded-md hover:bg-blue-600"
+                        >
+                            確認重設
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    );
+};
+
 const EmployeeManager: React.FC = () => {
     const [employees, setEmployees] = useState<Employee[]>([]);
     const [loading, setLoading] = useState(true);
     const [showFormModal, setShowFormModal] = useState(false);
     const [showDeleteModal, setShowDeleteModal] = useState(false);
+    const [showResetModal, setShowResetModal] = useState(false);
     const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
     const [isNew, setIsNew] = useState(false);
     const [filterStatus, setFilterStatus] = useState<EmployeeStatus | 'all'>('all');
@@ -351,9 +444,14 @@ const EmployeeManager: React.FC = () => {
         setShowDeleteModal(true);
     };
 
-    const handleSave = async (data: Omit<Employee, 'id'> | Employee) => {
+    const handleResetPasswordClick = (emp: Employee) => {
+        setSelectedEmployee(emp);
+        setShowResetModal(true);
+    };
+
+    const handleSave = async (data: Omit<Employee, 'id'> | Employee, initialPassword?: string) => {
         if (isNew) {
-            await apiCreateEmployee(data as Omit<Employee, 'id'>);
+            await apiCreateEmployee(data as Omit<Employee, 'id'>, initialPassword);
         } else {
             await apiUpdateEmployee((data as Employee).id, data);
         }
@@ -367,6 +465,19 @@ const EmployeeManager: React.FC = () => {
             setShowDeleteModal(false);
             setSelectedEmployee(null);
             fetchEmployees();
+        }
+    };
+
+    const handleConfirmReset = async (newPassword: string) => {
+        if (selectedEmployee) {
+            const res = await apiResetPassword(selectedEmployee.id, newPassword);
+            if (res.success) {
+                alert(`已經成功重設 ${selectedEmployee.name} 的密碼為：${newPassword}`);
+                setShowResetModal(false);
+                setSelectedEmployee(null);
+            } else {
+                alert(res.message);
+            }
         }
     };
 
@@ -481,6 +592,13 @@ const EmployeeManager: React.FC = () => {
                                     <td className="py-3 px-4 border-b text-center">
                                         <div className="flex justify-center gap-2">
                                             <button
+                                                onClick={() => handleResetPasswordClick(emp)}
+                                                className="p-2 text-yellow-600 hover:bg-yellow-50 rounded-md transition-colors"
+                                                title="重設密碼"
+                                            >
+                                                <KeyIcon className="w-4 h-4" />
+                                            </button>
+                                            <button
                                                 onClick={() => handleEdit(emp)}
                                                 className="p-2 text-blue-500 hover:bg-blue-50 rounded-md transition-colors"
                                                 title="編輯"
@@ -532,6 +650,14 @@ const EmployeeManager: React.FC = () => {
                     employee={selectedEmployee}
                     onClose={() => setShowDeleteModal(false)}
                     onConfirm={handleConfirmDelete}
+                />
+            )}
+
+            {showResetModal && selectedEmployee && (
+                <ResetPasswordModal
+                    employee={selectedEmployee}
+                    onClose={() => setShowResetModal(false)}
+                    onConfirm={handleConfirmReset}
                 />
             )}
         </div>

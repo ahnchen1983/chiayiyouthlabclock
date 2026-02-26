@@ -59,11 +59,20 @@ const mockSchedules: Omit<ScheduleEvent, 'date' | 'dayOfWeek'>[] = [
 
 const dayOfWeekMap = ['日', '一', '二', '三', '四', '五', '六'];
 
+// 每位使用者的密碼（mock 儲存）
+const mockPasswords: Record<string, string> = {
+    'EMP001': 'password',
+    'EMP002': 'password',
+    'EMP003': 'password',
+    'EMP004': 'password',
+    'EMP005': 'password',
+};
+
 export const apiLogin = (username: string, password: string): Promise<User | null> => {
     return new Promise(resolve => {
         setTimeout(() => {
             const user = mockUsers.find(u => u.id === username);
-            if (user && password === 'password') { // Simple mock password check
+            if (user && mockPasswords[username] === password) {
                 resolve(user);
             } else {
                 resolve(null);
@@ -415,7 +424,7 @@ export const apiGetEmployee = (empId: string): Promise<Employee | null> => {
     });
 };
 
-export const apiCreateEmployee = (employee: Omit<Employee, 'id'>): Promise<Employee> => {
+export const apiCreateEmployee = (employee: Omit<Employee, 'id'>, initialPassword?: string): Promise<Employee> => {
     return new Promise(resolve => {
         setTimeout(() => {
             const newId = `EMP${String(mockEmployees.length + 1).padStart(3, '0')}`;
@@ -428,6 +437,8 @@ export const apiCreateEmployee = (employee: Omit<Employee, 'id'>): Promise<Emplo
                 role: employee.role,
                 position: employee.position
             });
+            // 設定密碼
+            mockPasswords[newId] = initialPassword || 'password';
             resolve(newEmployee);
         }, MOCK_DELAY);
     });
@@ -473,6 +484,46 @@ export const apiDeleteEmployee = (empId: string): Promise<boolean> => {
             } else {
                 resolve(false);
             }
+        }, MOCK_DELAY);
+    });
+};
+
+// ==================== 密碼管理 API ====================
+
+export const apiChangePassword = (empId: string, oldPassword: string, newPassword: string): Promise<{ success: boolean; message: string }> => {
+    return new Promise(resolve => {
+        setTimeout(() => {
+            if (!mockPasswords[empId]) {
+                resolve({ success: false, message: '帳號不存在' });
+                return;
+            }
+            if (mockPasswords[empId] !== oldPassword) {
+                resolve({ success: false, message: '舊密碼錯誤' });
+                return;
+            }
+            if (newPassword.length < 4) {
+                resolve({ success: false, message: '新密碼至少需要 4 個字元' });
+                return;
+            }
+            mockPasswords[empId] = newPassword;
+            resolve({ success: true, message: '密碼已更新成功' });
+        }, MOCK_DELAY);
+    });
+};
+
+export const apiResetPassword = (empId: string, newPassword: string): Promise<{ success: boolean; message: string }> => {
+    return new Promise(resolve => {
+        setTimeout(() => {
+            if (!mockPasswords[empId]) {
+                resolve({ success: false, message: '帳號不存在' });
+                return;
+            }
+            if (newPassword.length < 4) {
+                resolve({ success: false, message: '新密碼至少需要 4 個字元' });
+                return;
+            }
+            mockPasswords[empId] = newPassword;
+            resolve({ success: true, message: '密碼已重設成功' });
         }, MOCK_DELAY);
     });
 };
