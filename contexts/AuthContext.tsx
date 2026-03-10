@@ -1,7 +1,7 @@
 
 import React, { createContext, useState, useContext, ReactNode, useEffect } from 'react';
 import { User } from '../types';
-import { apiLogin } from '../services/googleAppsScriptAPI';
+import { apiLogin, apiLogout, apiInitializeDatabase } from '../services/googleAppsScriptAPI';
 
 interface AuthContextType {
   user: User | null;
@@ -17,6 +17,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
+    // 初始化 Firestore（首次執行時寫入預設資料）
+    apiInitializeDatabase().catch(console.error);
     // Check for saved user session
     const savedUser = sessionStorage.getItem('user');
     if (savedUser) {
@@ -46,6 +48,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const logout = () => {
     setUser(null);
     sessionStorage.removeItem('user');
+    apiLogout().catch(console.error);
   };
 
   return (
