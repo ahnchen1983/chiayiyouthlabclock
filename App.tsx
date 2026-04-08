@@ -21,7 +21,7 @@ const AppContent: React.FC = () => {
     return <LoginPage />;
   }
 
-  if (user.role === UserRole.Admin) {
+  if (user.role === UserRole.SuperAdmin || user.role === UserRole.Admin) {
     return <AdminDashboard />;
   }
 

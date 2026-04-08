@@ -1,0 +1,570 @@
+# 嘉義青年實驗室打卡系統 — 軟體設計文件 (SDD)
+
+> **版本：** v1.0
+> **建立日期：** 2026-04-08
+> **最後更新：** 2026-04-08
+> **對應程式版本：** commit `7796637` (v2)
+
+---
+
+## 目錄
+
+1. [系統概述](#1-系統概述)
+2. [系統架構](#2-系統架構)
+3. [角色與權限](#3-角色與權限)
+4. [功能模組](#4-功能模組)
+5. [資料模型](#5-資料模型)
+6. [API 端點清單](#6-api-端點清單)
+7. [前端頁面與元件](#7-前端頁面與元件)
+8. [已知問題與限制](#8-已知問題與限制)
+9. [變更紀錄](#9-變更紀錄)
+
+---
+
+## 1. 系統概述
+
+### 1.1 系統名稱
+嘉義市青年實驗室出勤管理系統（Chiayi Youth Lab Clock System）
+
+### 1.2 系統用途
+為嘉義市青年實驗室（有事青年實驗室）提供員工出勤打卡、排班管理、請假申請、薪資計算等人事管理功能。適用對象包含專責人員（正職）與兼職人員（PT）。
+
+### 1.3 技術架構總覽
+
+| 層級 | 技術 |
+|------|------|
+| 前端 | React 18 + TypeScript + Vite |
+| 樣式 | Tailwind CSS |
+| 後端 | Netlify Functions (Serverless) |
+| 資料庫 | Firebase Firestore |
+| 認證 | Firebase Authentication (Custom Token) |
+| 部署 | Netlify |
+
+### 1.4 專案結構
+
+```
+chiayiyouthlabclock/
+├── components/
+│   ├── admin/                  # 管理者元件
+│   │   ├── AdminOverview.tsx       # 總覽儀表板
+│   │   ├── AttendanceLog.tsx       # 出勤紀錄
+│   │   ├── EmployeeManager.tsx     # 員工管理
+│   │   ├── LeaveApprovalQueue.tsx  # 請假審核
+│   │   ├── PartTimeMonitor.tsx     # PT 時數監控
+│   │   ├── SalaryCalculation.tsx   # 薪資計算
+│   │   ├── ScheduleComparison.tsx  # 排班對照表
+│   │   └── ScheduleManager.tsx     # 排班管理
+│   ├── employee/               # 員工元件
+│   │   ├── ClockIn.tsx             # 打卡
+│   │   ├── FullScheduleCalendar.tsx # 總班表
+│   │   ├── LeaveRequestForm.tsx    # 請假申請
+│   │   ├── MyRecords.tsx           # 我的打卡紀錄
+│   │   ├── MySalary.tsx            # 我的薪資
+│   │   └── MyScheduleCalendar.tsx  # 我的班表
+│   ├── ChangePasswordModal.tsx # 修改密碼
+│   └── icons.tsx               # 圖示元件
+├── contexts/
+│   └── AuthContext.tsx          # 認證狀態管理
+├── pages/
+│   ├── App.tsx                 # 根元件
+│   ├── AdminDashboard.tsx      # 管理者後台
+│   ├── EmployeeDashboard.tsx   # 員工後台
+│   └── LoginPage.tsx           # 登入頁
+├── services/
+│   ├── firebaseConfig.ts       # Firebase 設定
+│   └── googleAppsScriptAPI.ts  # API 呼叫層
+├── netlify/
+│   └── functions/
+│       ├── api.ts              # 後端 API 主體
+│       └── utils/
+│           └── firebaseAdmin.ts # Firebase Admin SDK
+├── types.ts                    # 型別定義
+├── docs/                       # 文件目錄
+│   ├── SDD.md                  # 本文件
+│   └── DEVELOPMENT_ROADMAP.md  # 開發階段規劃
+└── README.md
+```
+
+---
+
+## 2. 系統架構
+
+### 2.1 架構圖
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                     使用者（瀏覽器）                       │
+│  ┌─────────────────┐     ┌─────────────────────────┐    │
+│  │   LoginPage      │     │  AdminDashboard /        │    │
+│  │                  │────>│  EmployeeDashboard       │    │
+│  └─────────────────┘     └───────────┬─────────────┘    │
+└──────────────────────────────────────┼──────────────────┘
+                                       │ HTTPS POST
+                                       ▼
+┌─────────────────────────────────────────────────────────┐
+│              Netlify Functions (Serverless)               │
+│  ┌─────────────────────────────────────────────────┐    │
+│  │  api.ts — 單一端點, 依 action 分派               │    │
+│  │  • 驗證 Firebase ID Token                        │    │
+│  │  • 處理所有 CRUD 操作                            │    │
+│  │  • 薪資計算邏輯                                  │    │
+│  └──────────────────────┬──────────────────────────┘    │
+└─────────────────────────┼───────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────┐
+│                  Firebase                                │
+│  ┌──────────────┐  ┌─────────────────────────────┐     │
+│  │ Authentication│  │ Firestore                    │     │
+│  │ (Custom Token)│  │ ├─ employees                 │     │
+│  │               │  │ ├─ scheduleTemplate          │     │
+│  │               │  │ ├─ clockRecords              │     │
+│  │               │  │ └─ leaveRequests             │     │
+│  └──────────────┘  └─────────────────────────────┘     │
+└─────────────────────────────────────────────────────────┘
+```
+
+### 2.2 認證流程
+
+1. 使用者輸入員工編號 + 密碼
+2. 前端呼叫 `POST /.netlify/functions/api` (action: `login`)
+3. 後端比對 Firestore `employees` 中的密碼（明文比對）
+4. 比對成功 → 呼叫 `adminAuth.createCustomToken(empId)` 產生 Custom Token
+5. 前端用 `signInWithCustomToken()` 交換為 Firebase ID Token
+6. 後續所有 API 請求帶 `Authorization: Bearer <ID Token>`
+7. 後端用 `adminAuth.verifyIdToken()` 驗證
+8. 使用者資訊存入 `sessionStorage`
+
+### 2.3 資料流
+
+- **所有 API 請求**透過單一端點 `/.netlify/functions/api`
+- 請求格式：`POST { action: 'xxx', ...data }`
+- 回應格式：`{ statusCode: 200, body: JSON }`
+- 前端 API 層：`services/googleAppsScriptAPI.ts`（歷史命名，實際呼叫 Netlify Functions）
+
+---
+
+## 3. 角色與權限
+
+### 3.1 現有角色定義
+
+| 角色 | 值 | 說明 | 進入頁面 |
+|------|-----|------|---------|
+| 管理者 | `UserRole.Admin` | 具備所有管理功能 | `AdminDashboard` |
+| 員工 | `UserRole.Employee` | 僅限自身操作 | `EmployeeDashboard` |
+
+### 3.2 職位類型
+
+| 職位 | 說明 |
+|------|------|
+| 專責人員 | 正職，月薪制，薪資欄位為 `monthlySalary` |
+| 兼職人員 | PT，時薪制，薪資欄位為 `hourlyRate`，月時數上限 80 小時 |
+
+### 3.3 各角色可用功能
+
+| 功能 | 管理者 (Admin) | 員工 (Employee) |
+|------|:--------------:|:--------------:|
+| 打卡 | -- | V |
+| 查看自己班表 | -- | V |
+| 查看總班表 | -- | V |
+| 查看打卡紀錄 | -- | V |
+| 請假申請 | -- | V |
+| 查看薪資明細 | -- | V |
+| 總覽儀表板 | V | -- |
+| 排班管理 | V | -- |
+| 排班對照表 | V | -- |
+| 出勤紀錄（全員） | V | -- |
+| 請假審核 | V | -- |
+| 員工管理 | V | -- |
+| 薪資計算（全員） | V | -- |
+| 修改密碼 | V | V |
+
+> **已知限制：** 管理者無法打卡、請假。詳見 [8.1 已知問題 #5](#81-使用者提出的-6-項問題)
+
+---
+
+## 4. 功能模組
+
+### 4.1 登入認證模組
+
+| 項目 | 說明 |
+|------|------|
+| 檔案 | `LoginPage.tsx`, `AuthContext.tsx`, `api.ts` (action: login) |
+| 功能 | 員工編號 + 密碼登入 |
+| 密碼儲存 | 明文存於 Firestore `employees.password` |
+| Session | `sessionStorage` 存 user JSON |
+| 登出 | 清除 sessionStorage + `signOut(auth)` |
+
+### 4.2 排班管理模組
+
+| 項目 | 說明 |
+|------|------|
+| 管理端 | `ScheduleManager.tsx` |
+| 員工端 | `MyScheduleCalendar.tsx`, `FullScheduleCalendar.tsx` |
+| 後端 | `api.ts` actions: `get-monthly-schedule`, `get-employee-schedule`, `update-schedule` |
+| 資料結構 | 以「星期幾」(0-6) 為 key 的模板制 |
+| 營運狀態 | `'營運'` / `'休館'` |
+| 班別時段 | `shiftTime` 欄位（如 `"08:30-17:30"`），前端**不可編輯** |
+| 人員欄位 | `staffA`（專責A）、`staffB`（專責B）、`partTime[]`（兼職陣列） |
+
+**排班產生邏輯：**
+1. Firestore `scheduleTemplate` 存 7 筆文件（doc id: "0"-"6"，代表週日-週六）
+2. 查詢月班表時，遍歷該月每一天，根據星期幾取對應模板
+3. 修改班表時，前端傳送某一天的資料，後端**計算該日是星期幾，覆寫整個模板**
+
+**預設排班模板：**
+
+| 星期 | 狀態 | 時段 | 專責A | 專責B | 兼職 |
+|------|------|------|-------|-------|------|
+| 日 | 營運 | 08:30-17:30 | 王小明 | 李小華 | 陳大文 |
+| 一 | 休館 | — | — | — | — |
+| 二 | 休館 | — | — | — | — |
+| 三 | 營運 | 10:00-20:00 | 王小明 | — | 張小美 |
+| 四 | 營運 | 10:00-20:00 | 王小明 | — | 陳大文 |
+| 五 | 營運 | 08:30-17:30 | 王小明 | 李小華 | 林小芬 |
+| 六 | 營運 | 08:30-17:30 | 王小明 | 李小華 | 張小美 |
+
+> 以上人名皆為初始化假資料，非真實人員。
+
+### 4.3 打卡出勤模組
+
+| 項目 | 說明 |
+|------|------|
+| 前端 | `ClockIn.tsx` |
+| 後端 | `api.ts` actions: `clock-in`, `clock-out`, `get-today-clock-status`, `validate-gps` |
+| 驗證方式 | IP 驗證 或 GPS 驗證（二擇一） |
+| IP 驗證 | 目前寫死 `127.0.0.1`，**非真實驗證** |
+| GPS 驗證 | 中心點 `(23.4800, 120.4500)`，容許範圍 100 公尺 |
+| 打卡時間 | 伺服器端時間（Asia/Taipei），防前端竄改 |
+| 工時計算 | `clockOutTime - clockInTime`，單位：小時（1 位小數） |
+| 出勤狀態 | 固定寫入 `'正常'`，**未實作遲到/早退判定** |
+
+**打卡紀錄結構 (ClockRecord)：**
+```typescript
+{
+    empId: string;        // 員工編號
+    name: string;         // 姓名
+    date: string;         // "YYYY-MM-DD"
+    clockInTime: string;  // "HH:mm"
+    clockOutTime: string; // "HH:mm"
+    verificationMethod: 'IP' | 'GPS';
+    verificationData: string;
+    workHours: number;    // 工時（小時）
+    status: '正常' | '遲到' | '早退';  // 目前固定為 '正常'
+}
+```
+
+### 4.4 請假管理模組
+
+| 項目 | 說明 |
+|------|------|
+| 員工端 | `LeaveRequestForm.tsx` |
+| 管理端 | `LeaveApprovalQueue.tsx` |
+| 後端 | `api.ts` actions: `submit-leave-request`, `get-employee-leave-requests`, `get-all-leave-requests`, `approve-leave` |
+
+**假別：**
+
+| 假別 | 值 | 薪資影響 |
+|------|-----|---------|
+| 事假 | `LeaveType.Personal` | 扣全薪（時薪 x 時數） |
+| 病假 | `LeaveType.Sick` | 扣半薪（時薪 x 時數 x 50%） |
+| 特休 | `LeaveType.Annual` | 不扣薪 |
+| 其他 | `LeaveType.Other` | 不扣薪 |
+
+**審核狀態：** `待審核` → `核准` / `駁回`
+
+**請假時數計算：** `(endDate - startDate)` 轉換為小時（後端計算）
+
+### 4.5 薪資計算模組
+
+| 項目 | 說明 |
+|------|------|
+| 管理端 | `SalaryCalculation.tsx` |
+| 員工端 | `MySalary.tsx` |
+| 後端 | `api.ts` actions: `get-all-salary-details`, `get-employee-salary` |
+| 計算位置 | 後端 `calculateSalaryForEmployee()` 函數 |
+
+**計算邏輯：**
+
+```
+【專責人員（月薪制）】
+底薪 = monthlySalary（預設 30,000）
+時薪 = monthlySalary / 30 / 8
+加班時數 = max(0, 實際工時 - 排班天數 x 8)
+加班費 = 加班時數 x 時薪 x 1.34
+
+【兼職人員（時薪制）】
+底薪 = (實際工時 - 加班時數) x hourlyRate
+加班時數 = max(0, 實際工時 - 排班天數 x 8)
+加班費 = 加班時數 x hourlyRate x 1.34
+
+【共通扣除項目】
+應發薪資 = 底薪 + 加班費
+勞保自付額 = 應發薪資 x 2.3%
+健保自付額 = 應發薪資 x 2.11%
+勞退自提   = 應發薪資 x 6%
+請假扣款   = Σ(假別扣款)
+總扣除     = 勞保 + 健保 + 勞退 + 請假扣款
+實領薪資   = 應發薪資 - 總扣除
+```
+
+**PT 時數監控：**
+- 月時數上限：80 小時
+- 預警門檻：剩餘 ≤ 10 小時時顯示「接近上限」
+
+### 4.6 員工管理模組
+
+| 項目 | 說明 |
+|------|------|
+| 前端 | `EmployeeManager.tsx` |
+| 後端 | `api.ts` actions: `create-employee`, `update-employee`, `delete-employee`, `get-all-employees`, `get-all-employees-detail`, `get-employee` |
+| 功能 | 新增/編輯/刪除員工、重設密碼 |
+| 編號規則 | `EMP` + 3 位數流水號（EMP001, EMP002...） |
+| 預設密碼 | `'password'` |
+
+### 4.7 儀表板模組
+
+| 項目 | 說明 |
+|------|------|
+| 前端 | `AdminOverview.tsx` |
+| 後端 | `api.ts` action: `get-dashboard-stats` |
+
+**顯示內容：**
+- 今日出勤人數 vs 排班人數
+- 本月總工時
+- 待審核請假件數
+- PT 時數預警件數
+- 今日出勤對照表（每位員工的排班 vs 實際打卡）
+- 待處理事項列表（請假審核、時數警示）
+
+### 4.8 排班對照表模組
+
+| 項目 | 說明 |
+|------|------|
+| 前端 | `ScheduleComparison.tsx` |
+| 後端 | `api.ts` action: `get-schedule-attendance-comparison` |
+| 功能 | 逐日比較排班人員 vs 實際出勤紀錄 |
+
+---
+
+## 5. 資料模型
+
+### 5.1 Firestore Collections
+
+#### `employees` — 員工資料
+| 欄位 | 型別 | 說明 |
+|------|------|------|
+| id | string | 員工編號（EMP001） |
+| name | string | 姓名 |
+| role | string | `'管理者'` / `'員工'` |
+| position | string | `'專責人員'` / `'兼職人員'` |
+| phone | string | 電話 |
+| email | string | Email |
+| hourlyRate | number | 時薪（兼職用） |
+| monthlySalary | number | 月薪（專責用） |
+| hireDate | string | 到職日 (YYYY-MM-DD) |
+| resignDate | string? | 離職日 |
+| status | string | `'在職'` / `'離職'` / `'留停'` |
+| password | string | 密碼（明文） |
+
+#### `scheduleTemplate` — 排班模板
+| 文件 ID | 說明 |
+|---------|------|
+| "0" | 週日 |
+| "1" | 週一 |
+| ... | ... |
+| "6" | 週六 |
+
+每筆文件欄位：
+| 欄位 | 型別 | 說明 |
+|------|------|------|
+| status | string | `'營運'` / `'休館'` |
+| shiftTime | string | 時段（如 `"08:30-17:30"`） |
+| staffA | string | 專責人員 A 姓名 |
+| staffB | string | 專責人員 B 姓名 |
+| partTime | string[] | 兼職人員姓名陣列 |
+
+#### `dailySchedule` — 逐日排班（Phase 1 新增）
+| 文件 ID | 說明 |
+|---------|------|
+| "YYYY-MM-DD" | 該日班表 |
+
+每筆文件欄位與 `scheduleTemplate` 相同（status, shiftTime, staffA, staffB, partTime）。
+
+查詢邏輯：優先讀取 `dailySchedule/{date}`，不存在則 fallback 到 `scheduleTemplate`（以星期幾為 key）。
+
+#### `clockRecords` — 打卡紀錄
+| 欄位 | 型別 | 說明 |
+|------|------|------|
+| empId | string | 員工編號 |
+| name | string | 姓名 |
+| date | string | 日期 (YYYY-MM-DD) |
+| clockInTime | string | 上班時間 (HH:mm) |
+| clockOutTime | string? | 下班時間 (HH:mm) |
+| verificationMethod | string | `'IP'` / `'GPS'` |
+| verificationData | string | IP 或 GPS 座標 |
+| workHours | number? | 工時（小時） |
+| status | string | `'正常'` / `'遲到'` / `'早退'` |
+
+#### `leaveRequests` — 請假申請
+| 欄位 | 型別 | 說明 |
+|------|------|------|
+| empId | string | 員工編號 |
+| name | string | 姓名 |
+| leaveType | string | 假別 |
+| startDate | string | 開始日期時間 |
+| endDate | string | 結束日期時間 |
+| hours | number | 時數（後端計算） |
+| reason | string | 事由 |
+| requestDate | string | 申請日期 (ISO) |
+| status | string | `'待審核'` / `'核准'` / `'駁回'` |
+| approver | string? | 核准者姓名 |
+| approvalDate | string? | 核准日期 (ISO) |
+
+### 5.2 預設初始資料
+
+系統首次載入時，若 `employees/EMP001` 不存在，會自動寫入以下測試資料：
+
+| ID | 姓名 | 角色 | 職位 | 薪資 |
+|----|------|------|------|------|
+| EMP001 | 王小明 | 管理者 | 專責人員 | 月薪 38,000 |
+| EMP002 | 李小華 | 管理者 | 專責人員 | 月薪 36,000 |
+| EMP003 | 張小美 | 員工 | 兼職人員 | 時薪 183 |
+| EMP004 | 陳大文 | 員工 | 兼職人員 | 時薪 183 |
+| EMP005 | 林小芬 | 員工 | 兼職人員 | 時薪 183 |
+
+> **注意：** 以上為假資料，且初始化後無法從系統介面清除。排班模板也使用這些假人名。
+
+---
+
+## 6. API 端點清單
+
+所有 API 透過 `POST /.netlify/functions/api` 單一端點，以 `action` 欄位分派。
+
+### 6.1 不需認證
+
+| Action | 參數 | 回傳 | 說明 |
+|--------|------|------|------|
+| `login` | `empId`, `password` | `{ user, customToken }` | 登入 |
+| `initialize-database` | — | `{ message }` | 初始化預設資料 |
+
+### 6.2 需認證（Bearer Token）
+
+| Action | 參數 | 回傳 | 說明 |
+|--------|------|------|------|
+| **打卡** | | | |
+| `get-today-clock-status` | — | `{ clockInTime?, clockOutTime? }` | 今日打卡狀態 |
+| `clock-in` | `name`, `verificationMethod`, `verificationData` | `boolean` | 打上班卡 |
+| `clock-out` | — | `boolean` | 打下班卡 |
+| `validate-gps` | `lat`, `lng` | `{ isValid, distance }` | GPS 驗證 |
+| **打卡紀錄** | | | |
+| `get-clock-records` | `yearMonth` | `ClockRecord[]` | 個人打卡紀錄 |
+| `get-all-clock-records` | `yearMonth` | `ClockRecord[]` | 全員打卡紀錄 |
+| **排班** | | | |
+| `get-employee-schedule` | `yearMonth` | `ScheduleEvent[]` | 個人班表 |
+| `get-monthly-schedule` | `yearMonth` | `ScheduleEvent[]` | 全月班表 |
+| `update-schedule` | `event` | `boolean` | 更新排班（寫入模板） |
+| **請假** | | | |
+| `get-employee-leave-requests` | — | `LeaveRequest[]` | 個人請假紀錄 |
+| `get-all-leave-requests` | — | `LeaveRequest[]` | 全部請假紀錄 |
+| `submit-leave-request` | `leaveType`, `startDate`, `endDate`, `reason` | `boolean` | 提交請假 |
+| `approve-leave` | `requestId`, `status`, `approverName` | `boolean` | 審核請假 |
+| **員工管理** | | | |
+| `get-all-employees` | — | `User[]` | 全員基本資料 |
+| `get-all-employees-detail` | — | `Employee[]` | 全員詳細資料 |
+| `get-employee` | `empId` | `Employee` | 單一員工資料 |
+| `create-employee` | `employee`, `initialPassword?` | `Employee` | 新增員工 |
+| `update-employee` | `empId`, `updates` | `Employee` | 更新員工 |
+| `delete-employee` | `empId` | `boolean` | 刪除員工 |
+| **密碼** | | | |
+| `change-password` | `oldPassword`, `newPassword` | `{ success, message }` | 修改密碼 |
+| `reset-password` | `empId`, `newPassword` | `{ success, message }` | 重設密碼 |
+| **儀表板** | | | |
+| `get-dashboard-stats` | — | `DashboardStats` | 儀表板統計 |
+| `get-all-part-time-hours` | `yearMonth` | `PartTimeHourInfo[]` | PT 時數 |
+| **對照表** | | | |
+| `get-schedule-attendance-comparison` | `yearMonth` | `Comparison[]` | 排班 vs 出勤 |
+| **薪資** | | | |
+| `get-all-salary-details` | `yearMonth` | `SalaryDetail[]` | 全員薪資 |
+| `get-employee-salary` | `empId?`, `yearMonth` | `SalaryDetail` | 個人薪資 |
+
+---
+
+## 7. 前端頁面與元件
+
+### 7.1 頁面路由
+
+| 條件 | 頁面 |
+|------|------|
+| 未登入 | `LoginPage` |
+| 登入 + role = Admin | `AdminDashboard` |
+| 登入 + role = Employee | `EmployeeDashboard` |
+
+### 7.2 AdminDashboard 子頁面
+
+| View Key | 元件 | 功能 |
+|----------|------|------|
+| `overview` | `AdminOverview` | 總覽儀表板 |
+| `schedule` | `ScheduleManager` | 排班管理 |
+| `comparison` | `ScheduleComparison` | 排班對照表 |
+| `attendance` | `AttendanceLog` | 出勤紀錄（含 CSV 匯出） |
+| `leave` | `LeaveApprovalQueue` | 請假審核 |
+| `employees` | `EmployeeManager` | 員工管理（含密碼重設） |
+| `salary` | `SalaryCalculation` | 薪資計算（含 CSV 匯出） |
+
+### 7.3 EmployeeDashboard 子頁面
+
+| View Key | 元件 | 功能 |
+|----------|------|------|
+| `clock` | `ClockIn` | 打卡（IP/GPS） |
+| `schedule` | `MyScheduleCalendar` | 我的班表 |
+| `fullSchedule` | `FullScheduleCalendar` | 總班表 |
+| `records` | `MyRecords` | 打卡紀錄 |
+| `leave` | `LeaveRequestForm` | 請假申請 |
+| `salary` | `MySalary` | 薪資明細 |
+
+---
+
+## 8. 已知問題與限制
+
+### 8.1 使用者提出的 6 項問題
+
+| 編號 | 問題 | 嚴重度 | 影響範圍 | 現況描述 |
+|------|------|--------|---------|---------|
+| **#1** | ~~預設假人名自動帶入~~ | ~~高~~ | ~~排班、薪資~~ | **v1.1 已修正** — 初始化改為空白模板 + 預設管理員帳號（ADMIN），不再寫入假人名。 |
+| **#2** | ~~班表無法選擇上班時段~~ | ~~高~~ | ~~排班管理~~ | **v1.1 已修正** — EditModal 新增時段選擇器（開始/結束時間），並顯示班別時數和排班摘要。 |
+| **#3** | ~~休館日無正職值班機制~~ | ~~中~~ | ~~排班管理~~ | **v1.2 已修正** — 新增「休館(值班)」狀態，可安排正職值班，工時計入薪資。 |
+| **#4** | ~~值班人員連動每週~~ | ~~高~~ | ~~排班管理~~ | **v1.1 已修正** — 排班改為逐日制（dailySchedule collection），修改單日不影響其他日期。模板保留作為批次套用功能。 |
+| **#5** | ~~管理員無打卡/請假~~ | ~~高~~ | ~~全系統~~ | **v1.1 已修正** — AdminDashboard 新增「我的功能」區塊，含打卡、請假、出勤紀錄、薪資明細。 |
+| **#6** | ~~無 Super Admin 層級~~ | ~~中~~ | ~~權限、薪資~~ | **v1.2 已修正** — 新增 SuperAdmin 角色，薪資計算頁和系統日誌僅 SuperAdmin 可見。 |
+
+### 8.2 安全性問題
+
+| 編號 | 問題 | 位置 |
+|------|------|------|
+| A1 | ~~密碼明文儲存與顯示~~ | **v1.2 已修正** — scrypt 雜湊儲存，移除 alert 顯示密碼 |
+| A2 | ~~密碼強度僅 4 字元~~ | **v1.2 已修正** — 8 字元+英文+數字 |
+| A3 | ~~登入無防暴力破解~~ | **v1.2 已修正** — 5 次失敗鎖定 15 分鐘 |
+| A4 | ~~IP 驗證寫死假資料~~ | **v1.1 已修正** — 後端從 `x-forwarded-for` header 取得真實 IP |
+| A5 | CSV 匯出含未脫敏個資 | `AttendanceLog.tsx`, `SalaryCalculation.tsx` |
+| A6 | ~~無操作稽核紀錄~~ | **v1.2 已修正** — auditLogs collection，管理操作自動記錄 |
+
+### 8.3 功能缺陷
+
+| 模組 | 問題 |
+|------|------|
+| 排班 | 無逐日排班、無班別時段編輯、無人力不足偵測、無衝突偵測、無休館值班 |
+| 打卡 | 遲到/早退判定寫死正常、無補登機制、管理員無法代打卡 |
+| 請假 | 無假別餘額、無日期驗證、駁回無理由、無通知、無衝突偵測 |
+| 薪資 | 費率硬寫死、計算邏輯前後端重複、無月結鎖定、無薪資條下載 |
+| UI/UX | 錯誤訊息中英混雜、無 Error Boundary、色盲不友善、外部圖片依賴 |
+
+---
+
+## 9. 變更紀錄
+
+| 日期 | 版本 | 變更內容 |
+|------|------|---------|
+| 2026-04-08 | v1.0 | 初版建立，記錄系統現況及所有已知問題 |
+| 2026-04-08 | v1.1 | Phase 1 完成：(1) 移除預設假人名，改為空白模板+預設管理員帳號 (2) 排班改為逐日制（dailySchedule collection），保留模板作為批次套用 (3) 排班 Modal 新增時段編輯、營運狀態切換、排班摘要 (4) 管理員後台新增「我的打卡/請假/紀錄/薪資」功能 (5) IP 驗證改為從後端 header 取得真實 IP |
+| 2026-04-08 | v1.2 | Phase 2 完成：(1) 新增 SuperAdmin 角色，薪資計算頁僅 SuperAdmin 可見，後端 API 權限檢查 (2) 密碼改為 scrypt 雜湊儲存，舊密碼登入時自動升級，強度要求 8 字元+英數，登入失敗 5 次鎖定 15 分鐘，移除密碼明文顯示 (3) 新增 auditLogs collection，管理操作自動記錄，SuperAdmin 可查看系統日誌 (4) 新增「休館(值班)」狀態，休館日可安排正職值班，工時納入薪資計算 |

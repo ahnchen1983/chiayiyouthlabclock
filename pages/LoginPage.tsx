@@ -18,8 +18,8 @@ const LoginPage: React.FC = () => {
       if (!user) {
         setError('帳號或密碼錯誤，請重新輸入。');
       }
-    } catch (err) {
-      setError('登入時發生錯誤，請稍後再試。');
+    } catch (err: any) {
+      setError(err?.message || '登入時發生錯誤，請稍後再試。');
     } finally {
       setLoading(false);
     }

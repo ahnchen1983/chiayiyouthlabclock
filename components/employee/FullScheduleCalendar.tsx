@@ -67,8 +67,8 @@ const FullScheduleCalendar: React.FC = () => {
           <div className="font-bold">{day}</div>
           {event && (
             <div className="text-xs mt-1 space-y-1">
-              <p className={`font-semibold ${event.status === '休館' ? 'text-red-700' : 'text-green-700'}`}>{event.status}</p>
-              {event.status === '營運' && (
+              <p className={`font-semibold ${event.status === '休館' ? 'text-red-700' : event.status === '休館(值班)' ? 'text-orange-600' : 'text-green-700'}`}>{event.status}</p>
+              {(event.status === '營運' || event.status === '休館(值班)') && (
                 <>
                 <p>專責A: <span className="font-medium">{event.staffA || '未排'}</span></p>
                 <p>專責B: <span className="font-medium">{event.staffB || '未排'}</span></p>

@@ -36,7 +36,7 @@ const ClockIn: React.FC = () => {
         setIsProcessing(true);
         setStatusMessage({ type: 'info', text: '驗證中...' });
 
-        let verificationData = '127.0.0.1'; // Mock IP
+        let verificationData = '';
         let isValid = true;
 
         if (verificationMethod === 'GPS') {
@@ -48,9 +48,9 @@ const ClockIn: React.FC = () => {
                 verificationData = `${latitude.toFixed(4)},${longitude.toFixed(4)}`;
                 const validationResult = await apiValidateGPS(latitude, longitude);
                 isValid = validationResult.isValid;
-                setStatusMessage({ 
-                    type: isValid ? 'success' : 'error', 
-                    text: isValid ? `GPS驗證成功` : `驗證失敗: 距離場館 ${validationResult.distance?.toFixed(0)} 公尺` 
+                setStatusMessage({
+                    type: isValid ? 'success' : 'error',
+                    text: isValid ? `GPS驗證成功` : `驗證失敗: 距離場館 ${validationResult.distance?.toFixed(0)} 公尺`
                 });
             } catch (error) {
                 setStatusMessage({ type: 'error', text: '無法取得GPS位置，請確認已授權。' });
@@ -58,7 +58,9 @@ const ClockIn: React.FC = () => {
                 return;
             }
         } else {
-             setStatusMessage({ type: 'success', text: 'IP驗證成功 (模擬)' });
+            // IP 驗證：由後端從 request header 取得真實 IP
+            verificationData = 'auto-detect';
+            setStatusMessage({ type: 'success', text: 'IP驗證中...' });
         }
 
         if (isValid) {
@@ -78,10 +80,9 @@ const ClockIn: React.FC = () => {
         setIsProcessing(true);
         setStatusMessage({ type: 'info', text: '驗證中...' });
 
-        let verificationData = '127.0.0.1'; // Mock IP
+        let verificationData = '';
         let isValid = true;
-        
-        // You might want to re-validate on clock-out as well
+
         if (verificationMethod === 'GPS') {
              try {
                 const position = await new Promise<GeolocationPosition>((resolve, reject) => {
@@ -91,9 +92,9 @@ const ClockIn: React.FC = () => {
                 verificationData = `${latitude.toFixed(4)},${longitude.toFixed(4)}`;
                 const validationResult = await apiValidateGPS(latitude, longitude);
                 isValid = validationResult.isValid;
-                 setStatusMessage({ 
-                    type: isValid ? 'success' : 'error', 
-                    text: isValid ? `GPS驗證成功` : `驗證失敗: 距離場館 ${validationResult.distance?.toFixed(0)} 公尺` 
+                 setStatusMessage({
+                    type: isValid ? 'success' : 'error',
+                    text: isValid ? `GPS驗證成功` : `驗證失敗: 距離場館 ${validationResult.distance?.toFixed(0)} 公尺`
                 });
             } catch (error) {
                 setStatusMessage({ type: 'error', text: '無法取得GPS位置' });
@@ -101,9 +102,8 @@ const ClockIn: React.FC = () => {
                 return;
             }
         } else {
-            setStatusMessage({ type: 'success', text: 'IP驗證成功 (模擬)' });
+            verificationData = 'auto-detect';
         }
-
 
         if(isValid) {
             const success = await apiClockOut(user.id);

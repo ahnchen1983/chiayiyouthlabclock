@@ -76,8 +76,8 @@ const MyScheduleCalendar: React.FC = () => {
           )}
           {event && !isOnLeave && (
             <div className="text-xs mt-1">
-              <p className={`font-semibold ${event.status === '休館' ? 'text-red-700' : 'text-green-700'}`}>{event.status}</p>
-              {event.status === '營運' && <p className="text-gray-600">{event.shiftTime}</p>}
+              <p className={`font-semibold ${event.status === '休館' ? 'text-red-700' : event.status === '休館(值班)' ? 'text-orange-600' : 'text-green-700'}`}>{event.status}</p>
+              {(event.status === '營運' || event.status === '休館(值班)') && <p className="text-gray-600">{event.shiftTime}</p>}
             </div>
           )}
         </div>

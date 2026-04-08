@@ -98,8 +98,8 @@ const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({ employee, onClose
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         if (isNew) {
-            if (initialPassword.length < 4) {
-                alert('初始密碼至少需要 4 個字元');
+            if (initialPassword.length < 8 || !/[a-zA-Z]/.test(initialPassword) || !/[0-9]/.test(initialPassword)) {
+                alert('初始密碼至少 8 字元，需含英文與數字');
                 return;
             }
             onSave(formData, initialPassword);
@@ -201,6 +201,7 @@ const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({ employee, onClose
                                 onChange={handleChange}
                                 className="w-full p-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                             >
+                                <option value={UserRole.SuperAdmin}>最高管理者</option>
                                 <option value={UserRole.Admin}>管理者</option>
                                 <option value={UserRole.Employee}>員工</option>
                             </select>
@@ -355,8 +356,8 @@ const ResetPasswordModal: React.FC<ResetPasswordModalProps> = ({ employee, onClo
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        if (newPassword.length < 4) {
-            alert('新密碼至少需要 4 個字元');
+        if (newPassword.length < 8 || !/[a-zA-Z]/.test(newPassword) || !/[0-9]/.test(newPassword)) {
+            alert('新密碼至少 8 字元，需含英文與數字');
             return;
         }
         onConfirm(newPassword);
@@ -472,7 +473,7 @@ const EmployeeManager: React.FC = () => {
         if (selectedEmployee) {
             const res = await apiResetPassword(selectedEmployee.id, newPassword);
             if (res.success) {
-                alert(`已經成功重設 ${selectedEmployee.name} 的密碼為：${newPassword}`);
+                alert(`已成功重設 ${selectedEmployee.name} 的密碼，請通知該員工使用新密碼登入。`);
                 setShowResetModal(false);
                 setSelectedEmployee(null);
             } else {

@@ -43,6 +43,7 @@ interface DayCardProps {
 const DayCard: React.FC<DayCardProps> = ({ data, isSelected, onClick }) => {
     const day = parseInt(data.date.split('-')[2]);
     const isClosed = data.status === '休館';
+    const isDutyDay = data.status === '休館(值班)';
     const scheduledCount = data.employees.filter(e => e.scheduled).length;
     const attendedCount = data.employees.filter(e => e.scheduled && e.clockInTime).length;
     const hasIssue = data.employees.some(e => e.attendanceStatus === '缺勤' || e.attendanceStatus === '遲到');
@@ -248,14 +249,14 @@ const ScheduleComparison: React.FC = () => {
                     <div className="lg:col-span-2">
                         {selectedDayData ? (
                             <div className="border rounded-lg overflow-hidden">
-                                <div className={`p-4 ${selectedDayData.status === '休館' ? 'bg-gray-100' : 'bg-purple-50'}`}>
+                                <div className={`p-4 ${selectedDayData.status === '休館' ? 'bg-gray-100' : selectedDayData.status === '休館(值班)' ? 'bg-orange-50' : 'bg-purple-50'}`}>
                                     <div className="flex items-center justify-between">
                                         <div>
                                             <h3 className="text-lg font-bold text-gray-800">
                                                 {selectedDayData.date} ({selectedDayData.dayOfWeek})
                                             </h3>
                                             <p className="text-sm text-gray-500">
-                                                {selectedDayData.status === '休館' ? '休館日' : `營運時間`}
+                                                {selectedDayData.status === '休館' ? '休館日' : selectedDayData.status === '休館(值班)' ? '休館(值班)' : `營運時間`}
                                             </p>
                                         </div>
                                         {selectedDayData.status === '營運' && (

@@ -1,5 +1,6 @@
 
 export enum UserRole {
+  SuperAdmin = '最高管理者',
   Admin = '管理者',
   Employee = '員工',
 }
@@ -32,7 +33,7 @@ export interface ClockRecord {
 export interface ScheduleEvent {
     date: string;
     dayOfWeek: string;
-    status: '營運' | '休館';
+    status: '營運' | '休館' | '休館(值班)';
     shiftTime: string;
     staffA: string;
     staffB: string;

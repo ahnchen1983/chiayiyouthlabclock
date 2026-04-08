@@ -43,6 +43,8 @@ export const apiLogin = async (username: string, password: string): Promise<User
     if (!res.ok) return null;
     const result = await res.json();
     if (!result) return null;
+    // 帳號鎖定
+    if (result.error) throw new Error(result.error);
     // 交換 Custom Token → ID Token（後續請求的憑證）
     await signInWithCustomToken(auth, result.customToken);
     return result.user;
@@ -92,6 +94,10 @@ export const apiGetMonthlySchedule = async (yearMonth: string): Promise<Schedule
 
 export const apiUpdateSchedule = async (updatedEvent: ScheduleEvent): Promise<boolean> => {
     return callAPI('update-schedule', { event: updatedEvent });
+};
+
+export const apiApplyTemplate = async (yearMonth: string): Promise<{ message: string }> => {
+    return callAPI('apply-template', { yearMonth });
 };
 
 // ==================== 請假 ====================
@@ -165,7 +171,7 @@ export const apiGetAllPartTimeHours = async (yearMonth: string): Promise<PartTim
 export interface ScheduleAttendanceComparison {
     date: string;
     dayOfWeek: string;
-    status: '營運' | '休館';
+    status: '營運' | '休館' | '休館(值班)';
     employees: {
         empId: string;
         name: string;
@@ -191,4 +197,19 @@ export const apiGetAllSalaryDetails = async (yearMonth: string): Promise<SalaryD
 
 export const apiGetEmployeeSalary = async (empId: string, yearMonth: string): Promise<SalaryDetail | null> => {
     return callAPI('get-employee-salary', { empId, yearMonth });
+};
+
+// ==================== 稽核日誌 ====================
+
+export interface AuditLog {
+    id: string;
+    timestamp: string;
+    userId: string;
+    action: string;
+    targetId: string;
+    details: string;
+}
+
+export const apiGetAuditLogs = async (limit: number = 100): Promise<AuditLog[]> => {
+    return callAPI('get-audit-logs', { limit });
 };

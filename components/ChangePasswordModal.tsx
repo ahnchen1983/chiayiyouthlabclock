@@ -23,8 +23,16 @@ const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({ onClose }) =>
             return;
         }
 
-        if (newPassword.length < 4) {
-            setError('新密碼至少需要 4 個字元');
+        if (newPassword.length < 8) {
+            setError('新密碼至少需要 8 個字元');
+            return;
+        }
+        if (!/[a-zA-Z]/.test(newPassword)) {
+            setError('新密碼需包含英文字母');
+            return;
+        }
+        if (!/[0-9]/.test(newPassword)) {
+            setError('新密碼需包含數字');
             return;
         }
 

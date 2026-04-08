@@ -1,6 +1,7 @@
 
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { UserRole } from '../types';
 import AdminOverview from '../components/admin/AdminOverview';
 import ScheduleManager from '../components/admin/ScheduleManager';
 import AttendanceLog from '../components/admin/AttendanceLog';
@@ -8,8 +9,13 @@ import LeaveApprovalQueue from '../components/admin/LeaveApprovalQueue';
 import EmployeeManager from '../components/admin/EmployeeManager';
 import ScheduleComparison from '../components/admin/ScheduleComparison';
 import SalaryCalculation from '../components/admin/SalaryCalculation';
+import AuditLogViewer from '../components/admin/AuditLogViewer';
+import ClockIn from '../components/employee/ClockIn';
+import LeaveRequestForm from '../components/employee/LeaveRequestForm';
+import MyRecords from '../components/employee/MyRecords';
+import MySalary from '../components/employee/MySalary';
 import ChangePasswordModal from '../components/ChangePasswordModal';
-import { DashboardIcon, CalendarIcon, ListIcon, CheckSquareIcon, UsersIcon, LogOutIcon, DollarIcon } from '../components/icons';
+import { DashboardIcon, CalendarIcon, ListIcon, CheckSquareIcon, UsersIcon, LogOutIcon, DollarIcon, ClockIcon, SendIcon } from '../components/icons';
 
 // 鑰匙圖示
 const KeyIcon: React.FC<{ className?: string }> = ({ className }) => (
@@ -25,7 +31,7 @@ const CompareIcon: React.FC<{ className?: string }> = ({ className }) => (
   </svg>
 );
 
-type AdminView = 'overview' | 'schedule' | 'attendance' | 'leave' | 'employees' | 'comparison' | 'salary';
+type AdminView = 'overview' | 'schedule' | 'attendance' | 'leave' | 'employees' | 'comparison' | 'salary' | 'auditLog' | 'myClock' | 'myLeave' | 'myRecords' | 'mySalary';
 
 const AdminDashboard: React.FC = () => {
   const { user, logout } = useAuth();
@@ -41,6 +47,11 @@ const AdminDashboard: React.FC = () => {
       case 'employees': return <EmployeeManager />;
       case 'comparison': return <ScheduleComparison />;
       case 'salary': return <SalaryCalculation />;
+      case 'auditLog': return <AuditLogViewer />;
+      case 'myClock': return <ClockIn />;
+      case 'myLeave': return <LeaveRequestForm />;
+      case 'myRecords': return <MyRecords />;
+      case 'mySalary': return <MySalary />;
       default: return <AdminOverview />;
     }
   };
@@ -53,7 +64,7 @@ const AdminDashboard: React.FC = () => {
     <li>
       <button
         onClick={() => setCurrentView(view)}
-        className={`flex items-center p-3 text-base font-normal rounded-lg transition-all duration-200 ${currentView === view
+        className={`flex items-center p-3 text-base font-normal rounded-lg transition-all duration-200 w-full ${currentView === view
           ? 'bg-brand-blue-dark text-white shadow-md'
           : 'text-gray-700 hover:bg-gray-200'
           }`}
@@ -71,7 +82,7 @@ const AdminDashboard: React.FC = () => {
           <img src="https://youthsoullab.chiayi.gov.tw/wp-content/uploads/2024/02/%E6%9C%89%E4%BA%8B%E9%9D%92%E5%B9%B4%E5%AF%A6%E9%A9%97%E5%AE%A4-LOGO-%E7_B6_A0%E8%89%B2.png" alt="Logo" className="w-12 h-12" />
           <h1 className="ml-3 text-xl font-bold text-gray-800">管理者後台</h1>
         </div>
-        <nav className="flex-1 p-4">
+        <nav className="flex-1 p-4 overflow-y-auto">
           <ul className="space-y-2">
             <NavItem view="overview" icon={<DashboardIcon className="w-6 h-6" />} label="總覽儀表板" />
             <NavItem view="schedule" icon={<CalendarIcon className="w-6 h-6" />} label="排班管理" />
@@ -79,8 +90,24 @@ const AdminDashboard: React.FC = () => {
             <NavItem view="attendance" icon={<ListIcon className="w-6 h-6" />} label="出勤紀錄" />
             <NavItem view="leave" icon={<CheckSquareIcon className="w-6 h-6" />} label="請假審核" />
             <NavItem view="employees" icon={<UsersIcon className="w-6 h-6" />} label="員工管理" />
-            <NavItem view="salary" icon={<DollarIcon className="w-6 h-6" />} label="薪資計算" />
+            {user?.role === UserRole.SuperAdmin && (
+              <>
+                <NavItem view="salary" icon={<DollarIcon className="w-6 h-6" />} label="薪資計算" />
+                <NavItem view="auditLog" icon={<ListIcon className="w-6 h-6" />} label="系統日誌" />
+              </>
+            )}
           </ul>
+
+          {/* 我的功能區 */}
+          <div className="mt-6 pt-4 border-t">
+            <p className="text-xs text-gray-400 uppercase tracking-wider mb-2 px-3">我的功能</p>
+            <ul className="space-y-2">
+              <NavItem view="myClock" icon={<ClockIcon className="w-6 h-6" />} label="我的打卡" />
+              <NavItem view="myRecords" icon={<ListIcon className="w-6 h-6" />} label="我的出勤紀錄" />
+              <NavItem view="myLeave" icon={<SendIcon className="w-6 h-6" />} label="我的請假" />
+              <NavItem view="mySalary" icon={<DollarIcon className="w-6 h-6" />} label="我的薪資" />
+            </ul>
+          </div>
         </nav>
         <div className="p-4 border-t">
           <div className="flex items-center mb-4">
@@ -89,7 +116,7 @@ const AdminDashboard: React.FC = () => {
             </div>
             <div className="ml-3">
               <p className="text-sm font-medium text-gray-700">{user?.name}</p>
-              <p className="text-xs text-gray-500">系統管理員</p>
+              <p className="text-xs text-gray-500">{user?.role === UserRole.SuperAdmin ? '最高管理者' : '系統管理員'}</p>
             </div>
           </div>
           <button
