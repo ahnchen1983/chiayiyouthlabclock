@@ -303,35 +303,40 @@ export const handler: Handler = async (event) => {
 
     if (action === 'initialize-database') {
         try {
-            // 檢查是否已有任何員工資料（不再綁定特定 EMP001）
-            const empSnap = await db.collection('employees').limit(1).get();
-            if (!empSnap.empty) return ok({ message: '已初始化' });
-
-            // 只建立空的排班模板結構，不寫入假人名
             const batch = db.batch();
-            const defaultSchedule = [
-                { status: '營運', shiftTime: '08:30-17:30', staffA: '', staffB: '', partTime: [] },  // 日
-                { status: '休館', shiftTime: '', staffA: '', staffB: '', partTime: [] },              // 一
-                { status: '休館', shiftTime: '', staffA: '', staffB: '', partTime: [] },              // 二
-                { status: '營運', shiftTime: '10:00-20:00', staffA: '', staffB: '', partTime: [] },   // 三
-                { status: '營運', shiftTime: '10:00-20:00', staffA: '', staffB: '', partTime: [] },   // 四
-                { status: '營運', shiftTime: '08:30-17:30', staffA: '', staffB: '', partTime: [] },   // 五
-                { status: '營運', shiftTime: '08:30-17:30', staffA: '', staffB: '', partTime: [] },   // 六
-            ];
-            for (let i = 0; i < 7; i++) {
-                batch.set(db.collection('scheduleTemplate').doc(String(i)), defaultSchedule[i]);
+
+            // 排班模板：若不存在才建立
+            const templateSnap = await db.collection('scheduleTemplate').limit(1).get();
+            if (templateSnap.empty) {
+                const defaultSchedule = [
+                    { status: '營運', shiftTime: '08:30-17:30', staffA: '', staffB: '', partTime: [] },  // 日
+                    { status: '休館', shiftTime: '', staffA: '', staffB: '', partTime: [] },              // 一
+                    { status: '休館', shiftTime: '', staffA: '', staffB: '', partTime: [] },              // 二
+                    { status: '營運', shiftTime: '10:00-20:00', staffA: '', staffB: '', partTime: [] },   // 三
+                    { status: '營運', shiftTime: '10:00-20:00', staffA: '', staffB: '', partTime: [] },   // 四
+                    { status: '營運', shiftTime: '08:30-17:30', staffA: '', staffB: '', partTime: [] },   // 五
+                    { status: '營運', shiftTime: '08:30-17:30', staffA: '', staffB: '', partTime: [] },   // 六
+                ];
+                for (let i = 0; i < 7; i++) {
+                    batch.set(db.collection('scheduleTemplate').doc(String(i)), defaultSchedule[i]);
+                }
             }
 
-            // 建立預設最高管理員帳號（首次使用需由此帳號登入後新增其他員工）
-            batch.set(db.collection('employees').doc('ADMIN'), {
-                id: 'ADMIN', name: '系統管理員', role: UserRole.SuperAdmin, position: '專責人員',
-                phone: '', email: '', hourlyRate: 0, monthlySalary: 0,
-                hireDate: new Date().toISOString().slice(0, 10),
-                status: '在職' as EmployeeStatus, password: 'admin1234',
-            });
+            // SuperAdmin 帳號：若不存在才建立
+            const adminSnap = await db.collection('employees').doc('ADMIN').get();
+            if (!adminSnap.exists) {
+                batch.set(db.collection('employees').doc('ADMIN'), {
+                    id: 'ADMIN', name: '系統管理員', role: UserRole.SuperAdmin, position: '專責人員',
+                    phone: '', email: '', hourlyRate: 0, monthlySalary: 0,
+                    hireDate: new Date().toISOString().slice(0, 10),
+                    status: '在職' as EmployeeStatus, password: hashPassword('admin1234'),
+                });
+                await batch.commit();
+                return ok({ message: '已建立 SuperAdmin 帳號，請使用 ADMIN / admin1234 登入' });
+            }
 
             await batch.commit();
-            return ok({ message: '初始化完成，請使用帳號 ADMIN / admin1234 登入後新增員工' });
+            return ok({ message: '已初始化' });
         } catch (e: any) {
             return fail(500, e.message);
         }
