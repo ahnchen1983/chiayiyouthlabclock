@@ -1,9 +1,15 @@
 # 嘉義青年實驗室打卡系統 — 軟體設計文件 (SDD)
 
-> **版本：** v1.0
+> **版本：** v1.3
 > **建立日期：** 2026-04-08
-> **最後更新：** 2026-04-08
-> **對應程式版本：** commit `7796637` (v2)
+> **最後更新：** 2026-04-09
+> **對應程式版本：** commit `ba31961` (Phase 1+2 完成)
+> **開發進度：** Phase 1 ✅ · Phase 2 ✅ · Phase 3 ⬜ · Phase 4 ⬜
+>
+> **相關文件：**
+> - [DEVELOPMENT_ROADMAP.md](./DEVELOPMENT_ROADMAP.md) — 開發階段規劃
+> - [CHANGELOG.md](./CHANGELOG.md) — 完整變更紀錄
+> - [VERIFICATION_MANUAL.md](./VERIFICATION_MANUAL.md) — 系統驗證手冊
 
 ---
 
@@ -118,8 +124,11 @@ chiayiyouthlabclock/
 │  │ Authentication│  │ Firestore                    │     │
 │  │ (Custom Token)│  │ ├─ employees                 │     │
 │  │               │  │ ├─ scheduleTemplate          │     │
+│  │               │  │ ├─ dailySchedule  (v1.1)     │     │
 │  │               │  │ ├─ clockRecords              │     │
-│  │               │  │ └─ leaveRequests             │     │
+│  │               │  │ ├─ leaveRequests             │     │
+│  │               │  │ ├─ auditLogs      (v1.2)     │     │
+│  │               │  │ └─ loginAttempts  (v1.2)     │     │
 │  └──────────────┘  └─────────────────────────────┘     │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -128,12 +137,15 @@ chiayiyouthlabclock/
 
 1. 使用者輸入員工編號 + 密碼
 2. 前端呼叫 `POST /.netlify/functions/api` (action: `login`)
-3. 後端比對 Firestore `employees` 中的密碼（明文比對）
-4. 比對成功 → 呼叫 `adminAuth.createCustomToken(empId)` 產生 Custom Token
-5. 前端用 `signInWithCustomToken()` 交換為 Firebase ID Token
-6. 後續所有 API 請求帶 `Authorization: Bearer <ID Token>`
-7. 後端用 `adminAuth.verifyIdToken()` 驗證
-8. 使用者資訊存入 `sessionStorage`
+3. 後端檢查 `loginAttempts/{empId}` 鎖定狀態（5 次失敗鎖定 15 分鐘）
+4. 讀取 Firestore `employees.password`，以 scrypt 雜湊比對（v1.2）
+   - 若為舊版明文密碼（不含 `:`），比對成功後自動升級為雜湊
+   - 失敗時寫入 `loginAttempts` 計數
+5. 比對成功 → 清除失敗紀錄 → `adminAuth.createCustomToken(empId)` 產生 Custom Token
+6. 前端用 `signInWithCustomToken()` 交換為 Firebase ID Token
+7. 後續所有 API 請求帶 `Authorization: Bearer <ID Token>`
+8. 後端用 `adminAuth.verifyIdToken()` 驗證，並依 `employees.role` 判定 `isSuperAdmin` / `isAdmin`
+9. 使用者資訊存入 `sessionStorage`
 
 ### 2.3 資料流
 
@@ -150,8 +162,11 @@ chiayiyouthlabclock/
 
 | 角色 | 值 | 說明 | 進入頁面 |
 |------|-----|------|---------|
-| 管理者 | `UserRole.Admin` | 具備所有管理功能 | `AdminDashboard` |
+| 最高管理者 | `UserRole.SuperAdmin` | 具備所有管理功能 + 薪資 + 系統日誌 | `AdminDashboard` |
+| 系統管理者 | `UserRole.Admin` | 具備一般管理功能（無薪資/日誌） | `AdminDashboard` |
 | 員工 | `UserRole.Employee` | 僅限自身操作 | `EmployeeDashboard` |
+
+> **角色層級：** `SuperAdmin > Admin > Employee`，SuperAdmin 為 v1.2 新增。
 
 ### 3.2 職位類型
 
@@ -162,24 +177,25 @@ chiayiyouthlabclock/
 
 ### 3.3 各角色可用功能
 
-| 功能 | 管理者 (Admin) | 員工 (Employee) |
-|------|:--------------:|:--------------:|
-| 打卡 | -- | V |
-| 查看自己班表 | -- | V |
-| 查看總班表 | -- | V |
-| 查看打卡紀錄 | -- | V |
-| 請假申請 | -- | V |
-| 查看薪資明細 | -- | V |
-| 總覽儀表板 | V | -- |
-| 排班管理 | V | -- |
-| 排班對照表 | V | -- |
-| 出勤紀錄（全員） | V | -- |
-| 請假審核 | V | -- |
-| 員工管理 | V | -- |
-| 薪資計算（全員） | V | -- |
-| 修改密碼 | V | V |
+| 功能 | SuperAdmin | Admin | Employee |
+|------|:----------:|:-----:|:--------:|
+| 打卡 | V | V | V |
+| 查看自己班表 | V | V | V |
+| 查看總班表 | V | V | V |
+| 查看自己打卡紀錄 | V | V | V |
+| 請假申請 | V | V | V |
+| 查看自己薪資明細 | V | V | V |
+| 總覽儀表板 | V | V | -- |
+| 排班管理 | V | V | -- |
+| 排班對照表 | V | V | -- |
+| 出勤紀錄（全員） | V | V | -- |
+| 請假審核 | V | V | -- |
+| 員工管理 | V | V | -- |
+| **薪資計算（全員）** | **V** | -- | -- |
+| **系統日誌（auditLogs）** | **V** | -- | -- |
+| 修改密碼 | V | V | V |
 
-> **已知限制：** 管理者無法打卡、請假。詳見 [8.1 已知問題 #5](#81-使用者提出的-6-項問題)
+> **v1.1+v1.2 變更：** (1) Admin/SuperAdmin 也能打卡、請假、查看自己紀錄 (2) 薪資計算頁和系統日誌僅 SuperAdmin 可見，後端 API 有 role check。
 
 ---
 
@@ -191,7 +207,9 @@ chiayiyouthlabclock/
 |------|------|
 | 檔案 | `LoginPage.tsx`, `AuthContext.tsx`, `api.ts` (action: login) |
 | 功能 | 員工編號 + 密碼登入 |
-| 密碼儲存 | 明文存於 Firestore `employees.password` |
+| 密碼儲存 | **scrypt 雜湊**（v1.2），格式 `salt:hash`；舊版明文登入時自動升級 |
+| 密碼強度 | 至少 8 字元，需含英文字母與數字（v1.2） |
+| 防暴力破解 | `loginAttempts` collection 記錄失敗次數，5 次鎖定 15 分鐘（v1.2） |
 | Session | `sessionStorage` 存 user JSON |
 | 登出 | 清除 sessionStorage + `signOut(auth)` |
 
@@ -201,30 +219,31 @@ chiayiyouthlabclock/
 |------|------|
 | 管理端 | `ScheduleManager.tsx` |
 | 員工端 | `MyScheduleCalendar.tsx`, `FullScheduleCalendar.tsx` |
-| 後端 | `api.ts` actions: `get-monthly-schedule`, `get-employee-schedule`, `update-schedule` |
-| 資料結構 | 以「星期幾」(0-6) 為 key 的模板制 |
-| 營運狀態 | `'營運'` / `'休館'` |
-| 班別時段 | `shiftTime` 欄位（如 `"08:30-17:30"`），前端**不可編輯** |
+| 後端 | `api.ts` actions: `get-monthly-schedule`, `get-employee-schedule`, `update-schedule`, `apply-template`（v1.1） |
+| 資料結構 | **逐日制**（v1.1），`dailySchedule/{YYYY-MM-DD}` 為主，`scheduleTemplate` 為預設模板 |
+| 營運狀態 | `'營運'` / `'休館(值班)'` / `'休館'`（v1.2 新增休館值班） |
+| 班別時段 | `shiftTime` 欄位（如 `"08:30-17:30"`），**可於 EditModal 編輯**（v1.1） |
 | 人員欄位 | `staffA`（專責A）、`staffB`（專責B）、`partTime[]`（兼職陣列） |
 
-**排班產生邏輯：**
-1. Firestore `scheduleTemplate` 存 7 筆文件（doc id: "0"-"6"，代表週日-週六）
-2. 查詢月班表時，遍歷該月每一天，根據星期幾取對應模板
-3. 修改班表時，前端傳送某一天的資料，後端**計算該日是星期幾，覆寫整個模板**
+**排班產生邏輯（v1.1 後）：**
+1. 查詢月班表時，批次讀取 `dailySchedule/{YYYY-MM-DD}` 該月所有文件
+2. 若某日 `dailySchedule` 不存在，fallback 到 `scheduleTemplate` 對應星期幾
+3. 修改班表時，後端只寫入 `dailySchedule/{該日期}`，**不影響其他同星期日期**
+4. `apply-template` action 可批次將模板套用到指定月份，一次產生該月所有 `dailySchedule` 文件
 
-**預設排班模板：**
+**初始化預設模板（無人員）：**
 
 | 星期 | 狀態 | 時段 | 專責A | 專責B | 兼職 |
 |------|------|------|-------|-------|------|
-| 日 | 營運 | 08:30-17:30 | 王小明 | 李小華 | 陳大文 |
+| 日 | 營運 | 08:30-17:30 | — | — | — |
 | 一 | 休館 | — | — | — | — |
 | 二 | 休館 | — | — | — | — |
-| 三 | 營運 | 10:00-20:00 | 王小明 | — | 張小美 |
-| 四 | 營運 | 10:00-20:00 | 王小明 | — | 陳大文 |
-| 五 | 營運 | 08:30-17:30 | 王小明 | 李小華 | 林小芬 |
-| 六 | 營運 | 08:30-17:30 | 王小明 | 李小華 | 張小美 |
+| 三 | 營運 | 10:00-20:00 | — | — | — |
+| 四 | 營運 | 10:00-20:00 | — | — | — |
+| 五 | 營運 | 08:30-17:30 | — | — | — |
+| 六 | 營運 | 08:30-17:30 | — | — | — |
 
-> 以上人名皆為初始化假資料，非真實人員。
+> v1.1 起初始化不再寫入任何假人名，人員由管理員於員工管理頁面手動建立後再排班。
 
 ### 4.3 打卡出勤模組
 
@@ -233,11 +252,11 @@ chiayiyouthlabclock/
 | 前端 | `ClockIn.tsx` |
 | 後端 | `api.ts` actions: `clock-in`, `clock-out`, `get-today-clock-status`, `validate-gps` |
 | 驗證方式 | IP 驗證 或 GPS 驗證（二擇一） |
-| IP 驗證 | 目前寫死 `127.0.0.1`，**非真實驗證** |
+| IP 驗證 | **後端從 `x-forwarded-for` header 取得真實 IP**（v1.1 修正） |
 | GPS 驗證 | 中心點 `(23.4800, 120.4500)`，容許範圍 100 公尺 |
 | 打卡時間 | 伺服器端時間（Asia/Taipei），防前端竄改 |
 | 工時計算 | `clockOutTime - clockInTime`，單位：小時（1 位小數） |
-| 出勤狀態 | 固定寫入 `'正常'`，**未實作遲到/早退判定** |
+| 出勤狀態 | 目前固定寫入 `'正常'`，遲到/早退判定待 Phase 3 實作 |
 
 **打卡紀錄結構 (ClockRecord)：**
 ```typescript
@@ -320,7 +339,9 @@ chiayiyouthlabclock/
 | 後端 | `api.ts` actions: `create-employee`, `update-employee`, `delete-employee`, `get-all-employees`, `get-all-employees-detail`, `get-employee` |
 | 功能 | 新增/編輯/刪除員工、重設密碼 |
 | 編號規則 | `EMP` + 3 位數流水號（EMP001, EMP002...） |
-| 預設密碼 | `'password'` |
+| 預設密碼 | `Aa123456`（8 字元含英數，scrypt 雜湊儲存） |
+| 重設密碼 | v1.2 起不再 alert 明文密碼 |
+| 操作稽核 | 所有新增/修改/刪除/重設密碼操作寫入 `auditLogs`（v1.2） |
 
 ### 4.7 儀表板模組
 
@@ -345,6 +366,16 @@ chiayiyouthlabclock/
 | 後端 | `api.ts` action: `get-schedule-attendance-comparison` |
 | 功能 | 逐日比較排班人員 vs 實際出勤紀錄 |
 
+### 4.9 操作稽核日誌模組（v1.2 新增）
+
+| 項目 | 說明 |
+|------|------|
+| 前端 | `components/admin/AuditLogViewer.tsx`（僅 SuperAdmin 可見） |
+| 後端 | `api.ts` action: `get-audit-logs`、helper `writeAuditLog()` |
+| 資料 | `auditLogs` collection |
+| 記錄事件 | update-schedule、apply-template、approve-leave、create/update/delete-employee、reset-password |
+| 欄位 | `timestamp`, `userId`, `action`, `targetId`, `details` |
+
 ---
 
 ## 5. 資料模型
@@ -354,9 +385,9 @@ chiayiyouthlabclock/
 #### `employees` — 員工資料
 | 欄位 | 型別 | 說明 |
 |------|------|------|
-| id | string | 員工編號（EMP001） |
+| id | string | 員工編號（EMP001、ADMIN） |
 | name | string | 姓名 |
-| role | string | `'管理者'` / `'員工'` |
+| role | string | `'最高管理者'` / `'管理者'` / `'員工'`（v1.2 新增 SuperAdmin） |
 | position | string | `'專責人員'` / `'兼職人員'` |
 | phone | string | 電話 |
 | email | string | Email |
@@ -365,7 +396,7 @@ chiayiyouthlabclock/
 | hireDate | string | 到職日 (YYYY-MM-DD) |
 | resignDate | string? | 離職日 |
 | status | string | `'在職'` / `'離職'` / `'留停'` |
-| password | string | 密碼（明文） |
+| password | string | 密碼（**scrypt 雜湊**，格式 `salt:hash`，v1.2） |
 
 #### `scheduleTemplate` — 排班模板
 | 文件 ID | 說明 |
@@ -378,7 +409,7 @@ chiayiyouthlabclock/
 每筆文件欄位：
 | 欄位 | 型別 | 說明 |
 |------|------|------|
-| status | string | `'營運'` / `'休館'` |
+| status | string | `'營運'` / `'休館(值班)'` / `'休館'`（v1.2 新增值班） |
 | shiftTime | string | 時段（如 `"08:30-17:30"`） |
 | staffA | string | 專責人員 A 姓名 |
 | staffB | string | 專責人員 B 姓名 |
@@ -421,19 +452,36 @@ chiayiyouthlabclock/
 | approver | string? | 核准者姓名 |
 | approvalDate | string? | 核准日期 (ISO) |
 
-### 5.2 預設初始資料
+#### `auditLogs` — 操作稽核日誌（v1.2 新增）
+| 欄位 | 型別 | 說明 |
+|------|------|------|
+| timestamp | string | ISO 時間戳 |
+| userId | string | 操作者 empId |
+| action | string | 操作名稱（如 `update-schedule`） |
+| targetId | string | 操作對象（如 empId 或日期） |
+| details | object | 額外細節（舊值、新值等） |
 
-系統首次載入時，若 `employees/EMP001` 不存在，會自動寫入以下測試資料：
+#### `loginAttempts` — 登入失敗計數（v1.2 新增）
+| 欄位 | 型別 | 說明 |
+|------|------|------|
+| failCount | number | 累計失敗次數 |
+| lastFailAt | string | 最近失敗 ISO 時間 |
 
-| ID | 姓名 | 角色 | 職位 | 薪資 |
-|----|------|------|------|------|
-| EMP001 | 王小明 | 管理者 | 專責人員 | 月薪 38,000 |
-| EMP002 | 李小華 | 管理者 | 專責人員 | 月薪 36,000 |
-| EMP003 | 張小美 | 員工 | 兼職人員 | 時薪 183 |
-| EMP004 | 陳大文 | 員工 | 兼職人員 | 時薪 183 |
-| EMP005 | 林小芬 | 員工 | 兼職人員 | 時薪 183 |
+文件 ID 為 empId。失敗達 5 次後 15 分鐘內拒絕登入；登入成功自動刪除此文件。
 
-> **注意：** 以上為假資料，且初始化後無法從系統介面清除。排班模板也使用這些假人名。
+### 5.2 預設初始資料（v1.1 後）
+
+系統首次呼叫 `initialize-database` 時：
+
+1. 若 `scheduleTemplate` 不存在，建立 7 天空白模板（無人名）
+2. 若 `employees/ADMIN` 不存在，建立預設最高管理員帳號：
+
+| ID | 姓名 | 角色 | 職位 | 預設密碼 |
+|----|------|------|------|---------|
+| ADMIN | 系統管理員 | 最高管理者 | 專責人員 | `admin1234`（雜湊儲存） |
+
+> **v1.1 起不再寫入任何假員工**，首次部署後登入 ADMIN 帳號，由管理員手動建立其他員工。
+> **v1.2.1** 修正：`initialize-database` 改為獨立檢查 ADMIN 是否存在（原先若 `employees` 非空會直接跳過），確保升級部署也能建立 SuperAdmin。
 
 ---
 
@@ -461,9 +509,10 @@ chiayiyouthlabclock/
 | `get-clock-records` | `yearMonth` | `ClockRecord[]` | 個人打卡紀錄 |
 | `get-all-clock-records` | `yearMonth` | `ClockRecord[]` | 全員打卡紀錄 |
 | **排班** | | | |
-| `get-employee-schedule` | `yearMonth` | `ScheduleEvent[]` | 個人班表 |
-| `get-monthly-schedule` | `yearMonth` | `ScheduleEvent[]` | 全月班表 |
-| `update-schedule` | `event` | `boolean` | 更新排班（寫入模板） |
+| `get-employee-schedule` | `yearMonth` | `ScheduleEvent[]` | 個人班表（v1.1 起讀 dailySchedule） |
+| `get-monthly-schedule` | `yearMonth` | `ScheduleEvent[]` | 全月班表（v1.1 起讀 dailySchedule） |
+| `update-schedule` | `event` | `boolean` | 更新排班（v1.1 起寫入 `dailySchedule/{date}`） |
+| `apply-template` | `yearMonth` | `boolean` | 批次將 scheduleTemplate 套用到該月（v1.1 新增） |
 | **請假** | | | |
 | `get-employee-leave-requests` | — | `LeaveRequest[]` | 個人請假紀錄 |
 | `get-all-leave-requests` | — | `LeaveRequest[]` | 全部請假紀錄 |
@@ -485,8 +534,10 @@ chiayiyouthlabclock/
 | **對照表** | | | |
 | `get-schedule-attendance-comparison` | `yearMonth` | `Comparison[]` | 排班 vs 出勤 |
 | **薪資** | | | |
-| `get-all-salary-details` | `yearMonth` | `SalaryDetail[]` | 全員薪資 |
+| `get-all-salary-details` | `yearMonth` | `SalaryDetail[]` | 全員薪資（v1.2 限 SuperAdmin） |
 | `get-employee-salary` | `empId?`, `yearMonth` | `SalaryDetail` | 個人薪資 |
+| **系統日誌** | | | |
+| `get-audit-logs` | `limit?` | `AuditLog[]` | 操作稽核日誌（v1.2 新增，限 SuperAdmin） |
 
 ---
 
@@ -497,20 +548,25 @@ chiayiyouthlabclock/
 | 條件 | 頁面 |
 |------|------|
 | 未登入 | `LoginPage` |
-| 登入 + role = Admin | `AdminDashboard` |
+| 登入 + role = SuperAdmin / Admin | `AdminDashboard` |
 | 登入 + role = Employee | `EmployeeDashboard` |
 
 ### 7.2 AdminDashboard 子頁面
 
-| View Key | 元件 | 功能 |
-|----------|------|------|
-| `overview` | `AdminOverview` | 總覽儀表板 |
-| `schedule` | `ScheduleManager` | 排班管理 |
-| `comparison` | `ScheduleComparison` | 排班對照表 |
-| `attendance` | `AttendanceLog` | 出勤紀錄（含 CSV 匯出） |
-| `leave` | `LeaveApprovalQueue` | 請假審核 |
-| `employees` | `EmployeeManager` | 員工管理（含密碼重設） |
-| `salary` | `SalaryCalculation` | 薪資計算（含 CSV 匯出） |
+| View Key | 元件 | 功能 | 權限 |
+|----------|------|------|------|
+| `overview` | `AdminOverview` | 總覽儀表板 | Admin+ |
+| `schedule` | `ScheduleManager` | 排班管理（v1.1 逐日制 + 時段編輯 + 套用模板） | Admin+ |
+| `comparison` | `ScheduleComparison` | 排班對照表 | Admin+ |
+| `attendance` | `AttendanceLog` | 出勤紀錄（含 CSV 匯出） | Admin+ |
+| `leave` | `LeaveApprovalQueue` | 請假審核 | Admin+ |
+| `employees` | `EmployeeManager` | 員工管理（含密碼重設） | Admin+ |
+| `salary` | `SalaryCalculation` | 薪資計算（含 CSV 匯出） | **SuperAdmin** |
+| `auditLog` | `AuditLogViewer` | 系統操作日誌（v1.2） | **SuperAdmin** |
+| `myClock` | `ClockIn` | 我的打卡（v1.1） | Admin+ |
+| `myLeave` | `LeaveRequestForm` | 我的請假（v1.1） | Admin+ |
+| `myRecords` | `MyRecords` | 我的出勤紀錄（v1.1） | Admin+ |
+| `mySalary` | `MySalary` | 我的薪資（v1.1） | Admin+ |
 
 ### 7.3 EmployeeDashboard 子頁面
 
@@ -549,15 +605,29 @@ chiayiyouthlabclock/
 | A5 | CSV 匯出含未脫敏個資 | `AttendanceLog.tsx`, `SalaryCalculation.tsx` |
 | A6 | ~~無操作稽核紀錄~~ | **v1.2 已修正** — auditLogs collection，管理操作自動記錄 |
 
-### 8.3 功能缺陷
+### 8.3 功能缺陷（依 Phase 進度更新）
 
-| 模組 | 問題 |
-|------|------|
-| 排班 | 無逐日排班、無班別時段編輯、無人力不足偵測、無衝突偵測、無休館值班 |
-| 打卡 | 遲到/早退判定寫死正常、無補登機制、管理員無法代打卡 |
-| 請假 | 無假別餘額、無日期驗證、駁回無理由、無通知、無衝突偵測 |
-| 薪資 | 費率硬寫死、計算邏輯前後端重複、無月結鎖定、無薪資條下載 |
-| UI/UX | 錯誤訊息中英混雜、無 Error Boundary、色盲不友善、外部圖片依賴 |
+**v1.2 已修正：**
+- ✅ 排班：逐日排班（v1.1）、班別時段編輯（v1.1）、休館值班（v1.2）
+- ✅ 管理員打卡/請假（v1.1）
+
+**Phase 3 待處理：**
+| 模組 | 待補項目 | 對應 Roadmap |
+|------|---------|-------------|
+| 排班 | 人力不足偵測、排班衝突偵測（staffA≠staffB、PT 80h 上限） | 3.3 |
+| 打卡 | 遲到/早退自動判定（比對 shiftTime） | 3.2 |
+| 打卡 | 補登申請流程 | 4.2 |
+| 請假 | 日期驗證（endDate>startDate、不可過去）、駁回理由 | 3.1 |
+| 請假 | 核准/駁回通知機制 | 3.5 |
+| 薪資 | 費率設定化（systemConfig collection） | 3.4 |
+
+**Phase 4 待處理：**
+| 模組 | 待補項目 | 對應 Roadmap |
+|------|---------|-------------|
+| 請假 | 假別餘額管理（依年資計算特休） | 4.1 |
+| 排班 | 員工自選班表 | 4.3 |
+| 薪資 | 薪資條 PDF 下載、月結鎖定 | 4.4 |
+| UI/UX | ErrorBoundary、訊息中文化、Logo 本地化、色盲友善、響應式 sidebar | 4.5 |
 
 ---
 
@@ -568,3 +638,5 @@ chiayiyouthlabclock/
 | 2026-04-08 | v1.0 | 初版建立，記錄系統現況及所有已知問題 |
 | 2026-04-08 | v1.1 | Phase 1 完成：(1) 移除預設假人名，改為空白模板+預設管理員帳號 (2) 排班改為逐日制（dailySchedule collection），保留模板作為批次套用 (3) 排班 Modal 新增時段編輯、營運狀態切換、排班摘要 (4) 管理員後台新增「我的打卡/請假/紀錄/薪資」功能 (5) IP 驗證改為從後端 header 取得真實 IP |
 | 2026-04-08 | v1.2 | Phase 2 完成：(1) 新增 SuperAdmin 角色，薪資計算頁僅 SuperAdmin 可見，後端 API 權限檢查 (2) 密碼改為 scrypt 雜湊儲存，舊密碼登入時自動升級，強度要求 8 字元+英數，登入失敗 5 次鎖定 15 分鐘，移除密碼明文顯示 (3) 新增 auditLogs collection，管理操作自動記錄，SuperAdmin 可查看系統日誌 (4) 新增「休館(值班)」狀態，休館日可安排正職值班，工時納入薪資計算 |
+| 2026-04-09 | v1.2.1 | 修正 `initialize-database` 在既有資料庫環境無法建立 SuperAdmin 帳號的問題；改為獨立檢查 scheduleTemplate 與 ADMIN 是否存在，並以 scrypt 雜湊儲存預設密碼 |
+| 2026-04-09 | v1.3 | 文件同步 — 將 SDD 資料模型、權限表、API 清單、頁面子視圖、功能缺陷清單全面更新至 Phase 1+2 實際程式狀態；新增 Phase 3/4 待處理清單 |
