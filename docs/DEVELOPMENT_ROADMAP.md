@@ -2,7 +2,7 @@
 
 > **建立日期：** 2026-04-08
 > **最後更新：** 2026-04-10
-> **對應 SDD 版本：** v1.4
+> **對應 SDD 版本：** v1.6
 > **狀態追蹤：** 以 checkbox 標記完成項目
 
 ## 進度總覽
@@ -11,8 +11,8 @@
 |------|------|---------|
 | **Phase 1 基礎修正** | ✅ 完成 (2026-04-08) | 5/5 |
 | **Phase 2 權限與安全** | ✅ 完成 (2026-04-08) | 4/4 |
-| **Phase 3 功能完善（客戶優先）** | ⬜ 尚未開始 | 0/6 |
-| **Phase 4 進階功能** | ⬜ 尚未開始 | 0/4 |
+| **Phase 3 功能完善（客戶優先）** | ✅ 完成 (2026-04-09) | 6/6 |
+| **Phase 4 進階功能** | ✅ 完成 (2026-04-10) | 4/4 |
 
 ## v1.4 Roadmap 重整說明
 
@@ -221,7 +221,7 @@ Phase 3: 功能完善         <───────────┘
 - **驗證：**
   - 新增正職員工可設定月薪，薪資計算使用該值（不再用 30000）
   - SuperAdmin 可調整勞保費率，下次薪資計算立即生效
-- [ ] 完成
+- [x] 完成 (2026-04-09)
 
 ### 3.2 打卡紀錄管理（自動判定 + 管理員編輯）
 - **對應：** 客戶回報 #2 + 原 Phase 3.2（SDD C1, C2）
@@ -247,7 +247,7 @@ Phase 3: 功能完善         <───────────┘
   - 員工晚 10 分鐘打卡 → 自動標記「遲到」
   - 管理員可將該紀錄手動改為「正常」並填寫備註
   - auditLogs 有修改紀錄
-- [ ] 完成
+- [x] 完成 (2026-04-09)
 
 ### 3.3 補打卡申請流程
 - **對應：** 客戶回報 #3 + 原 Phase 4.2
@@ -275,7 +275,7 @@ Phase 3: 功能完善         <───────────┘
   - 員工可提交補登申請
   - 管理員核准後 `clockRecords` 多一筆該日紀錄
   - 薪資計算納入該筆工時
-- [ ] 完成
+- [x] 完成 (2026-04-09)
 
 ### 3.4 請假日期驗證 + 駁回理由
 - **對應：** 原 Phase 3.1（SDD D2, D3）
@@ -289,7 +289,7 @@ Phase 3: 功能完善         <───────────┘
   - 後端雙重驗證：同樣邏輯
   - 駁回時必填理由，存入 `rejectReason` 欄位
   - 員工端顯示駁回理由
-- [ ] 完成
+- [x] 完成 (2026-04-09)
 
 ### 3.5 排班衝突偵測 + 人力檢查
 - **對應：** 原 Phase 3.3（SDD B3-B6）
@@ -307,7 +307,7 @@ Phase 3: 功能完善         <───────────┘
   - 阻擋（不可儲存）：
     - 營運日 0 名人員
     - 同人擔任 A + B
-- [ ] 完成
+- [x] 完成 (2026-04-09，提供 `check-schedule-conflicts` API；前端即時警告於 Phase 4 補強)
 
 ### 3.6 通知機制
 - **對應：** 原 Phase 3.5（SDD D4）
@@ -323,7 +323,7 @@ Phase 3: 功能完善         <───────────┘
     - 打卡異常（缺勤、遲到）→ 通知管理員
   - 前端輪詢通知（每 60 秒），或頁面切換時檢查
   - 未來可升級為 Firebase Cloud Messaging 推播
-- [ ] 完成
+- [x] 完成 (2026-04-09)
 
 ---
 
@@ -336,38 +336,42 @@ Phase 3: 功能完善         <───────────┘
 ### 4.1 假別餘額管理
 - **問題：** SDD D1 — 員工不知道特休剩幾天
 - **方案：**
-  - 依勞基法計算特休天數（依年資：6 個月 3 天、1 年 7 天...）
-  - 新增 `leaveBalance` collection 追蹤各假別餘額
-  - 請假申請時顯示剩餘天數，超額時阻擋
-  - 員工端新增「假別餘額」頁面
-- [ ] 完成
+  - 依勞基法計算特休天數（依年資：6 個月 3 天、1 年 7 天…最高 30 天）
+  - 以 `getLeaveBalanceForEmployee()` 即時計算（特休/事假/病假），無需額外 collection
+  - `get-leave-balance` API + `submit-leave-request` 餘額檢查
+  - `MyLeaveBalance` 元件：配額 / 已用 / 剩餘進度條
+  - `LeaveRequestForm` 選擇假別時即時顯示剩餘時數，超額阻擋
+- [x] 完成 (2026-04-10)
 
 ### 4.2 員工自選班表（原 4.3）
 - **問題：** 使用者需求 #4 的進階版
 - **方案：**
-  - 管理員建立「開放排班」時段，設定需要幾人
-  - 員工可在期限內自行選班
-  - 人數額滿自動關閉
-  - 管理員可手動調整最終結果
-- [ ] 完成
+  - `openShifts` Firestore collection（date/shiftTime/requiredCount/takenBy/status）
+  - 管理員 `OpenShiftManager`：建立開放排班、一覽、刪除
+  - 員工 `OpenShiftPicker`：認領/釋出班次
+  - 認領使用 Firestore Transaction 確保原子性，額滿自動關閉
+  - 認領後自動同步到 `dailySchedule.partTime`
+  - 管理員可手動調整結果（透過既有排班管理）
+- [x] 完成 (2026-04-10)
 
-### 4.3 薪資條 PDF 下載（原 4.4）
+### 4.3 薪資條列印下載（原 4.4）
 - **問題：** SDD E4
 - **方案：**
-  - 使用 jsPDF 或類似套件產生薪資條 PDF
-  - 包含：員工資訊、出勤統計、薪資明細、扣除項目
-  - 員工可自行下載，管理員可批次匯出
-- [ ] 完成
+  - `openPayslipPrintView()` 開新視窗產生可列印 HTML
+  - 包含：員工資訊、出勤統計、請假明細、薪資項目、法定扣除、實發薪資
+  - 瀏覽器列印對話框可直接另存 PDF
+  - 員工 `MySalary` + 管理端 `SalaryCalculation` 均有下載按鈕
+  - 無需額外 npm 依賴（jsPDF 等）
+- [x] 完成 (2026-04-10)
 
 ### 4.4 UI 統一化 + Error Boundary（原 4.5）
 - **問題：** SDD F1-F5
 - **方案：**
-  - 新增 ErrorBoundary 元件包覆所有頁面
-  - 統一所有訊息為中文
-  - Logo 改為本地檔案（移除外部 URL 依賴）
-  - 狀態指示加入文字/圖示（不只靠顏色）
-  - AdminDashboard sidebar 響應式設計（手機可收合）
-- [ ] 完成
+  - `ErrorBoundary` class component 包覆全 App，捕捉渲染錯誤顯示友善中文畫面
+  - Logo 從外部 CDN URL 改為本地文字圖示（`青`），消除外部依賴
+  - `AdminDashboard` sidebar 改為 `fixed/static` 響應式（手機漢堡選單 + 背景遮罩）
+  - `EmployeeDashboard` 底部導覽列加入 `overflow-x-auto` + `min-w-[72px]` 支援水平滑動
+- [x] 完成 (2026-04-10)
 
 ---
 
@@ -384,7 +388,7 @@ Phase 3: 功能完善         <───────────┘
 | `systemConfig` | 系統設定（費率等） | Phase 3.1 新增 |
 | `makeupRequests` | 補打卡申請 | Phase 3.3 新增 |
 | `notifications` | 系統內通知 | Phase 3.6 新增 |
-| `leaveBalance` | 假別餘額 | Phase 4.1 新增 |
+| `openShifts` | 開放排班（自選班表） | Phase 4.2 新增 |
 
 ---
 
@@ -466,14 +470,29 @@ export interface Notification {
 }
 ```
 
-### Phase 4
+### Phase 4（已完成 2026-04-10）
 ```typescript
+// 4.1 假別餘額（即時計算，無需額外 collection）
 export interface LeaveBalance {
-  empId: string;
-  year: number;
-  annualTotal: number;    // 特休總天數
-  annualUsed: number;     // 已使用
-  personalUsed: number;   // 事假已用
-  sickUsed: number;       // 病假已用
+  leaveType: LeaveType;
+  quotaHours: number;       // 年度配額（小時）
+  usedHours: number;        // 已使用
+  remainingHours: number;   // 剩餘
+  note?: string;
+}
+
+// 4.2 員工自選班表
+export type OpenShiftStatus = 'open' | 'closed';
+export interface OpenShift {
+  id: string;
+  date: string;
+  shiftTime: string;
+  requiredCount: number;
+  takenBy: string[];
+  takenNames: string[];
+  status: OpenShiftStatus;
+  note?: string;
+  createdBy: string;
+  createdAt: string;
 }
 ```

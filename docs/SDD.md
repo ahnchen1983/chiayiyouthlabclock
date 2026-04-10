@@ -1,10 +1,10 @@
 # 嘉義青年實驗室打卡系統 — 軟體設計文件 (SDD)
 
-> **版本：** v1.4
+> **版本：** v1.6
 > **建立日期：** 2026-04-08
 > **最後更新：** 2026-04-10
-> **對應程式版本：** commit `af3b6fa` (Phase 1+2 完成 + 文件同步)
-> **開發進度：** Phase 1 ✅ · Phase 2 ✅ · Phase 3 ⬜ (Roadmap 已重整) · Phase 4 ⬜
+> **對應程式版本：** Phase 4 全部完成
+> **開發進度：** Phase 1 ✅ · Phase 2 ✅ · Phase 3 ✅ · Phase 4 ✅
 >
 > **相關文件：**
 > - [DEVELOPMENT_ROADMAP.md](./DEVELOPMENT_ROADMAP.md) — 開發階段規劃
@@ -435,7 +435,12 @@ chiayiyouthlabclock/
 | verificationMethod | string | `'IP'` / `'GPS'` |
 | verificationData | string | IP 或 GPS 座標 |
 | workHours | number? | 工時（小時） |
-| status | string | `'正常'` / `'遲到'` / `'早退'` |
+| status | string | `'正常'` / `'遲到'` / `'早退'` / `'遲到+早退'` / `'異常'`（v1.5 擴充） |
+| note | string? | 備註（v1.5 新增） |
+| manuallyEdited | boolean? | 是否被手動編輯（v1.5 新增） |
+| editedBy | string? | 編輯者 empId（v1.5 新增） |
+| editedAt | string? | 編輯時間 ISO（v1.5 新增） |
+| source | string? | `'normal'` / `'makeup'`（v1.5 新增） |
 
 #### `leaveRequests` — 請假申請
 | 欄位 | 型別 | 說明 |
@@ -451,6 +456,7 @@ chiayiyouthlabclock/
 | status | string | `'待審核'` / `'核准'` / `'駁回'` |
 | approver | string? | 核准者姓名 |
 | approvalDate | string? | 核准日期 (ISO) |
+| rejectReason | string? | 駁回理由（v1.5 新增） |
 
 #### `auditLogs` — 操作稽核日誌（v1.2 新增）
 | 欄位 | 型別 | 說明 |
@@ -468,6 +474,68 @@ chiayiyouthlabclock/
 | lastFailAt | string | 最近失敗 ISO 時間 |
 
 文件 ID 為 empId。失敗達 5 次後 15 分鐘內拒絕登入；登入成功自動刪除此文件。
+
+#### `systemConfig` — 系統設定（v1.5 新增 / Phase 3.1）
+文件 ID `salary` 內含薪資相關費率與規則：
+| 欄位 | 型別 | 預設值 | 說明 |
+|------|------|------|------|
+| laborInsuranceRate | number | 0.023 | 勞保員工負擔率 |
+| healthInsuranceRate | number | 0.0211 | 健保員工負擔率 |
+| laborPensionRate | number | 0.06 | 勞退自提率 |
+| overtimeMultiplier | number | 1.34 | 加班倍率 |
+| ptMonthlyHourLimit | number | 80 | 兼職月時數上限 |
+| ptWarningThreshold | number | 70 | 兼職時數警示閾值 |
+| lateGraceMinutes | number | 5 | 遲到寬限分鐘 |
+| updatedAt | string? | - | 最後更新 ISO |
+| updatedBy | string? | - | 最後更新者 empId |
+
+僅 SuperAdmin 可寫入；任何已驗證身份可讀取（供薪資計算使用）。
+
+#### `makeupRequests` — 補打卡申請（v1.5 新增 / Phase 3.3）
+| 欄位 | 型別 | 說明 |
+|------|------|------|
+| empId | string | 申請員工編號 |
+| name | string | 姓名 |
+| date | string | 補打卡日期 (YYYY-MM-DD) |
+| type | string | `'上班'` / `'下班'` / `'上下班'` |
+| requestedClockIn | string? | 補上班時間 (HH:mm) |
+| requestedClockOut | string? | 補下班時間 (HH:mm) |
+| reason | string | 申請理由（最少 5 字） |
+| status | string | `'待審核'` / `'核准'` / `'駁回'` |
+| requestDate | string | 申請時間 ISO |
+| approver | string? | 審核者姓名 |
+| approvalDate | string? | 審核時間 ISO |
+| rejectReason | string? | 駁回理由 |
+
+核准時自動寫入或合併到 `clockRecords`，並標記 `source: 'makeup'`、`manuallyEdited: true`。
+
+#### `notifications` — 系統通知（v1.5 新增 / Phase 3.6）
+| 欄位 | 型別 | 說明 |
+|------|------|------|
+| empId | string | 接收者 empId |
+| type | string | `'leave-approved'` / `'leave-rejected'` / `'makeup-approved'` / `'makeup-rejected'` / `'schedule-changed'` / `'clock-warning'` / `'system'` |
+| title | string | 標題 |
+| message | string | 內容 |
+| read | boolean | 是否已讀 |
+| createdAt | string | 建立時間 ISO |
+| link | string? | 點擊跳轉位置 |
+
+員工只能讀寫自己的通知；前端輪詢頻率 60 秒。
+
+#### `openShifts` — 開放排班（v1.6 新增 / Phase 4.2）
+| 欄位 | 型別 | 說明 |
+|------|------|------|
+| date | string | 排班日期 (YYYY-MM-DD) |
+| shiftTime | string | 時段（如 `"08:30-17:30"`） |
+| requiredCount | number | 需要人數 |
+| takenBy | string[] | 已認領的 empId 陣列 |
+| takenNames | string[] | 已認領的姓名陣列（同步更新，方便顯示） |
+| status | string | `'open'` / `'closed'`（人數額滿自動關閉） |
+| note | string? | 備註 |
+| createdBy | string | 建立者 empId |
+| createdAt | string | 建立時間 ISO |
+
+管理員建立開放排班後，員工可自行認領/釋出。認領時以 Firestore Transaction 確保原子性，同時自動同步到 `dailySchedule.partTime`。
 
 ### 5.2 預設初始資料（v1.1 後）
 
@@ -538,6 +606,30 @@ chiayiyouthlabclock/
 | `get-employee-salary` | `empId?`, `yearMonth` | `SalaryDetail` | 個人薪資 |
 | **系統日誌** | | | |
 | `get-audit-logs` | `limit?` | `AuditLog[]` | 操作稽核日誌（v1.2 新增，限 SuperAdmin） |
+| **系統設定（v1.5）** | | | |
+| `get-system-config` | — | `SystemConfig` | 讀取薪資費率設定 |
+| `update-system-config` | `config` | `SystemConfig` | 更新設定（限 SuperAdmin） |
+| **打卡紀錄編輯（v1.5）** | | | |
+| `update-clock-record` | `recordId`, `clockInTime?`, `clockOutTime?`, `status?`, `note?` | `boolean` | 管理員修改打卡紀錄 |
+| **補打卡（v1.5）** | | | |
+| `submit-makeup-request` | `date`, `type`, `requestedClockIn?`, `requestedClockOut?`, `reason` | `ClockMakeupRequest` | 提交補打卡申請 |
+| `get-employee-makeup-requests` | — | `ClockMakeupRequest[]` | 個人補打卡紀錄 |
+| `get-makeup-requests` | — | `ClockMakeupRequest[]` | 全部補打卡（限 Admin） |
+| `approve-makeup-request` | `requestId`, `status`, `approverName`, `rejectReason?` | `boolean` | 審核補打卡 |
+| **通知（v1.5）** | | | |
+| `get-notifications` | `limit?` | `Notification[]` | 個人通知列表 |
+| `mark-notification-read` | `notificationId` | `boolean` | 標記已讀 |
+| `mark-all-notifications-read` | — | `number` | 全部標記已讀 |
+| **排班衝突（v1.5）** | | | |
+| `check-schedule-conflicts` | `yearMonth` | `ScheduleConflict[]` | 排班衝突偵測 |
+| **假別餘額（v1.6）** | | | |
+| `get-leave-balance` | `empId?` | `LeaveBalance[]` | 依勞基法計算特休/事假/病假餘額 |
+| **開放排班（v1.6）** | | | |
+| `create-open-shift` | `date`, `shiftTime`, `requiredCount`, `note?` | `OpenShift` | 建立開放排班（限 Admin） |
+| `list-open-shifts` | `onlyOpen?` | `OpenShift[]` | 列出開放排班 |
+| `claim-open-shift` | `shiftId` | `boolean` | 員工認領班次（Transaction） |
+| `release-open-shift` | `shiftId` | `boolean` | 員工釋出班次 |
+| `delete-open-shift` | `shiftId` | `boolean` | 刪除開放排班（限 Admin） |
 
 ---
 
@@ -561,12 +653,18 @@ chiayiyouthlabclock/
 | `attendance` | `AttendanceLog` | 出勤紀錄（含 CSV 匯出） | Admin+ |
 | `leave` | `LeaveApprovalQueue` | 請假審核 | Admin+ |
 | `employees` | `EmployeeManager` | 員工管理（含密碼重設） | Admin+ |
-| `salary` | `SalaryCalculation` | 薪資計算（含 CSV 匯出） | **SuperAdmin** |
+| `salary` | `SalaryCalculation` | 薪資計算（含 CSV 匯出 + 薪資條下載 v1.6） | **SuperAdmin** |
 | `auditLog` | `AuditLogViewer` | 系統操作日誌（v1.2） | **SuperAdmin** |
+| `systemSettings` | `SystemSettings` | 系統設定（費率等，v1.5） | **SuperAdmin** |
+| `makeupApproval` | `MakeupApprovalQueue` | 補打卡審核（v1.5） | Admin+ |
+| `openShifts` | `OpenShiftManager` | 開放排班管理（v1.6） | Admin+ |
 | `myClock` | `ClockIn` | 我的打卡（v1.1） | Admin+ |
 | `myLeave` | `LeaveRequestForm` | 我的請假（v1.1） | Admin+ |
 | `myRecords` | `MyRecords` | 我的出勤紀錄（v1.1） | Admin+ |
-| `mySalary` | `MySalary` | 我的薪資（v1.1） | Admin+ |
+| `mySalary` | `MySalary` | 我的薪資（v1.1 + 薪資條下載 v1.6） | Admin+ |
+| `myMakeup` | `ClockMakeupForm` | 補打卡申請（v1.5） | Admin+ |
+| `myLeaveBalance` | `MyLeaveBalance` | 假別餘額（v1.6） | Admin+ |
+| `myOpenShifts` | `OpenShiftPicker` | 認領班次（v1.6） | Admin+ |
 
 ### 7.3 EmployeeDashboard 子頁面
 
@@ -575,9 +673,12 @@ chiayiyouthlabclock/
 | `clock` | `ClockIn` | 打卡（IP/GPS） |
 | `schedule` | `MyScheduleCalendar` | 我的班表 |
 | `fullSchedule` | `FullScheduleCalendar` | 總班表 |
+| `openShifts` | `OpenShiftPicker` | 認領開放班次（v1.6） |
 | `records` | `MyRecords` | 打卡紀錄 |
-| `leave` | `LeaveRequestForm` | 請假申請 |
-| `salary` | `MySalary` | 薪資明細 |
+| `leave` | `LeaveRequestForm` | 請假申請（含餘額顯示 v1.6） |
+| `leaveBalance` | `MyLeaveBalance` | 假別餘額（v1.6） |
+| `makeup` | `ClockMakeupForm` | 補打卡申請（v1.5） |
+| `salary` | `MySalary` | 薪資明細（含薪資條下載 v1.6） |
 
 ---
 
@@ -618,23 +719,19 @@ chiayiyouthlabclock/
 | ② | AttendanceLog 唯讀，管理員無法修正打卡 | Phase 3.2 |
 | ③ | 員工忘記打卡無補救機制 | Phase 3.3 |
 
-**Phase 3 待處理（客戶優先）：**
-| 模組 | 待補項目 | 對應 Roadmap |
-|------|---------|-------------|
-| 薪資 | 員工月薪欄位 + 費率設定化（systemConfig） | 3.1 |
-| 打卡 | 遲到/早退自動判定 + 管理員編輯打卡紀錄 | 3.2 |
-| 打卡 | 補打卡申請流程（員工申請→管理員審核） | 3.3 |
-| 請假 | 日期驗證（endDate>startDate、不可過去）、駁回理由 | 3.4 |
-| 排班 | 人力不足偵測、衝突偵測（staffA≠staffB、PT 80h 上限） | 3.5 |
-| 通知 | 請假/補登/排班核准結果通知 | 3.6 |
+**Phase 3 已修正（v1.5）：**
+- ✅ 3.1 薪資設定完善（月薪欄位 + systemConfig 費率設定）
+- ✅ 3.2 打卡紀錄管理（遲到/早退自動判定 + 管理員編輯）
+- ✅ 3.3 補打卡申請流程
+- ✅ 3.4 請假日期驗證 + 駁回理由
+- ✅ 3.5 排班衝突偵測 API
+- ✅ 3.6 通知機制
 
-**Phase 4 待處理：**
-| 模組 | 待補項目 | 對應 Roadmap |
-|------|---------|-------------|
-| 請假 | 假別餘額管理（依年資計算特休） | 4.1 |
-| 排班 | 員工自選班表 | 4.2 |
-| 薪資 | 薪資條 PDF 下載、月結鎖定 | 4.3 |
-| UI/UX | ErrorBoundary、訊息中文化、Logo 本地化、色盲友善、響應式 sidebar | 4.4 |
+**Phase 4 已修正（v1.6）：**
+- ✅ 4.1 假別餘額管理（依勞基法年資計算特休 + 前後端超額檢查）
+- ✅ 4.2 員工自選班表（openShifts collection + Transaction 認領/釋出）
+- ✅ 4.3 薪資條列印/下載（可列印 HTML + 瀏覽器另存 PDF）
+- ✅ 4.4 ErrorBoundary + UI 統一化（Logo 本地化、響應式 sidebar、底部 nav 可滑動）
 
 ---
 
@@ -648,3 +745,5 @@ chiayiyouthlabclock/
 | 2026-04-09 | v1.2.1 | 修正 `initialize-database` 在既有資料庫環境無法建立 SuperAdmin 帳號的問題；改為獨立檢查 scheduleTemplate 與 ADMIN 是否存在，並以 scrypt 雜湊儲存預設密碼 |
 | 2026-04-09 | v1.3 | 文件同步 — 將 SDD 資料模型、權限表、API 清單、頁面子視圖、功能缺陷清單全面更新至 Phase 1+2 實際程式狀態；新增 Phase 3/4 待處理清單 |
 | 2026-04-10 | v1.4 | Roadmap 重整 — 客戶回報三項需求（正職月薪、管理員改打卡、補打卡）整併至 Phase 3；原 Phase 4.2 補打卡提前為 3.3；Phase 3 從 5 項擴充為 6 項（3.1 薪資設定完善、3.2 打卡紀錄管理、3.3 補打卡、3.4 請假驗證、3.5 排班衝突、3.6 通知）；Phase 4 重新編號為 4.1~4.4 |
+| 2026-04-10 | v1.6 | Phase 4 全部完成：(1) 4.1 假別餘額管理 — 依勞基法年資計算特休天數，前後端餘額檢查，MyLeaveBalance 頁面，LeaveRequestForm 內嵌餘額顯示 (2) 4.2 員工自選班表 — openShifts collection，Transaction 認領/釋出，自動同步 dailySchedule.partTime，管理端 OpenShiftManager，員工端 OpenShiftPicker (3) 4.3 薪資條列印下載 — openPayslipPrintView 可列印 HTML，員工/管理端皆有下載按鈕 (4) 4.4 ErrorBoundary 包覆全 App，Logo 改為本地文字，AdminDashboard sidebar 響應式（手機漢堡選單），EmployeeDashboard 底部 nav 可水平滑動 |
+| 2026-04-09 | v1.5 | Phase 3 全部完成：(1) 3.1 Employee.monthlySalary 欄位 + systemConfig/salary collection + SystemSettings 頁面（SuperAdmin），費率/PT 上限/遲到寬限改為設定化 (2) 3.2 打卡自動比對排班判定遲到/早退，AttendanceLog 新增編輯功能（update-clock-record），ClockRecord 擴充 note/manuallyEdited/source/editedBy/editedAt (3) 3.3 補打卡申請流程：makeupRequests collection、員工 ClockMakeupForm、管理端 MakeupApprovalQueue，核准後自動寫入 clockRecords (4) 3.4 請假前後端日期驗證，駁回必填理由（rejectReason） (5) 3.5 check-schedule-conflicts API（重複排班 + 營運日無 A） (6) 3.6 notifications collection + NotificationBell 元件（請假/補打卡核准/駁回自動通知，60s 輪詢） |

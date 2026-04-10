@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { apiGetAllSalaryDetails } from '../../services/googleAppsScriptAPI';
+import { openPayslipPrintView } from '../../services/payslipPrint';
 import { SalaryDetail } from '../../types';
 import { DollarIcon, ChevronRightIcon } from '../icons';
 
@@ -126,8 +127,14 @@ const SalaryDetailModal: React.FC<{ salary: SalaryDetail; onClose: () => void }>
                     </div>
                 </div>
 
-                <div className="p-4 border-t">
-                    <button onClick={onClose} className="w-full py-3 bg-gray-100 hover:bg-gray-200 rounded-lg text-gray-700 font-semibold transition-colors">
+                <div className="p-4 border-t flex gap-2">
+                    <button
+                        onClick={() => openPayslipPrintView(salary)}
+                        className="flex-1 py-3 bg-brand-green-dark hover:bg-brand-green-light text-white rounded-lg font-semibold transition-colors"
+                    >
+                        📄 下載薪資條
+                    </button>
+                    <button onClick={onClose} className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 rounded-lg text-gray-700 font-semibold transition-colors">
                         關閉
                     </button>
                 </div>

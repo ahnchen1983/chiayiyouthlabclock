@@ -10,11 +10,18 @@ import EmployeeManager from '../components/admin/EmployeeManager';
 import ScheduleComparison from '../components/admin/ScheduleComparison';
 import SalaryCalculation from '../components/admin/SalaryCalculation';
 import AuditLogViewer from '../components/admin/AuditLogViewer';
+import SystemSettings from '../components/admin/SystemSettings';
+import MakeupApprovalQueue from '../components/admin/MakeupApprovalQueue';
+import OpenShiftManager from '../components/admin/OpenShiftManager';
 import ClockIn from '../components/employee/ClockIn';
 import LeaveRequestForm from '../components/employee/LeaveRequestForm';
 import MyRecords from '../components/employee/MyRecords';
 import MySalary from '../components/employee/MySalary';
+import ClockMakeupForm from '../components/employee/ClockMakeupForm';
+import MyLeaveBalance from '../components/employee/MyLeaveBalance';
+import OpenShiftPicker from '../components/employee/OpenShiftPicker';
 import ChangePasswordModal from '../components/ChangePasswordModal';
+import NotificationBell from '../components/NotificationBell';
 import { DashboardIcon, CalendarIcon, ListIcon, CheckSquareIcon, UsersIcon, LogOutIcon, DollarIcon, ClockIcon, SendIcon } from '../components/icons';
 
 // 鑰匙圖示
@@ -31,12 +38,13 @@ const CompareIcon: React.FC<{ className?: string }> = ({ className }) => (
   </svg>
 );
 
-type AdminView = 'overview' | 'schedule' | 'attendance' | 'leave' | 'employees' | 'comparison' | 'salary' | 'auditLog' | 'myClock' | 'myLeave' | 'myRecords' | 'mySalary';
+type AdminView = 'overview' | 'schedule' | 'attendance' | 'leave' | 'employees' | 'comparison' | 'salary' | 'auditLog' | 'systemSettings' | 'makeupApproval' | 'openShifts' | 'myClock' | 'myLeave' | 'myRecords' | 'mySalary' | 'myMakeup' | 'myLeaveBalance' | 'myOpenShifts';
 
 const AdminDashboard: React.FC = () => {
   const { user, logout } = useAuth();
   const [currentView, setCurrentView] = useState<AdminView>('overview');
   const [showChangePassword, setShowChangePassword] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const renderView = () => {
     switch (currentView) {
@@ -48,10 +56,16 @@ const AdminDashboard: React.FC = () => {
       case 'comparison': return <ScheduleComparison />;
       case 'salary': return <SalaryCalculation />;
       case 'auditLog': return <AuditLogViewer />;
+      case 'systemSettings': return <SystemSettings />;
+      case 'makeupApproval': return <MakeupApprovalQueue />;
+      case 'openShifts': return <OpenShiftManager />;
       case 'myClock': return <ClockIn />;
       case 'myLeave': return <LeaveRequestForm />;
       case 'myRecords': return <MyRecords />;
       case 'mySalary': return <MySalary />;
+      case 'myMakeup': return <ClockMakeupForm />;
+      case 'myLeaveBalance': return <MyLeaveBalance />;
+      case 'myOpenShifts': return <OpenShiftPicker />;
       default: return <AdminOverview />;
     }
   };
@@ -63,7 +77,7 @@ const AdminDashboard: React.FC = () => {
   }> = ({ view, icon, label }) => (
     <li>
       <button
-        onClick={() => setCurrentView(view)}
+        onClick={() => { setCurrentView(view); setSidebarOpen(false); }}
         className={`flex items-center p-3 text-base font-normal rounded-lg transition-all duration-200 w-full ${currentView === view
           ? 'bg-brand-blue-dark text-white shadow-md'
           : 'text-gray-700 hover:bg-gray-200'
@@ -77,9 +91,16 @@ const AdminDashboard: React.FC = () => {
 
   return (
     <div className="flex h-screen bg-gray-100">
-      <aside className="w-64 bg-white shadow-xl flex flex-col">
+      {/* 行動版背景遮罩 */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 z-30 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+      <aside className={`fixed md:static z-40 inset-y-0 left-0 w-64 bg-white shadow-xl flex flex-col transform transition-transform md:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}>
         <div className="flex items-center justify-center p-4 border-b">
-          <img src="https://youthsoullab.chiayi.gov.tw/wp-content/uploads/2024/02/%E6%9C%89%E4%BA%8B%E9%9D%92%E5%B9%B4%E5%AF%A6%E9%A9%97%E5%AE%A4-LOGO-%E7_B6_A0%E8%89%B2.png" alt="Logo" className="w-12 h-12" />
+          <div className="w-12 h-12 rounded-full bg-brand-green-dark flex items-center justify-center text-white font-bold text-xl">青</div>
           <h1 className="ml-3 text-xl font-bold text-gray-800">管理者後台</h1>
         </div>
         <nav className="flex-1 p-4 overflow-y-auto">
@@ -89,11 +110,14 @@ const AdminDashboard: React.FC = () => {
             <NavItem view="comparison" icon={<CompareIcon className="w-6 h-6" />} label="排班對照表" />
             <NavItem view="attendance" icon={<ListIcon className="w-6 h-6" />} label="出勤紀錄" />
             <NavItem view="leave" icon={<CheckSquareIcon className="w-6 h-6" />} label="請假審核" />
+            <NavItem view="makeupApproval" icon={<CheckSquareIcon className="w-6 h-6" />} label="補打卡審核" />
+            <NavItem view="openShifts" icon={<CalendarIcon className="w-6 h-6" />} label="開放排班" />
             <NavItem view="employees" icon={<UsersIcon className="w-6 h-6" />} label="員工管理" />
             {user?.role === UserRole.SuperAdmin && (
               <>
                 <NavItem view="salary" icon={<DollarIcon className="w-6 h-6" />} label="薪資計算" />
                 <NavItem view="auditLog" icon={<ListIcon className="w-6 h-6" />} label="系統日誌" />
+                <NavItem view="systemSettings" icon={<KeyIcon className="w-6 h-6" />} label="系統設定" />
               </>
             )}
           </ul>
@@ -105,6 +129,9 @@ const AdminDashboard: React.FC = () => {
               <NavItem view="myClock" icon={<ClockIcon className="w-6 h-6" />} label="我的打卡" />
               <NavItem view="myRecords" icon={<ListIcon className="w-6 h-6" />} label="我的出勤紀錄" />
               <NavItem view="myLeave" icon={<SendIcon className="w-6 h-6" />} label="我的請假" />
+              <NavItem view="myMakeup" icon={<SendIcon className="w-6 h-6" />} label="補打卡申請" />
+              <NavItem view="myLeaveBalance" icon={<CheckSquareIcon className="w-6 h-6" />} label="假別餘額" />
+              <NavItem view="myOpenShifts" icon={<CalendarIcon className="w-6 h-6" />} label="認領班次" />
               <NavItem view="mySalary" icon={<DollarIcon className="w-6 h-6" />} label="我的薪資" />
             </ul>
           </div>
@@ -137,6 +164,19 @@ const AdminDashboard: React.FC = () => {
       </aside>
 
       <div className="flex-1 flex flex-col overflow-hidden">
+        <header className="flex items-center justify-between px-4 md:px-6 py-3 bg-white border-b">
+          <button
+            className="md:hidden p-2 rounded hover:bg-gray-100"
+            onClick={() => setSidebarOpen(true)}
+            aria-label="開啟選單"
+          >
+            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
+          <div className="flex-1" />
+          <NotificationBell />
+        </header>
         <main className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-100 p-6">
           {renderView()}
         </main>

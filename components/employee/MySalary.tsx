@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { apiGetEmployeeSalary } from '../../services/googleAppsScriptAPI';
+import { openPayslipPrintView } from '../../services/payslipPrint';
 import { SalaryDetail } from '../../types';
 import { ChevronLeftIcon, ChevronRightIcon } from '../icons';
 
@@ -78,6 +79,12 @@ const MySalary: React.FC = () => {
                             <span>應發 {formatCurrency(salary.grossSalary)}</span>
                             <span>扣除 -{formatCurrency(salary.totalDeductions)}</span>
                         </div>
+                        <button
+                            onClick={() => openPayslipPrintView(salary)}
+                            className="mt-4 w-full py-2 bg-white/20 hover:bg-white/30 rounded-lg text-sm font-medium transition-colors"
+                        >
+                            📄 下載 / 列印薪資條
+                        </button>
                     </div>
 
                     {/* 出勤統計 */}

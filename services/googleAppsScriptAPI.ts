@@ -4,6 +4,8 @@ import {
     User, ClockStatus, ScheduleEvent, ClockRecord,
     LeaveRequest, LeaveStatus, PartTimeHourInfo,
     Employee, TodayAttendanceComparison, DashboardStats, SalaryDetail,
+    SystemConfig, ClockMakeupRequest, Notification,
+    LeaveBalance, OpenShift,
 } from '../types';
 
 // ==================== API 呼叫 Helper ====================
@@ -116,8 +118,8 @@ export const apiSubmitLeaveRequest = async (
     return callAPI('submit-leave-request', { ...request });
 };
 
-export const apiApproveLeave = async (requestId: string, status: LeaveStatus, approverName: string): Promise<boolean> => {
-    return callAPI('approve-leave', { requestId, status, approverName });
+export const apiApproveLeave = async (requestId: string, status: LeaveStatus, approverName: string, rejectReason?: string): Promise<boolean> => {
+    return callAPI('approve-leave', { requestId, status, approverName, rejectReason });
 };
 
 // ==================== 員工管理 ====================
@@ -212,4 +214,105 @@ export interface AuditLog {
 
 export const apiGetAuditLogs = async (limit: number = 100): Promise<AuditLog[]> => {
     return callAPI('get-audit-logs', { limit });
+};
+
+// ==================== 系統設定（Phase 3.1）====================
+
+export const apiGetSystemConfig = async (): Promise<SystemConfig> => {
+    return callAPI('get-system-config');
+};
+
+export const apiUpdateSystemConfig = async (config: Partial<SystemConfig>): Promise<SystemConfig> => {
+    return callAPI('update-system-config', { config });
+};
+
+// ==================== 打卡紀錄編輯（Phase 3.2）====================
+
+export const apiUpdateClockRecord = async (
+    recordId: string,
+    updates: { clockInTime?: string; clockOutTime?: string; status?: string; note?: string }
+): Promise<boolean> => {
+    return callAPI('update-clock-record', { recordId, ...updates });
+};
+
+// ==================== 補打卡申請（Phase 3.3）====================
+
+export const apiSubmitMakeupRequest = async (
+    request: { date: string; type: '上班' | '下班' | '上下班'; requestedClockIn?: string; requestedClockOut?: string; reason: string }
+): Promise<ClockMakeupRequest> => {
+    return callAPI('submit-makeup-request', request);
+};
+
+export const apiGetEmployeeMakeupRequests = async (): Promise<ClockMakeupRequest[]> => {
+    return callAPI('get-employee-makeup-requests');
+};
+
+export const apiGetMakeupRequests = async (): Promise<ClockMakeupRequest[]> => {
+    return callAPI('get-makeup-requests');
+};
+
+export const apiApproveMakeupRequest = async (
+    requestId: string,
+    status: '核准' | '駁回',
+    approverName: string,
+    rejectReason?: string
+): Promise<boolean> => {
+    return callAPI('approve-makeup-request', { requestId, status, approverName, rejectReason });
+};
+
+// ==================== 通知（Phase 3.6）====================
+
+export const apiGetNotifications = async (limit: number = 30): Promise<Notification[]> => {
+    return callAPI('get-notifications', { limit });
+};
+
+export const apiMarkNotificationRead = async (notificationId: string): Promise<boolean> => {
+    return callAPI('mark-notification-read', { notificationId });
+};
+
+export const apiMarkAllNotificationsRead = async (): Promise<number> => {
+    return callAPI('mark-all-notifications-read');
+};
+
+// ==================== 排班衝突偵測（Phase 3.5）====================
+
+export interface ScheduleConflict {
+    date: string;
+    type: 'duplicate' | 'understaffed';
+    name?: string;
+    message: string;
+}
+
+export const apiCheckScheduleConflicts = async (yearMonth: string): Promise<ScheduleConflict[]> => {
+    return callAPI('check-schedule-conflicts', { yearMonth });
+};
+
+// ==================== 假別餘額（Phase 4.1）====================
+
+export const apiGetLeaveBalance = async (empId?: string): Promise<LeaveBalance[]> => {
+    return callAPI('get-leave-balance', empId ? { empId } : {});
+};
+
+// ==================== 員工自選班表（Phase 4.2）====================
+
+export const apiCreateOpenShift = async (data: {
+    date: string; shiftTime: string; requiredCount: number; note?: string;
+}): Promise<OpenShift> => {
+    return callAPI('create-open-shift', data);
+};
+
+export const apiListOpenShifts = async (onlyOpen: boolean = false): Promise<OpenShift[]> => {
+    return callAPI('list-open-shifts', { onlyOpen });
+};
+
+export const apiClaimOpenShift = async (shiftId: string): Promise<boolean> => {
+    return callAPI('claim-open-shift', { shiftId });
+};
+
+export const apiReleaseOpenShift = async (shiftId: string): Promise<boolean> => {
+    return callAPI('release-open-shift', { shiftId });
+};
+
+export const apiDeleteOpenShift = async (shiftId: string): Promise<boolean> => {
+    return callAPI('delete-open-shift', { shiftId });
 };

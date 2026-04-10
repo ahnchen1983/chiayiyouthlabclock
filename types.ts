@@ -17,6 +17,8 @@ export interface ClockStatus {
   clockOutTime?: string;
 }
 
+export type ClockRecordStatus = '正常' | '遲到' | '早退' | '遲到+早退' | '異常';
+
 export interface ClockRecord {
   id: string;
   empId: string;
@@ -27,7 +29,12 @@ export interface ClockRecord {
   verificationMethod: 'IP' | 'GPS';
   verificationData: string;
   workHours: number | null;
-  status: '正常' | '遲到' | '早退';
+  status: ClockRecordStatus;
+  note?: string;
+  manuallyEdited?: boolean;
+  source?: 'normal' | 'makeup';
+  editedBy?: string;
+  editedAt?: string;
 }
 
 export interface ScheduleEvent {
@@ -76,6 +83,7 @@ export interface LeaveRequest {
     status: LeaveStatus;
     approver?: string;
     approvalDate?: string;
+    rejectReason?: string;
 }
 
 // 員工詳細資料（用於員工管理）
@@ -87,11 +95,83 @@ export interface Employee {
     phone: string;
     email: string;
     hourlyRate: number;
+    monthlySalary?: number;
     hireDate: string;
     resignDate?: string;
     status: EmployeeStatus;
     position: '專責人員' | '兼職人員';
     role: UserRole;
+}
+
+// 系統設定（薪資費率等）
+export interface SystemConfig {
+    laborInsuranceRate: number;     // 勞保費率（員工負擔）e.g. 0.023
+    healthInsuranceRate: number;    // 健保費率（員工負擔）e.g. 0.0211
+    laborPensionRate: number;       // 勞退自提率（員工自願）e.g. 0.06
+    overtimeMultiplier: number;     // 加班倍率 e.g. 1.34
+    ptMonthlyHourLimit: number;     // 兼職月時數上限 e.g. 80
+    ptWarningThreshold: number;     // 兼職時數警示閾值 e.g. 70
+    lateGraceMinutes: number;       // 遲到寬限分鐘 e.g. 5
+    updatedAt?: string;
+    updatedBy?: string;
+}
+
+// 補打卡申請
+export type MakeupRequestStatus = '待審核' | '核准' | '駁回';
+
+export interface ClockMakeupRequest {
+    id: string;
+    empId: string;
+    name: string;
+    date: string;                   // 補打卡日期
+    type: '上班' | '下班' | '上下班';
+    requestedClockIn?: string;      // ISO timestamp
+    requestedClockOut?: string;     // ISO timestamp
+    reason: string;
+    status: MakeupRequestStatus;
+    requestDate: string;
+    approver?: string;
+    approvalDate?: string;
+    rejectReason?: string;
+}
+
+// 通知
+export type NotificationType = 'leave-approved' | 'leave-rejected' | 'makeup-approved' | 'makeup-rejected' | 'schedule-changed' | 'clock-warning' | 'system';
+
+export interface Notification {
+    id: string;
+    empId: string;                  // 接收者
+    type: NotificationType;
+    title: string;
+    message: string;
+    read: boolean;
+    createdAt: string;
+    link?: string;
+}
+
+// 假別餘額（Phase 4.1）
+export interface LeaveBalance {
+    leaveType: LeaveType;
+    quotaHours: number;       // 年度配額（小時）
+    usedHours: number;        // 已使用（小時）
+    remainingHours: number;   // 剩餘（小時）
+    note?: string;            // 計算說明
+}
+
+// 員工自選班表（Phase 4.2）
+export type OpenShiftStatus = 'open' | 'closed';
+
+export interface OpenShift {
+    id: string;
+    date: string;             // YYYY-MM-DD
+    shiftTime: string;        // 例如 "08:30-17:30"
+    requiredCount: number;    // 需要人數
+    takenBy: string[];        // 已認領的 empId
+    takenNames: string[];     // 已認領的姓名（同步寫入，方便查詢）
+    status: OpenShiftStatus;
+    note?: string;
+    createdBy: string;
+    createdAt: string;
 }
 
 // 今日排班與出勤對照

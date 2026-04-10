@@ -9,6 +9,8 @@ const LeaveApprovalQueue: React.FC = () => {
     const [requests, setRequests] = useState<LeaveRequest[]>([]);
     const [loading, setLoading] = useState(true);
     const [filter, setFilter] = useState<LeaveStatus>(LeaveStatus.Pending);
+    const [rejectingId, setRejectingId] = useState<string | null>(null);
+    const [rejectReason, setRejectReason] = useState('');
 
     const fetchRequests = useCallback(async () => {
         setLoading(true);
@@ -21,10 +23,22 @@ const LeaveApprovalQueue: React.FC = () => {
         fetchRequests();
     }, [fetchRequests]);
 
-    const handleApproval = async (requestId: string, newStatus: LeaveStatus.Approved | LeaveStatus.Rejected) => {
+    const handleApprove = async (requestId: string) => {
         if (!user) return;
-        await apiApproveLeave(requestId, newStatus, user.name);
-        await fetchRequests(); // Refresh list
+        await apiApproveLeave(requestId, LeaveStatus.Approved, user.name);
+        await fetchRequests();
+    };
+
+    const handleReject = async (requestId: string) => {
+        if (!user) return;
+        if (rejectReason.length < 2) {
+            alert('請填寫駁回理由');
+            return;
+        }
+        await apiApproveLeave(requestId, LeaveStatus.Rejected, user.name, rejectReason);
+        setRejectingId(null);
+        setRejectReason('');
+        await fetchRequests();
     };
     
     const filteredRequests = requests.filter(r => r.status === filter);
@@ -63,13 +77,32 @@ const LeaveApprovalQueue: React.FC = () => {
                                      {req.status !== LeaveStatus.Pending && (
                                          <p className="text-xs text-gray-500 mt-2">由 {req.approver} 於 {req.approvalDate ? new Date(req.approvalDate).toLocaleDateString() : ''} 審核</p>
                                      )}
+                                     {req.rejectReason && (
+                                         <p className="text-xs text-red-600 mt-1">駁回理由：{req.rejectReason}</p>
+                                     )}
                                 </div>
                             </div>
-                           
-                            {req.status === LeaveStatus.Pending && (
+
+                            {req.status === LeaveStatus.Pending && rejectingId !== req.id && (
                                 <div className="flex justify-end space-x-3 mt-4">
-                                    <button onClick={() => handleApproval(req.id, LeaveStatus.Approved)} className="px-4 py-2 text-sm font-medium text-white bg-status-success rounded-lg hover:bg-green-700">核准</button>
-                                    <button onClick={() => handleApproval(req.id, LeaveStatus.Rejected)} className="px-4 py-2 text-sm font-medium text-white bg-status-error rounded-lg hover:bg-red-700">駁回</button>
+                                    <button onClick={() => handleApprove(req.id)} className="px-4 py-2 text-sm font-medium text-white bg-status-success rounded-lg hover:bg-green-700">核准</button>
+                                    <button onClick={() => { setRejectingId(req.id); setRejectReason(''); }} className="px-4 py-2 text-sm font-medium text-white bg-status-error rounded-lg hover:bg-red-700">駁回</button>
+                                </div>
+                            )}
+
+                            {rejectingId === req.id && (
+                                <div className="flex flex-col gap-2 mt-4 p-3 bg-red-50 rounded">
+                                    <input
+                                        type="text"
+                                        value={rejectReason}
+                                        onChange={e => setRejectReason(e.target.value)}
+                                        placeholder="請輸入駁回理由（必填）"
+                                        className="w-full p-2 border rounded text-sm"
+                                    />
+                                    <div className="flex gap-2 justify-end">
+                                        <button onClick={() => setRejectingId(null)} className="px-3 py-1 bg-gray-200 text-sm rounded">取消</button>
+                                        <button onClick={() => handleReject(req.id)} className="px-3 py-1 bg-red-500 text-white text-sm rounded">確認駁回</button>
+                                    </div>
                                 </div>
                             )}
                         </div>

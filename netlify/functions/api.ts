@@ -1,7 +1,7 @@
 import type { Handler } from '@netlify/functions';
 import { db, adminAuth } from './utils/firebaseAdmin';
 import { UserRole, LeaveStatus, LeaveType, EmployeeStatus } from '../../types';
-import type { ClockRecord, LeaveRequest, Employee, ScheduleEvent, SalaryDetail, TodayAttendanceComparison, PendingItem } from '../../types';
+import type { ClockRecord, LeaveRequest, Employee, ScheduleEvent, SalaryDetail, TodayAttendanceComparison, PendingItem, SystemConfig, ClockMakeupRequest, Notification, NotificationType } from '../../types';
 import { scryptSync, randomBytes, timingSafeEqual } from 'crypto';
 
 const dayOfWeekMap = ['日', '一', '二', '三', '四', '五', '六'];
@@ -74,6 +74,132 @@ const writeAuditLog = async (userId: string, action: string, targetId: string, d
         targetId,
         details,
     });
+};
+
+// ==================== 系統設定 Helper ====================
+
+const DEFAULT_SYSTEM_CONFIG: SystemConfig = {
+    laborInsuranceRate: 0.023,
+    healthInsuranceRate: 0.0211,
+    laborPensionRate: 0.06,
+    overtimeMultiplier: 1.34,
+    ptMonthlyHourLimit: 80,
+    ptWarningThreshold: 70,
+    lateGraceMinutes: 5,
+};
+
+const getSystemConfig = async (): Promise<SystemConfig> => {
+    const snap = await db.collection('systemConfig').doc('salary').get();
+    if (!snap.exists) return { ...DEFAULT_SYSTEM_CONFIG };
+    return { ...DEFAULT_SYSTEM_CONFIG, ...(snap.data() as Partial<SystemConfig>) };
+};
+
+// ==================== 通知 Helper ====================
+
+const writeNotification = async (
+    empId: string,
+    type: NotificationType,
+    title: string,
+    message: string,
+    link?: string
+) => {
+    await db.collection('notifications').add({
+        empId,
+        type,
+        title,
+        message,
+        read: false,
+        createdAt: new Date().toISOString(),
+        ...(link ? { link } : {}),
+    });
+};
+
+// ==================== 遲到/早退判定 ====================
+
+const determineClockStatus = (
+    shiftTime: string | undefined,
+    clockInTime: string | null,
+    clockOutTime: string | null,
+    graceMinutes: number
+): '正常' | '遲到' | '早退' | '遲到+早退' => {
+    if (!shiftTime || !shiftTime.includes('-')) return '正常';
+    const [start, end] = shiftTime.split('-');
+    const [sh, sm] = start.split(':').map(Number);
+    const [eh, em] = end.split(':').map(Number);
+    const startMin = sh * 60 + sm + graceMinutes;
+    const endMin = eh * 60 + em;
+
+    let isLate = false, isEarly = false;
+    if (clockInTime) {
+        const [h, m] = clockInTime.split(':').map(Number);
+        if (h * 60 + m > startMin) isLate = true;
+    }
+    if (clockOutTime) {
+        const [h, m] = clockOutTime.split(':').map(Number);
+        if (h * 60 + m < endMin) isEarly = true;
+    }
+    if (isLate && isEarly) return '遲到+早退';
+    if (isLate) return '遲到';
+    if (isEarly) return '早退';
+    return '正常';
+};
+
+// ==================== 假別餘額 Helper（Phase 4.1）====================
+
+/**
+ * 依勞基法計算特休天數（依到職日 → 指定基準日）
+ * 6 個月：3 天 / 1 年：7 天 / 2 年：10 天 / 3-4 年：14 天 / 5-9 年：15 天
+ * 10 年起每增 1 年加 1 天，最多 30 天
+ */
+const computeAnnualLeaveDays = (hireDate: string, asOf: Date = new Date()): number => {
+    if (!hireDate) return 0;
+    const hire = new Date(hireDate);
+    if (Number.isNaN(hire.getTime())) return 0;
+    const months = (asOf.getFullYear() - hire.getFullYear()) * 12 + (asOf.getMonth() - hire.getMonth());
+    if (months < 6) return 0;
+    if (months < 12) return 3;
+    const years = Math.floor(months / 12);
+    if (years < 2) return 7;
+    if (years < 3) return 10;
+    if (years < 5) return 14;
+    if (years < 10) return 15;
+    return Math.min(30, 15 + (years - 9));
+};
+
+/**
+ * 取得指定員工本年度的假別餘額（依勞基法 + 已核准請假時數）
+ */
+const getLeaveBalanceForEmployee = async (empId: string): Promise<any[]> => {
+    const empSnap = await db.collection('employees').doc(empId).get();
+    if (!empSnap.exists) return [];
+    const emp = empSnap.data()!;
+    const year = new Date().getFullYear();
+    const annualDays = computeAnnualLeaveDays(emp.hireDate);
+
+    // 本年度已核准假
+    const lrSnap = await db.collection('leaveRequests').where('empId', '==', empId).get();
+    const usedByType = new Map<string, number>();
+    lrSnap.docs.forEach(d => {
+        const lr = d.data();
+        if (lr.status !== LeaveStatus.Approved) return;
+        if (!lr.startDate || !lr.startDate.startsWith(String(year))) return;
+        usedByType.set(lr.leaveType, (usedByType.get(lr.leaveType) || 0) + (lr.hours || 0));
+    });
+
+    const quotas: Record<string, { hours: number; note: string }> = {
+        [LeaveType.Annual]:   { hours: annualDays * 8, note: `依到職日 ${emp.hireDate || '未設定'} 計算 ${annualDays} 天` },
+        [LeaveType.Personal]: { hours: 14 * 8, note: '勞基法事假上限 14 天/年（不給薪）' },
+        [LeaveType.Sick]:     { hours: 30 * 8, note: '勞基法普通病假上限 30 天/年（半薪）' },
+        [LeaveType.Other]:    { hours: 9999, note: '其他假別不設上限' },
+    };
+
+    return Object.entries(quotas).map(([type, q]) => ({
+        leaveType: type,
+        quotaHours: q.hours,
+        usedHours: Math.round((usedByType.get(type) || 0) * 10) / 10,
+        remainingHours: Math.round((q.hours - (usedByType.get(type) || 0)) * 10) / 10,
+        note: q.note,
+    }));
 };
 
 // ==================== 回應 Helper ====================
@@ -184,7 +310,8 @@ const calculateSalaryForEmployee = (
     yearMonth: string,
     scheduleEvents: ScheduleEvent[],
     clockRecords: ClockRecord[],
-    leaveRequests: LeaveRequest[]
+    leaveRequests: LeaveRequest[],
+    config: SystemConfig = DEFAULT_SYSTEM_CONFIG
 ): SalaryDetail => {
     let totalWorkDays = 0;
     let scheduledHours = 0;
@@ -222,7 +349,7 @@ const calculateSalaryForEmployee = (
     }
 
     const hourlyForOT = emp.position === '專責人員' ? Math.round((emp.monthlySalary || 30000) / 30 / 8) : emp.hourlyRate;
-    const overtimePay = Math.round(overtimeHours * hourlyForOT * 1.34);
+    const overtimePay = Math.round(overtimeHours * hourlyForOT * config.overtimeMultiplier);
     const grossSalary = baseSalary + overtimePay;
 
     const hourlyWage = emp.position === '專責人員' ? Math.round((emp.monthlySalary || 30000) / 30 / 8) : emp.hourlyRate;
@@ -232,9 +359,9 @@ const calculateSalaryForEmployee = (
         else if (lr.leaveType === LeaveType.Sick) leaveDeduction += Math.round(lr.hours * hourlyWage * 0.5);
     });
 
-    const laborInsurance = Math.round(grossSalary * 0.023);
-    const healthInsurance = Math.round(grossSalary * 0.0211);
-    const laborPensionSelf = Math.round(grossSalary * 0.06);
+    const laborInsurance = Math.round(grossSalary * config.laborInsuranceRate);
+    const healthInsurance = Math.round(grossSalary * config.healthInsuranceRate);
+    const laborPensionSelf = Math.round(grossSalary * config.laborPensionRate);
     const totalDeductions = laborInsurance + healthInsurance + laborPensionSelf + leaveDeduction;
     const netSalary = grossSalary - totalDeductions;
 
@@ -382,6 +509,12 @@ export const handler: Handler = async (event) => {
                         || event.headers['client-ip']
                         || 'unknown';
                 }
+                // 遲到判定：與當日排班時段比對
+                const [todayDaySchedule, sysConfig] = await Promise.all([
+                    getDaySchedule(today),
+                    getSystemConfig(),
+                ]);
+                const status = determineClockStatus(todayDaySchedule?.shiftTime, clockInTime, null, sysConfig.lateGraceMinutes);
                 await db.collection('clockRecords').add({
                     empId: uid,
                     name: data.name,
@@ -391,7 +524,8 @@ export const handler: Handler = async (event) => {
                     verificationMethod: data.verificationMethod,
                     verificationData,
                     workHours: null,
-                    status: '正常',
+                    status,
+                    source: 'normal',
                 });
                 return ok(true);
             }
@@ -408,7 +542,18 @@ export const handler: Handler = async (event) => {
                 const [inH, inM] = docSnap.data().clockInTime.split(':').map(Number);
                 const [outH, outM] = clockOutTime.split(':').map(Number);
                 const workHours = Math.round(((outH * 60 + outM) - (inH * 60 + inM)) / 60 * 10) / 10;
-                await docSnap.ref.update({ clockOutTime, workHours });
+                // 早退判定
+                const [todayDaySchedule, sysConfig] = await Promise.all([
+                    getDaySchedule(today),
+                    getSystemConfig(),
+                ]);
+                const status = determineClockStatus(
+                    todayDaySchedule?.shiftTime,
+                    docSnap.data().clockInTime,
+                    clockOutTime,
+                    sysConfig.lateGraceMinutes
+                );
+                await docSnap.ref.update({ clockOutTime, workHours, status });
                 return ok(true);
             }
 
@@ -503,9 +648,21 @@ export const handler: Handler = async (event) => {
             case 'submit-leave-request': {
                 const empSnap = await db.collection('employees').doc(uid).get();
                 const name = empSnap.exists ? empSnap.data()!.name : 'Unknown';
-                const hours = Math.round(
-                    (new Date(data.endDate).getTime() - new Date(data.startDate).getTime()) / (1000 * 60 * 60) * 10
-                ) / 10;
+                // 日期驗證
+                const startMs = new Date(data.startDate).getTime();
+                const endMs = new Date(data.endDate).getTime();
+                if (Number.isNaN(startMs) || Number.isNaN(endMs)) return fail(400, '日期格式錯誤');
+                if (endMs <= startMs) return fail(400, '結束時間必須晚於開始時間');
+                const hours = Math.round((endMs - startMs) / (1000 * 60 * 60) * 10) / 10;
+                if (hours < 0.5) return fail(400, '請假時數至少 0.5 小時');
+                // Phase 4.1：檢查假別餘額（特休/事假/病假）
+                if (data.leaveType === LeaveType.Annual || data.leaveType === LeaveType.Personal || data.leaveType === LeaveType.Sick) {
+                    const balances = await getLeaveBalanceForEmployee(uid);
+                    const bal = balances.find(b => b.leaveType === data.leaveType);
+                    if (bal && hours > bal.remainingHours) {
+                        return fail(400, `${data.leaveType}剩餘 ${bal.remainingHours} 小時，不足以申請 ${hours} 小時`);
+                    }
+                }
                 await db.collection('leaveRequests').add({
                     empId: uid, name, hours,
                     leaveType: data.leaveType,
@@ -519,12 +676,26 @@ export const handler: Handler = async (event) => {
             }
 
             case 'approve-leave': {
-                await db.collection('leaveRequests').doc(data.requestId).update({
+                if (!isAdmin) return fail(403, '僅管理者可審核請假');
+                const lrRef = db.collection('leaveRequests').doc(data.requestId);
+                const lrSnap = await lrRef.get();
+                if (!lrSnap.exists) return fail(404, '請假申請不存在');
+                const lr = lrSnap.data()!;
+                const updates: any = {
                     status: data.status,
                     approver: data.approverName,
                     approvalDate: new Date().toISOString(),
-                });
-                await writeAuditLog(uid, '審核請假', data.requestId, `${data.status} by ${data.approverName}`);
+                };
+                if (data.status === LeaveStatus.Rejected && data.rejectReason) {
+                    updates.rejectReason = data.rejectReason;
+                }
+                await lrRef.update(updates);
+                await writeAuditLog(uid, '審核請假', data.requestId, `${data.status} by ${data.approverName}${data.rejectReason ? ` 理由:${data.rejectReason}` : ''}`);
+                // 通知申請人
+                const notifType: NotificationType = data.status === LeaveStatus.Approved ? 'leave-approved' : 'leave-rejected';
+                const title = data.status === LeaveStatus.Approved ? '請假已核准' : '請假已駁回';
+                const msg = `${lr.leaveType} ${lr.startDate.slice(0,10)}~${lr.endDate.slice(0,10)}${data.rejectReason ? `（${data.rejectReason}）` : ''}`;
+                await writeNotification(lr.empId, notifType, title, msg);
                 return ok(true);
             }
 
@@ -737,29 +908,31 @@ export const handler: Handler = async (event) => {
 
             case 'get-all-salary-details': {
                 if (!isSuperAdmin) return fail(403, '僅最高管理者可查看全員薪資');
-                const [scheduleEvents, empSnap, clockSnap, leaveSnap] = await Promise.all([
+                const [scheduleEvents, empSnap, clockSnap, leaveSnap, cfg] = await Promise.all([
                     getMonthlyDailySchedule(data.yearMonth),
                     db.collection('employees').get(),
                     db.collection('clockRecords').get(),
                     db.collection('leaveRequests').get(),
+                    getSystemConfig(),
                 ]);
                 const clockRecords = clockSnap.docs.map(d => ({ id: d.id, ...d.data() } as ClockRecord));
                 const leaveRequests = leaveSnap.docs.map(d => ({ id: d.id, ...d.data() } as LeaveRequest));
                 const activeEmployees = empSnap.docs.map(d => d.data()).filter(e => e.status === '在職');
-                return ok(activeEmployees.map(emp => calculateSalaryForEmployee(emp, data.yearMonth, scheduleEvents, clockRecords, leaveRequests)));
+                return ok(activeEmployees.map(emp => calculateSalaryForEmployee(emp, data.yearMonth, scheduleEvents, clockRecords, leaveRequests, cfg)));
             }
 
             case 'get-employee-salary': {
-                const [scheduleEvents, empSnap, clockSnap, leaveSnap] = await Promise.all([
+                const [scheduleEvents, empSnap, clockSnap, leaveSnap, cfg] = await Promise.all([
                     getMonthlyDailySchedule(data.yearMonth),
                     db.collection('employees').doc(data.empId || uid).get(),
                     db.collection('clockRecords').get(),
                     db.collection('leaveRequests').get(),
+                    getSystemConfig(),
                 ]);
                 if (!empSnap.exists) return ok(null);
                 const clockRecords = clockSnap.docs.map(d => ({ id: d.id, ...d.data() } as ClockRecord));
                 const leaveRequests = leaveSnap.docs.map(d => ({ id: d.id, ...d.data() } as LeaveRequest));
-                return ok(calculateSalaryForEmployee(empSnap.data()!, data.yearMonth, scheduleEvents, clockRecords, leaveRequests));
+                return ok(calculateSalaryForEmployee(empSnap.data()!, data.yearMonth, scheduleEvents, clockRecords, leaveRequests, cfg));
             }
 
             // ==================== 稽核日誌 ====================
@@ -771,6 +944,343 @@ export const handler: Handler = async (event) => {
                     .limit(data.limit || 100)
                     .get();
                 return ok(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+            }
+
+            // ==================== 系統設定（Phase 3.1）====================
+
+            case 'get-system-config': {
+                const cfg = await getSystemConfig();
+                return ok(cfg);
+            }
+
+            case 'update-system-config': {
+                if (!isSuperAdmin) return fail(403, '僅最高管理者可修改系統設定');
+                const next: SystemConfig = {
+                    ...DEFAULT_SYSTEM_CONFIG,
+                    ...data.config,
+                    updatedAt: new Date().toISOString(),
+                    updatedBy: uid,
+                };
+                await db.collection('systemConfig').doc('salary').set(next);
+                await writeAuditLog(uid, '更新系統設定', 'salary', JSON.stringify(data.config));
+                return ok(next);
+            }
+
+            // ==================== 打卡紀錄編輯（Phase 3.2）====================
+
+            case 'update-clock-record': {
+                if (!isAdmin) return fail(403, '僅管理者可修改打卡紀錄');
+                const ref = db.collection('clockRecords').doc(data.recordId);
+                const snap = await ref.get();
+                if (!snap.exists) return fail(404, '紀錄不存在');
+                const orig = snap.data()!;
+                const updates: any = {
+                    manuallyEdited: true,
+                    editedBy: uid,
+                    editedAt: new Date().toISOString(),
+                };
+                if (data.clockInTime !== undefined) updates.clockInTime = data.clockInTime;
+                if (data.clockOutTime !== undefined) updates.clockOutTime = data.clockOutTime;
+                if (data.note !== undefined) updates.note = data.note;
+                if (data.status !== undefined) updates.status = data.status;
+                // 重新計算工時
+                const ci = updates.clockInTime ?? orig.clockInTime;
+                const co = updates.clockOutTime ?? orig.clockOutTime;
+                if (ci && co) {
+                    const [ih, im] = ci.split(':').map(Number);
+                    const [oh, om] = co.split(':').map(Number);
+                    updates.workHours = Math.round(((oh * 60 + om) - (ih * 60 + im)) / 60 * 10) / 10;
+                }
+                await ref.update(updates);
+                await writeAuditLog(uid, '修改打卡', data.recordId, `${orig.name} ${orig.date} ${JSON.stringify({ clockInTime: updates.clockInTime, clockOutTime: updates.clockOutTime, status: updates.status })}`);
+                return ok(true);
+            }
+
+            // ==================== 補打卡申請（Phase 3.3）====================
+
+            case 'submit-makeup-request': {
+                const empSnap = await db.collection('employees').doc(uid).get();
+                if (!empSnap.exists) return fail(404, '員工不存在');
+                const name = empSnap.data()!.name;
+                if (!data.date || !data.type || !data.reason) return fail(400, '欄位不完整');
+                if (data.reason.length < 5) return fail(400, '請填寫詳細理由（至少 5 字）');
+                const reqDoc = {
+                    empId: uid,
+                    name,
+                    date: data.date,
+                    type: data.type,
+                    requestedClockIn: data.requestedClockIn || null,
+                    requestedClockOut: data.requestedClockOut || null,
+                    reason: data.reason,
+                    status: '待審核',
+                    requestDate: new Date().toISOString(),
+                };
+                const refNew = await db.collection('makeupRequests').add(reqDoc);
+                return ok({ id: refNew.id, ...reqDoc });
+            }
+
+            case 'get-employee-makeup-requests': {
+                const snap = await db.collection('makeupRequests').where('empId', '==', uid).get();
+                return ok(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+            }
+
+            case 'get-makeup-requests': {
+                if (!isAdmin) return fail(403, '僅管理者可查看補打卡申請');
+                const snap = await db.collection('makeupRequests').get();
+                return ok(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+            }
+
+            case 'approve-makeup-request': {
+                if (!isAdmin) return fail(403, '僅管理者可審核補打卡');
+                const reqRef = db.collection('makeupRequests').doc(data.requestId);
+                const reqSnap = await reqRef.get();
+                if (!reqSnap.exists) return fail(404, '申請不存在');
+                const req = reqSnap.data()!;
+                const updates: any = {
+                    status: data.status,
+                    approver: data.approverName,
+                    approvalDate: new Date().toISOString(),
+                };
+                if (data.status === '駁回' && data.rejectReason) updates.rejectReason = data.rejectReason;
+                await reqRef.update(updates);
+
+                // 核准 → 寫入或合併 clockRecords
+                if (data.status === '核准') {
+                    const existing = await db.collection('clockRecords')
+                        .where('empId', '==', req.empId)
+                        .where('date', '==', req.date)
+                        .limit(1).get();
+                    const ci = req.requestedClockIn || null;
+                    const co = req.requestedClockOut || null;
+                    if (existing.empty) {
+                        const recDoc: any = {
+                            empId: req.empId,
+                            name: req.name,
+                            date: req.date,
+                            clockInTime: ci,
+                            clockOutTime: co,
+                            verificationMethod: 'IP',
+                            verificationData: 'makeup',
+                            workHours: null,
+                            status: '正常',
+                            source: 'makeup',
+                            manuallyEdited: true,
+                            editedBy: uid,
+                            editedAt: new Date().toISOString(),
+                            note: `補打卡：${req.reason}`,
+                        };
+                        if (ci && co) {
+                            const [ih, im] = ci.split(':').map(Number);
+                            const [oh, om] = co.split(':').map(Number);
+                            recDoc.workHours = Math.round(((oh * 60 + om) - (ih * 60 + im)) / 60 * 10) / 10;
+                        }
+                        await db.collection('clockRecords').add(recDoc);
+                    } else {
+                        const docSnap = existing.docs[0];
+                        const orig = docSnap.data();
+                        const u: any = { manuallyEdited: true, editedBy: uid, editedAt: new Date().toISOString(), note: `補打卡：${req.reason}` };
+                        if (ci) u.clockInTime = ci;
+                        if (co) u.clockOutTime = co;
+                        const finalCi = u.clockInTime ?? orig.clockInTime;
+                        const finalCo = u.clockOutTime ?? orig.clockOutTime;
+                        if (finalCi && finalCo) {
+                            const [ih, im] = finalCi.split(':').map(Number);
+                            const [oh, om] = finalCo.split(':').map(Number);
+                            u.workHours = Math.round(((oh * 60 + om) - (ih * 60 + im)) / 60 * 10) / 10;
+                        }
+                        await docSnap.ref.update(u);
+                    }
+                }
+
+                await writeAuditLog(uid, '審核補打卡', data.requestId, `${req.name} ${req.date} ${data.status}`);
+                const notifType: NotificationType = data.status === '核准' ? 'makeup-approved' : 'makeup-rejected';
+                const title = data.status === '核准' ? '補打卡已核准' : '補打卡已駁回';
+                const msg = `${req.date} ${req.type}${data.rejectReason ? `（${data.rejectReason}）` : ''}`;
+                await writeNotification(req.empId, notifType, title, msg);
+                return ok(true);
+            }
+
+            // ==================== 通知（Phase 3.6）====================
+
+            case 'get-notifications': {
+                const snap = await db.collection('notifications')
+                    .where('empId', '==', uid)
+                    .get();
+                const list = snap.docs.map(d => ({ id: d.id, ...d.data() } as Notification))
+                    .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+                    .slice(0, data.limit || 30);
+                return ok(list);
+            }
+
+            case 'mark-notification-read': {
+                const ref = db.collection('notifications').doc(data.notificationId);
+                const snap = await ref.get();
+                if (!snap.exists || snap.data()!.empId !== uid) return fail(404, '通知不存在');
+                await ref.update({ read: true });
+                return ok(true);
+            }
+
+            case 'mark-all-notifications-read': {
+                const snap = await db.collection('notifications')
+                    .where('empId', '==', uid)
+                    .where('read', '==', false)
+                    .get();
+                const batch = db.batch();
+                snap.docs.forEach(d => batch.update(d.ref, { read: true }));
+                await batch.commit();
+                return ok(snap.size);
+            }
+
+            // ==================== 排班衝突檢查（Phase 3.5）====================
+
+            case 'check-schedule-conflicts': {
+                // 回傳該月份所有衝突清單：同一人同日重複、人力不足
+                const events = await getMonthlyDailySchedule(data.yearMonth);
+                const conflicts: any[] = [];
+                events.forEach(e => {
+                    if (e.status === '休館') return;
+                    const all = [e.staffA, e.staffB, ...(e.partTime || [])].filter(Boolean);
+                    // 同人重複
+                    const seen = new Set<string>();
+                    all.forEach(n => {
+                        if (seen.has(n)) conflicts.push({ date: e.date, type: 'duplicate', name: n, message: `${n} 在 ${e.date} 被排兩次以上` });
+                        seen.add(n);
+                    });
+                    // 人力不足（營運日無 staffA）
+                    if (e.status === '營運' && !e.staffA) {
+                        conflicts.push({ date: e.date, type: 'understaffed', message: `${e.date} 無專責人員 A` });
+                    }
+                });
+                return ok(conflicts);
+            }
+
+            // ==================== 假別餘額（Phase 4.1）====================
+
+            case 'get-leave-balance': {
+                const targetId = data.empId && isAdmin ? data.empId : uid;
+                const balances = await getLeaveBalanceForEmployee(targetId);
+                return ok(balances);
+            }
+
+            // ==================== 員工自選班表（Phase 4.2）====================
+
+            case 'create-open-shift': {
+                if (!isAdmin) return fail(403, '僅管理者可建立開放排班');
+                if (!data.date || !data.shiftTime || !data.requiredCount) return fail(400, '欄位不完整');
+                const doc = {
+                    date: data.date,
+                    shiftTime: data.shiftTime,
+                    requiredCount: Number(data.requiredCount),
+                    takenBy: [],
+                    takenNames: [],
+                    status: 'open',
+                    note: data.note || '',
+                    createdBy: uid,
+                    createdAt: new Date().toISOString(),
+                };
+                const ref = await db.collection('openShifts').add(doc);
+                await writeAuditLog(uid, '建立開放排班', ref.id, `${data.date} ${data.shiftTime} 需 ${data.requiredCount} 人`);
+                return ok({ id: ref.id, ...doc });
+            }
+
+            case 'list-open-shifts': {
+                const snap = await db.collection('openShifts').get();
+                const list = snap.docs
+                    .map(d => ({ id: d.id, ...d.data() } as any))
+                    .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+                // 過濾未來/過去
+                if (data.onlyOpen) {
+                    return ok(list.filter(s => s.status === 'open'));
+                }
+                return ok(list);
+            }
+
+            case 'claim-open-shift': {
+                const ref = db.collection('openShifts').doc(data.shiftId);
+                const result = await db.runTransaction(async (tx) => {
+                    const snap = await tx.get(ref);
+                    if (!snap.exists) throw new Error('班次不存在');
+                    const shift = snap.data()!;
+                    if (shift.status !== 'open') throw new Error('班次已關閉');
+                    const takenBy: string[] = shift.takenBy || [];
+                    if (takenBy.includes(uid)) throw new Error('已認領此班次');
+                    if (takenBy.length >= shift.requiredCount) throw new Error('班次已額滿');
+                    const empSnap = await tx.get(db.collection('employees').doc(uid));
+                    if (!empSnap.exists) throw new Error('員工不存在');
+                    const name = empSnap.data()!.name;
+                    const newTakenBy = [...takenBy, uid];
+                    const newTakenNames = [...(shift.takenNames || []), name];
+                    const closed = newTakenBy.length >= shift.requiredCount;
+                    tx.update(ref, {
+                        takenBy: newTakenBy,
+                        takenNames: newTakenNames,
+                        status: closed ? 'closed' : 'open',
+                    });
+                    return { name, date: shift.date, shiftTime: shift.shiftTime };
+                });
+
+                // 同步寫入 dailySchedule.partTime
+                const dailyRef = db.collection('dailySchedule').doc(result.date);
+                const dailySnap = await dailyRef.get();
+                if (dailySnap.exists) {
+                    const cur = dailySnap.data()!;
+                    const pt: string[] = cur.partTime || [];
+                    if (!pt.includes(result.name)) {
+                        await dailyRef.update({ partTime: [...pt, result.name] });
+                    }
+                } else {
+                    // 從模板初始化該日，再加入認領者
+                    const [y, m, d] = result.date.split('-').map(Number);
+                    const dow = new Date(y, m - 1, d).getDay();
+                    const templates = await getScheduleTemplates();
+                    const tmpl = templates[dow] || { status: '營運', shiftTime: result.shiftTime, staffA: '', staffB: '', partTime: [] };
+                    await dailyRef.set({
+                        ...tmpl,
+                        partTime: [...(tmpl.partTime || []), result.name],
+                    });
+                }
+                await writeAuditLog(uid, '認領開放排班', data.shiftId, `${result.date} ${result.shiftTime}`);
+                return ok(true);
+            }
+
+            case 'release-open-shift': {
+                const ref = db.collection('openShifts').doc(data.shiftId);
+                const releaseInfo = await db.runTransaction(async (tx) => {
+                    const snap = await tx.get(ref);
+                    if (!snap.exists) throw new Error('班次不存在');
+                    const shift = snap.data()!;
+                    const takenBy: string[] = shift.takenBy || [];
+                    const idx = takenBy.indexOf(uid);
+                    if (idx < 0) throw new Error('未認領此班次');
+                    const empSnap = await tx.get(db.collection('employees').doc(uid));
+                    const name = empSnap.exists ? empSnap.data()!.name : '';
+                    const newTakenBy = takenBy.filter(id => id !== uid);
+                    const newTakenNames = (shift.takenNames || []).filter((n: string) => n !== name);
+                    tx.update(ref, {
+                        takenBy: newTakenBy,
+                        takenNames: newTakenNames,
+                        status: 'open',
+                    });
+                    return { name, date: shift.date };
+                });
+
+                // 從 dailySchedule.partTime 移除
+                const dailyRef = db.collection('dailySchedule').doc(releaseInfo.date);
+                const dailySnap = await dailyRef.get();
+                if (dailySnap.exists && releaseInfo.name) {
+                    const cur = dailySnap.data()!;
+                    const pt: string[] = (cur.partTime || []).filter((n: string) => n !== releaseInfo.name);
+                    await dailyRef.update({ partTime: pt });
+                }
+                await writeAuditLog(uid, '釋出開放排班', data.shiftId, releaseInfo.date);
+                return ok(true);
+            }
+
+            case 'delete-open-shift': {
+                if (!isAdmin) return fail(403, '僅管理者可刪除開放排班');
+                await db.collection('openShifts').doc(data.shiftId).delete();
+                await writeAuditLog(uid, '刪除開放排班', data.shiftId, '');
+                return ok(true);
             }
 
             default:

@@ -1,8 +1,85 @@
 
 import React, { useState, useEffect } from 'react';
-import { apiGetAllClockRecords, apiGetAllEmployees } from '../../services/googleAppsScriptAPI';
-import { ClockRecord, User } from '../../types';
+import { apiGetAllClockRecords, apiGetAllEmployees, apiUpdateClockRecord } from '../../services/googleAppsScriptAPI';
+import { ClockRecord, ClockRecordStatus, User } from '../../types';
 import { ClockIcon } from '../icons';
+
+// 編輯 icon
+const PencilIcon: React.FC<{ className?: string }> = ({ className }) => (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+    </svg>
+);
+
+// 編輯 Modal — Phase 3.2 客戶 #2
+interface EditModalProps {
+    record: ClockRecord;
+    onClose: () => void;
+    onSaved: () => void;
+}
+
+const EditClockModal: React.FC<EditModalProps> = ({ record, onClose, onSaved }) => {
+    const [clockInTime, setClockInTime] = useState(record.clockInTime || '');
+    const [clockOutTime, setClockOutTime] = useState(record.clockOutTime || '');
+    const [status, setStatus] = useState<ClockRecordStatus>(record.status);
+    const [note, setNote] = useState(record.note || '');
+    const [saving, setSaving] = useState(false);
+
+    const handleSave = async () => {
+        setSaving(true);
+        try {
+            await apiUpdateClockRecord(record.id, {
+                clockInTime: clockInTime || undefined,
+                clockOutTime: clockOutTime || undefined,
+                status,
+                note,
+            });
+            onSaved();
+            onClose();
+        } catch (e: any) {
+            alert(e.message || '修改失敗');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-lg p-6 w-full max-w-md">
+                <h3 className="text-lg font-bold mb-4">修改打卡紀錄</h3>
+                <p className="text-sm text-gray-600 mb-4">{record.name}（{record.empId}）— {record.date}</p>
+                <div className="space-y-3">
+                    <div>
+                        <label className="text-sm font-medium text-gray-700">上班時間</label>
+                        <input type="time" value={clockInTime} onChange={e => setClockInTime(e.target.value)} className="w-full p-2 border rounded mt-1" />
+                    </div>
+                    <div>
+                        <label className="text-sm font-medium text-gray-700">下班時間</label>
+                        <input type="time" value={clockOutTime} onChange={e => setClockOutTime(e.target.value)} className="w-full p-2 border rounded mt-1" />
+                    </div>
+                    <div>
+                        <label className="text-sm font-medium text-gray-700">狀態</label>
+                        <select value={status} onChange={e => setStatus(e.target.value as ClockRecordStatus)} className="w-full p-2 border rounded mt-1">
+                            <option value="正常">正常</option>
+                            <option value="遲到">遲到</option>
+                            <option value="早退">早退</option>
+                            <option value="遲到+早退">遲到+早退</option>
+                            <option value="異常">異常</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label className="text-sm font-medium text-gray-700">備註</label>
+                        <textarea value={note} onChange={e => setNote(e.target.value)} className="w-full p-2 border rounded mt-1" rows={2} placeholder="修改原因" />
+                    </div>
+                </div>
+                <div className="mt-4 flex justify-end gap-2">
+                    <button onClick={onClose} className="px-4 py-2 bg-gray-100 rounded hover:bg-gray-200">取消</button>
+                    <button onClick={handleSave} disabled={saving} className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50">{saving ? '儲存中…' : '儲存'}</button>
+                </div>
+            </div>
+        </div>
+    );
+};
 
 // 下載 icon
 const DownloadIcon: React.FC<{ className?: string }> = ({ className }) => (
@@ -12,14 +89,16 @@ const DownloadIcon: React.FC<{ className?: string }> = ({ className }) => (
 );
 
 // 狀態標籤
-const StatusBadge: React.FC<{ status: '正常' | '遲到' | '早退' }> = ({ status }) => {
+const StatusBadge: React.FC<{ status: ClockRecordStatus }> = ({ status }) => {
     const colorMap: Record<string, string> = {
         '正常': 'bg-green-100 text-green-800',
         '遲到': 'bg-yellow-100 text-yellow-800',
         '早退': 'bg-orange-100 text-orange-800',
+        '遲到+早退': 'bg-red-100 text-red-800',
+        '異常': 'bg-red-100 text-red-800',
     };
     return (
-        <span className={`px-2 py-1 rounded-full text-xs font-medium ${colorMap[status]}`}>
+        <span className={`px-2 py-1 rounded-full text-xs font-medium ${colorMap[status] || 'bg-gray-100 text-gray-800'}`}>
             {status}
         </span>
     );
@@ -74,7 +153,9 @@ const AttendanceLog: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [month, setMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
     const [selectedEmployee, setSelectedEmployee] = useState<string>('all');
-    const [selectedStatus, setSelectedStatus] = useState<'all' | '正常' | '遲到' | '早退'>('all');
+    const [selectedStatus, setSelectedStatus] = useState<'all' | ClockRecordStatus>('all');
+    const [editing, setEditing] = useState<ClockRecord | null>(null);
+    const [reloadKey, setReloadKey] = useState(0);
 
     useEffect(() => {
         const fetchInitialData = async () => {
@@ -89,7 +170,7 @@ const AttendanceLog: React.FC = () => {
             setLoading(false);
         };
         fetchInitialData();
-    }, [month]);
+    }, [month, reloadKey]);
 
     useEffect(() => {
         let result = records;
@@ -265,12 +346,13 @@ const AttendanceLog: React.FC = () => {
                             <th className="py-3 px-4 border-b text-center text-sm font-semibold text-gray-600">工時</th>
                             <th className="py-3 px-4 border-b text-center text-sm font-semibold text-gray-600">狀態</th>
                             <th className="py-3 px-4 border-b text-center text-sm font-semibold text-gray-600">驗證方式</th>
+                            <th className="py-3 px-4 border-b text-center text-sm font-semibold text-gray-600">操作</th>
                         </tr>
                     </thead>
                     <tbody>
                         {loading ? (
                             <tr>
-                                <td colSpan={7} className="text-center py-10">
+                                <td colSpan={8} className="text-center py-10">
                                     <div className="flex justify-center">
                                         <div className="w-8 h-8 border-4 border-green-500 border-t-transparent rounded-full animate-spin"></div>
                                     </div>
@@ -300,12 +382,24 @@ const AttendanceLog: React.FC = () => {
                                     </td>
                                     <td className="py-3 px-4 border-b text-center">
                                         <VerificationBadge method={record.verificationMethod} />
+                                        {record.manuallyEdited && (
+                                            <span className="ml-1 text-xs text-amber-600" title="已被手動修改">✏️</span>
+                                        )}
+                                    </td>
+                                    <td className="py-3 px-4 border-b text-center">
+                                        <button
+                                            onClick={() => setEditing(record)}
+                                            className="text-blue-600 hover:text-blue-800 inline-flex items-center gap-1 text-sm"
+                                            title="修改打卡"
+                                        >
+                                            <PencilIcon className="w-4 h-4" />編輯
+                                        </button>
                                     </td>
                                 </tr>
                             ))
                         ) : (
                             <tr>
-                                <td colSpan={7} className="text-center py-10 text-gray-500">
+                                <td colSpan={8} className="text-center py-10 text-gray-500">
                                     無符合條件的紀錄
                                 </td>
                             </tr>
@@ -324,6 +418,14 @@ const AttendanceLog: React.FC = () => {
                     {month} 總工時: {stats.totalHours.toFixed(1)} 小時
                 </span>
             </div>
+
+            {editing && (
+                <EditClockModal
+                    record={editing}
+                    onClose={() => setEditing(null)}
+                    onSaved={() => setReloadKey(k => k + 1)}
+                />
+            )}
         </div>
     );
 };

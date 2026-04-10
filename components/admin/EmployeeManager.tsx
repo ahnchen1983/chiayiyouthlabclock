@@ -79,19 +79,20 @@ const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({ employee, onClose
         phone: employee?.phone || '',
         email: employee?.email || '',
         hourlyRate: employee?.hourlyRate || 183,
+        monthlySalary: employee?.monthlySalary ?? undefined,
         hireDate: employee?.hireDate || new Date().toISOString().slice(0, 10),
         resignDate: employee?.resignDate || undefined,
         status: employee?.status || '在職',
         position: employee?.position || '兼職人員',
         role: employee?.role || UserRole.Employee,
     });
-    const [initialPassword, setInitialPassword] = useState('password');
+    const [initialPassword, setInitialPassword] = useState('Aa123456');
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
         const { name, value } = e.target;
         setFormData(prev => ({
             ...prev,
-            [name]: name === 'hourlyRate' ? Number(value) : value
+            [name]: (name === 'hourlyRate' || name === 'monthlySalary') ? Number(value) : value
         }));
     };
 
@@ -180,9 +181,9 @@ const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({ employee, onClose
                                     handleChange(e);
                                     // 專責人員自動設為管理者
                                     if (e.target.value === '專責人員') {
-                                        setFormData(prev => ({ ...prev, role: UserRole.Admin, hourlyRate: 0 }));
+                                        setFormData(prev => ({ ...prev, role: UserRole.Admin, hourlyRate: 0, monthlySalary: prev.monthlySalary || 30000 }));
                                     } else {
-                                        setFormData(prev => ({ ...prev, role: UserRole.Employee }));
+                                        setFormData(prev => ({ ...prev, role: UserRole.Employee, monthlySalary: undefined }));
                                     }
                                 }}
                                 className="w-full p-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
@@ -222,6 +223,25 @@ const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({ employee, onClose
                                 min="0"
                                 className="w-full p-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                             />
+                        </div>
+                    )}
+
+                    {/* 月薪（僅專責人員）— Phase 3.1 客戶 #1 */}
+                    {formData.position === '專責人員' && (
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                月薪 (NTD)
+                            </label>
+                            <input
+                                type="number"
+                                name="monthlySalary"
+                                value={formData.monthlySalary ?? ''}
+                                onChange={handleChange}
+                                min="0"
+                                placeholder="例如 30000"
+                                className="w-full p-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            />
+                            <p className="text-xs text-gray-500 mt-1">專責人員的月薪將用於薪資計算（基本工資）。</p>
                         </div>
                     )}
 
@@ -281,12 +301,12 @@ const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({ employee, onClose
                                 type="text"
                                 value={initialPassword}
                                 onChange={(e) => setInitialPassword(e.target.value)}
-                                minLength={4}
+                                minLength={8}
                                 required
                                 className="w-full p-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                                 placeholder="預設密碼"
                             />
-                            <p className="text-xs text-gray-500 mt-1">至少 4 個字元，該員工可於登入後自行修改。</p>
+                            <p className="text-xs text-gray-500 mt-1">至少 8 個字元，需含英文與數字。員工可於登入後自行修改。</p>
                         </div>
                     )}
 

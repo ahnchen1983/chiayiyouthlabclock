@@ -6,6 +6,90 @@
 
 ---
 
+## [v1.6] - 2026-04-10 — Phase 4 全部完成
+
+### 新增 (Added)
+- **4.1 假別餘額管理**
+  - `computeAnnualLeaveDays()` 依勞基法計算特休天數（6 個月 3 天、1 年 7 天…最高 30 天）
+  - `getLeaveBalanceForEmployee()` 計算特休/事假/病假年度餘額
+  - `get-leave-balance` API action
+  - 請假申請前後端均驗證餘額，超額時阻擋
+  - `MyLeaveBalance` 元件：顯示各假別配額/已用/剩餘，含進度條
+  - `LeaveRequestForm` 內嵌餘額顯示（選擇假別即時顯示剩餘時數）
+- **4.2 員工自選班表**
+  - `OpenShift` 型別 + `openShifts` Firestore collection
+  - `create-open-shift` / `list-open-shifts` / `claim-open-shift` / `release-open-shift` / `delete-open-shift` 五個 action
+  - 認領使用 Firestore Transaction 確保原子性，額滿自動關閉
+  - 認領後自動同步到 `dailySchedule.partTime`
+  - `OpenShiftManager` 管理端：建立 + 一覽 + 刪除
+  - `OpenShiftPicker` 員工端：認領 / 釋出
+- **4.3 薪資條列印下載**
+  - `openPayslipPrintView()` 開新視窗產生可列印 HTML 薪資條
+  - 包含出勤統計、薪資項目、扣除明細、實發薪資
+  - 員工 `MySalary` + 管理端 `SalaryCalculation` 均有下載按鈕
+- **4.4 ErrorBoundary + UI 統一化**
+  - `ErrorBoundary` class component 包覆全 App，捕捉渲染錯誤顯示友善畫面
+  - Logo 從外部 URL 改為本地文字圖示（移除 CDN 依賴）
+  - `AdminDashboard` sidebar 改為響應式（手機端收合 + 漢堡選單 + 背景遮罩）
+  - `EmployeeDashboard` 底部導覽列支援水平滑動（`overflow-x-auto`）
+
+### 變更 (Changed)
+- `LeaveRequestForm` 提交前檢查假別餘額，不足時前端即阻擋
+- `submit-leave-request` 後端亦檢查餘額（特休/事假/病假），防止前端繞過
+- `AdminDashboard` 新增 `openShifts`、`myLeaveBalance`、`myOpenShifts` 三個 view
+- `EmployeeDashboard` 新增 `leaveBalance`、`openShifts` 兩個 view
+- `SalaryCalculation` Modal 新增「下載薪資條」按鈕
+
+### 文件更新
+- SDD.md → v1.6
+- DEVELOPMENT_ROADMAP.md → 勾選 Phase 4 全部 4 項
+- VERIFICATION_MANUAL.md → 新增 V4.1.x ~ V4.4.x 測試案例
+
+---
+
+## [v1.5] - 2026-04-09 — Phase 3 全部完成
+
+### 新增 (Added)
+- **3.1 薪資設定完善**
+  - `Employee.monthlySalary` 欄位（專責人員月薪）
+  - `systemConfig/salary` Firestore collection（勞健保費率、加班倍率、PT 時數上限、遲到寬限）
+  - `SystemSettings` 頁面（僅 SuperAdmin），可調整所有費率與規則
+  - `calculateSalaryForEmployee()` 改用 `SystemConfig`，不再硬寫死費率
+  - `EmployeeManager` 表單依職位顯示時薪 / 月薪欄位
+- **3.2 打卡紀錄管理**
+  - `clock-in` / `clock-out` 自動比對排班 `shiftTime` 並判定 `正常 / 遲到 / 早退 / 遲到+早退`
+  - `update-clock-record` action：管理員可修改任一筆打卡紀錄
+  - `AttendanceLog` 加入「編輯」按鈕與 EditModal
+  - `ClockRecord` 新增 `note / manuallyEdited / source / editedBy / editedAt` 欄位
+- **3.3 補打卡申請流程**
+  - `makeupRequests` Firestore collection
+  - 後端 actions：`submit-makeup-request` / `get-employee-makeup-requests` / `get-makeup-requests` / `approve-makeup-request`
+  - 員工端 `ClockMakeupForm`：填寫日期、類型、補打時間與理由
+  - 管理端 `MakeupApprovalQueue`：核准 / 駁回（含理由）
+  - 核准後自動寫入或合併 `clockRecords`
+- **3.4 請假驗證 + 駁回理由**
+  - 前後端皆驗證日期：endDate > startDate、不可早於 7 天前、最少 0.5 小時
+  - `LeaveRequest.rejectReason` 欄位
+  - `LeaveApprovalQueue` 駁回時必填理由
+- **3.5 排班衝突偵測**
+  - `check-schedule-conflicts` action：同人重複排班、營運日無專責人員 A
+- **3.6 通知機制**
+  - `notifications` Firestore collection
+  - 觸發點：請假核准/駁回、補打卡核准/駁回
+  - `NotificationBell` 元件嵌入 Admin / Employee Dashboard 頭部，含未讀數徽章
+
+### 變更 (Changed)
+- 薪資費率（勞保、健保、勞退、加班倍率）改為從 `systemConfig` 讀取，預設仍為 0.023 / 0.0211 / 0.06 / 1.34
+- `approve-leave` 增加角色檢查、駁回理由、自動發通知
+- `EmployeeManager` 預設密碼從 `'password'` 改為 `'Aa123456'`，前端 minLength 從 4 → 8
+
+### 文件更新
+- SDD.md → v1.5
+- DEVELOPMENT_ROADMAP.md → 勾選 Phase 3 全部 6 項
+- VERIFICATION_MANUAL.md → 新增 V3.1.x ~ V3.6.x 共 12 個測試案例
+
+---
+
 ## [v1.4] - 2026-04-10 — Roadmap 重整
 
 ### 變更 (Changed)
@@ -136,18 +220,9 @@
 
 ---
 
-## 未來版本規劃
+## 已完成版本
 
-### [v1.5] - Phase 3 功能完善（未開始，已整併客戶需求）
-- 3.1 薪資設定完善（員工月薪欄位 + 費率設定化）✨ 客戶 #1
-- 3.2 打卡紀錄管理（自動判定 + 管理員編輯）✨ 客戶 #2
-- 3.3 補打卡申請流程 ✨ 客戶 #3
-- 3.4 請假日期驗證 + 駁回理由
-- 3.5 排班衝突偵測 + 人力檢查
-- 3.6 通知機制
+- **v1.5** — Phase 3 功能完善（2026-04-09）✅
+- **v1.6** — Phase 4 進階功能（2026-04-10）✅
 
-### [v1.6] - Phase 4 進階功能（未開始）
-- 4.1 假別餘額管理
-- 4.2 員工自選班表
-- 4.3 薪資條 PDF 下載
-- 4.4 UI 統一化 + Error Boundary
+所有計畫中的 Phase 1~4 功能已全部完成。

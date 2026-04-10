@@ -1,8 +1,8 @@
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
-import { apiSubmitLeaveRequest } from '../../services/googleAppsScriptAPI';
-import { LeaveType, LeaveRequest } from '../../types';
+import { apiSubmitLeaveRequest, apiGetLeaveBalance } from '../../services/googleAppsScriptAPI';
+import { LeaveType, LeaveRequest, LeaveBalance } from '../../types';
 
 const LeaveRequestForm: React.FC = () => {
   const { user } = useAuth();
@@ -12,11 +12,47 @@ const LeaveRequestForm: React.FC = () => {
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<{ type: string, text: string } | null>(null);
+  const [balances, setBalances] = useState<LeaveBalance[]>([]);
+
+  useEffect(() => {
+    apiGetLeaveBalance().then(setBalances).catch(() => {});
+  }, []);
+
+  const currentBalance = balances.find(b => b.leaveType === leaveType);
+  const requestedHours = startDate && endDate
+    ? Math.max(0, (new Date(endDate).getTime() - new Date(startDate).getTime()) / (1000 * 60 * 60))
+    : 0;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !startDate || !endDate || !reason) {
       setMessage({ type: 'error', text: '所有欄位皆為必填。' });
+      return;
+    }
+    // Phase 3.4 日期驗證
+    const startMs = new Date(startDate).getTime();
+    const endMs = new Date(endDate).getTime();
+    if (Number.isNaN(startMs) || Number.isNaN(endMs)) {
+      setMessage({ type: 'error', text: '日期格式錯誤。' });
+      return;
+    }
+    if (endMs <= startMs) {
+      setMessage({ type: 'error', text: '結束時間必須晚於開始時間。' });
+      return;
+    }
+    const todayMs = new Date(new Date().toISOString().slice(0, 10)).getTime();
+    if (startMs < todayMs - 7 * 24 * 60 * 60 * 1000) {
+      setMessage({ type: 'error', text: '請假開始時間不可早於 7 天前。' });
+      return;
+    }
+    const hours = (endMs - startMs) / (1000 * 60 * 60);
+    if (hours < 0.5) {
+      setMessage({ type: 'error', text: '請假時數至少需 0.5 小時。' });
+      return;
+    }
+    // Phase 4.1：前端餘額預檢
+    if (currentBalance && leaveType !== LeaveType.Other && hours > currentBalance.remainingHours) {
+      setMessage({ type: 'error', text: `${leaveType}剩餘 ${currentBalance.remainingHours} 小時，不足以申請 ${hours} 小時。` });
       return;
     }
     setSubmitting(true);
@@ -42,8 +78,8 @@ const LeaveRequestForm: React.FC = () => {
       } else {
         setMessage({ type: 'error', text: '送出失敗，請稍後再試。' });
       }
-    } catch (error) {
-        setMessage({ type: 'error', text: '發生未知錯誤。' });
+    } catch (error: any) {
+        setMessage({ type: 'error', text: error?.message || '發生未知錯誤。' });
     } finally {
       setSubmitting(false);
     }
@@ -63,6 +99,17 @@ const LeaveRequestForm: React.FC = () => {
           >
             {Object.values(LeaveType).map(lt => <option key={lt} value={lt}>{lt}</option>)}
           </select>
+          {currentBalance && leaveType !== LeaveType.Other && (
+            <p className="mt-1 text-xs text-gray-500">
+              本年度{leaveType}剩餘 <span className="font-semibold text-brand-green-dark">{currentBalance.remainingHours}h</span>
+              （配額 {currentBalance.quotaHours}h，已用 {currentBalance.usedHours}h）
+              {requestedHours > 0 && (
+                <span className={`ml-2 ${requestedHours > currentBalance.remainingHours ? 'text-red-600' : 'text-gray-500'}`}>
+                  本次申請 {requestedHours.toFixed(1)}h
+                </span>
+              )}
+            </p>
+          )}
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
