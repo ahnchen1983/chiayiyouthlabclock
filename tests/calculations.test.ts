@@ -7,6 +7,9 @@ import {
     computeAnnualLeaveDays,
     computeLeaveBalances,
     calculateSalaryForEmployee,
+    normalizeScheduleDoc,
+    getEmployeeShiftsForDay,
+    shiftHours,
     DEFAULT_SYSTEM_CONFIG,
 } from '../netlify/functions/utils/calculations';
 import { LeaveStatus, LeaveType } from '../types';
@@ -223,8 +226,12 @@ describe('calculateSalaryForEmployee', () => {
             { id: 'C2', empId: 'EMP002', name: '小李', date: '2026-04-02', clockInTime: '09:00', clockOutTime: '13:00', verificationMethod: 'IP', verificationData: '1', workHours: 4, status: '正常' },
         ];
         const schedule: ScheduleEvent[] = [
-            { date: '2026-04-01', dayOfWeek: '三', status: '營運', shiftTime: '09:00-13:00', staffA: '', staffB: '', partTime: ['小李'] },
-            { date: '2026-04-02', dayOfWeek: '四', status: '營運', shiftTime: '09:00-13:00', staffA: '', staffB: '', partTime: ['小李'] },
+            { date: '2026-04-01', dayOfWeek: '三', status: '營運', shifts: [
+                { empId: 'EMP002', name: '小李', role: 'partTime', from: '09:00', to: '13:00' }
+            ] },
+            { date: '2026-04-02', dayOfWeek: '四', status: '營運', shifts: [
+                { empId: 'EMP002', name: '小李', role: 'partTime', from: '09:00', to: '13:00' }
+            ] },
         ];
         const result = calculateSalaryForEmployee(partTimeEmp, '2026-04', schedule, clockRecords, []);
         expect(result.totalWorkHours).toBe(8);
@@ -263,9 +270,96 @@ describe('calculateSalaryForEmployee', () => {
 
     it('休館日不計入工作日', () => {
         const schedule: ScheduleEvent[] = [
-            { date: '2026-04-01', dayOfWeek: '三', status: '休館', shiftTime: '', staffA: '', staffB: '', partTime: [] },
+            { date: '2026-04-01', dayOfWeek: '三', status: '休館', shifts: [] },
         ];
         const result = calculateSalaryForEmployee(fullTimeEmp, '2026-04', schedule, [], []);
         expect(result.totalWorkDays).toBe(0);
+    });
+
+    it('兩頭班：同員工同日多筆 shift 時數加總', () => {
+        const schedule: ScheduleEvent[] = [
+            { date: '2026-04-15', dayOfWeek: '三', status: '營運', shifts: [
+                { empId: 'EMP001', name: '小王', role: 'staffA', from: '08:30', to: '13:00' },
+                { empId: 'EMP001', name: '小王', role: 'staffA', from: '17:00', to: '20:00' },
+            ] },
+        ];
+        const result = calculateSalaryForEmployee(fullTimeEmp, '2026-04', schedule, [], []);
+        expect(result.totalWorkDays).toBe(1);
+        // scheduledHours = 4.5 + 3 = 7.5（但 fullTime 是月薪所以工時只影響加班計算）
+    });
+});
+
+// =============================================================
+// 排班 v2 相容層
+// =============================================================
+
+describe('normalizeScheduleDoc', () => {
+    it('v2 結構（已有 shifts）直接通過', () => {
+        const raw = {
+            status: '營運',
+            shifts: [
+                { empId: 'E1', name: '王', role: 'staffA', from: '08:30', to: '17:30' }
+            ],
+            openingHours: '08:30-17:30',
+        };
+        const r = normalizeScheduleDoc(raw, '2026-04-15', '三');
+        expect(r.shifts).toHaveLength(1);
+        expect(r.openingHours).toBe('08:30-17:30');
+    });
+
+    it('v1 結構（staffA/B/partTime + shiftTime）自動轉為 shifts', () => {
+        const raw = {
+            status: '營運',
+            shiftTime: '08:30-17:30',
+            staffA: '千雯',
+            staffB: '小明',
+            partTime: ['PT甲', 'PT乙'],
+        };
+        const r = normalizeScheduleDoc(raw, '2026-04-15', '三');
+        expect(r.shifts).toHaveLength(4);
+        expect(r.shifts.map(s => s.role)).toEqual(['staffA', 'staffB', 'partTime', 'partTime']);
+        expect(r.shifts.every(s => s.from === '08:30' && s.to === '17:30')).toBe(true);
+        // 舊資料轉換後 empId 為空，name 保留
+        expect(r.shifts[0].empId).toBe('');
+        expect(r.shifts[0].name).toBe('千雯');
+    });
+
+    it('null/undefined 文件回傳休館空班', () => {
+        const r = normalizeScheduleDoc(null, '2026-04-15', '三');
+        expect(r.status).toBe('休館');
+        expect(r.shifts).toEqual([]);
+    });
+
+    it('shiftTime 為空時不轉換 v1 人員（避免無效班次）', () => {
+        const r = normalizeScheduleDoc({ status: '休館', staffA: '千雯' }, '2026-04-15', '三');
+        expect(r.shifts).toHaveLength(0);
+    });
+});
+
+describe('getEmployeeShiftsForDay / shiftHours', () => {
+    const evt: ScheduleEvent = {
+        date: '2026-04-15', dayOfWeek: '三', status: '營運',
+        shifts: [
+            { empId: 'E1', name: '王', role: 'staffA', from: '08:30', to: '13:00' },
+            { empId: 'E1', name: '王', role: 'staffA', from: '17:00', to: '20:00' },
+            { empId: 'E2', name: '李', role: 'staffB', from: '13:00', to: '20:00' },
+            { empId: '', name: '舊資料張', role: 'partTime', from: '10:00', to: '14:00' },
+        ]
+    };
+
+    it('依 empId 過濾兩筆兩頭班', () => {
+        const r = getEmployeeShiftsForDay(evt, 'E1', '王');
+        expect(r).toHaveLength(2);
+    });
+
+    it('舊資料 empId 為空時 fallback 用 name', () => {
+        const r = getEmployeeShiftsForDay(evt, '', '舊資料張');
+        expect(r).toHaveLength(1);
+    });
+
+    it('shiftHours 算對', () => {
+        expect(shiftHours({ from: '08:30', to: '13:00' })).toBe(4.5);
+        expect(shiftHours({ from: '17:00', to: '20:00' })).toBe(3);
+        expect(shiftHours({ from: '', to: '13:00' })).toBe(0);
     });
 });

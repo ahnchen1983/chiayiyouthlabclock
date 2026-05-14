@@ -4,7 +4,9 @@ import {
     hashPassword, verifyPassword, validatePasswordStrength,
     DEFAULT_SYSTEM_CONFIG, determineClockStatus,
     computeAnnualLeaveDays, calculateSalaryForEmployee,
+    normalizeScheduleDoc, getEmployeeShiftsForDay, isEmployeeScheduledForDay,
 } from './utils/calculations';
+import type { StaffShift, StaffRole } from '../../types';
 import { UserRole, LeaveStatus, LeaveType, EmployeeStatus } from '../../types';
 import type { ClockRecord, LeaveRequest, Employee, ScheduleEvent, SalaryDetail, TodayAttendanceComparison, PendingItem, SystemConfig, ClockMakeupRequest, Notification, NotificationType } from '../../types';
 
@@ -189,12 +191,22 @@ const getMonthlyDailySchedule = async (yearMonth: string): Promise<ScheduleEvent
     for (let day = 1; day <= daysInMonth; day++) {
         const dateStr = dateKeys[day - 1];
         const dow = new Date(year, month - 1, day).getDay();
+        const dowStr = dayOfWeekMap[dow];
         const daily = dailyMap.get(dateStr);
         if (daily) {
-            schedule.push({ date: dateStr, dayOfWeek: dayOfWeekMap[dow], status: daily.status, shiftTime: daily.shiftTime, staffA: daily.staffA, staffB: daily.staffB, partTime: daily.partTime || [] });
+            schedule.push(normalizeScheduleDoc(daily, dateStr, dowStr));
         } else {
-            const tmpl = templates[dow];
-            schedule.push({ date: dateStr, dayOfWeek: dayOfWeekMap[dow], ...tmpl });
+            // Fallback：當日無 dailySchedule，從模板提取 status/openingHours，但 shifts 為空
+            // （模板僅描述「該星期幾」預設的營業時段與班次結構，不含具體人員）
+            const tmpl = templates[dow] || {};
+            schedule.push({
+                date: dateStr,
+                dayOfWeek: dowStr,
+                status: tmpl.status || '休館',
+                openingHours: tmpl.openingHours || tmpl.shiftTime, // v1 模板可能仍叫 shiftTime
+                requiredHeadcount: tmpl.requiredHeadcount,
+                shifts: [],
+            });
         }
     }
     return schedule;
@@ -202,14 +214,38 @@ const getMonthlyDailySchedule = async (yearMonth: string): Promise<ScheduleEvent
 
 /**
  * 取得單日班表（優先 dailySchedule，fallback template）
+ * 回傳已正規化的 ScheduleEvent
  */
-const getDaySchedule = async (dateStr: string): Promise<any> => {
-    const dailyDoc = await db.collection('dailySchedule').doc(dateStr).get();
-    if (dailyDoc.exists) return dailyDoc.data();
+const getDaySchedule = async (dateStr: string): Promise<ScheduleEvent> => {
     const [y, m, d] = dateStr.split('-').map(Number);
     const dow = new Date(y, m - 1, d).getDay();
+    const dowStr = dayOfWeekMap[dow];
+    const dailyDoc = await db.collection('dailySchedule').doc(dateStr).get();
+    if (dailyDoc.exists) {
+        return normalizeScheduleDoc(dailyDoc.data(), dateStr, dowStr);
+    }
     const templates = await getScheduleTemplates();
-    return templates[dow];
+    const tmpl = templates[dow] || {};
+    return {
+        date: dateStr, dayOfWeek: dowStr,
+        status: tmpl.status || '休館',
+        openingHours: tmpl.openingHours || tmpl.shiftTime,
+        requiredHeadcount: tmpl.requiredHeadcount,
+        shifts: [],
+    };
+};
+
+/**
+ * 求員工當日的「主要排班時段」用於遲到/早退判定。
+ * 規則：取最早 from 與最晚 to（兩頭班視為一整天工時範圍）。
+ */
+const getEmployeeShiftRangeStr = (event: ScheduleEvent, empId: string, empName: string): string | undefined => {
+    const shifts = getEmployeeShiftsForDay(event, empId, empName);
+    if (shifts.length === 0) return undefined;
+    const sortedFrom = shifts.map(s => s.from).filter(Boolean).sort();
+    const sortedTo = shifts.map(s => s.to).filter(Boolean).sort();
+    if (sortedFrom.length === 0 || sortedTo.length === 0) return undefined;
+    return `${sortedFrom[0]}-${sortedTo[sortedTo.length - 1]}`;
 };
 
 /**
@@ -281,14 +317,22 @@ export const handler: Handler = async (event) => {
             // 排班模板：若不存在才建立
             const templateSnap = await db.collection('scheduleTemplate').limit(1).get();
             if (templateSnap.empty) {
+                // v2.0 預設模板：openingHours + defaultShifts（無具體人員）
+                const mkTmpl = (status: string, openingHours: string, requiredHeadcount: number = 2): any => ({
+                    status, openingHours, requiredHeadcount,
+                    defaultShifts: openingHours ? [
+                        { role: 'staffA', from: openingHours.split('-')[0], to: openingHours.split('-')[1] },
+                        { role: 'staffB', from: openingHours.split('-')[0], to: openingHours.split('-')[1] },
+                    ] : [],
+                });
                 const defaultSchedule = [
-                    { status: '營運', shiftTime: '08:30-17:30', staffA: '', staffB: '', partTime: [] },  // 日
-                    { status: '休館', shiftTime: '', staffA: '', staffB: '', partTime: [] },              // 一
-                    { status: '休館', shiftTime: '', staffA: '', staffB: '', partTime: [] },              // 二
-                    { status: '營運', shiftTime: '10:00-20:00', staffA: '', staffB: '', partTime: [] },   // 三
-                    { status: '營運', shiftTime: '10:00-20:00', staffA: '', staffB: '', partTime: [] },   // 四
-                    { status: '營運', shiftTime: '08:30-17:30', staffA: '', staffB: '', partTime: [] },   // 五
-                    { status: '營運', shiftTime: '08:30-17:30', staffA: '', staffB: '', partTime: [] },   // 六
+                    mkTmpl('營運', '08:30-17:30'),  // 日
+                    mkTmpl('休館', ''),              // 一
+                    mkTmpl('休館', ''),              // 二
+                    mkTmpl('營運', '10:00-20:00'),   // 三
+                    mkTmpl('營運', '10:00-20:00'),   // 四
+                    mkTmpl('營運', '08:30-17:30'),   // 五
+                    mkTmpl('營運', '08:30-17:30'),   // 六
                 ];
                 for (let i = 0; i < 7; i++) {
                     batch.set(db.collection('scheduleTemplate').doc(String(i)), defaultSchedule[i]);
@@ -355,12 +399,15 @@ export const handler: Handler = async (event) => {
                         || event.headers['client-ip']
                         || 'unknown';
                 }
-                // 遲到判定：與當日排班時段比對
-                const [todayDaySchedule, sysConfig] = await Promise.all([
+                // 遲到判定：與當日「該員工自己的 shift 範圍」比對
+                const [todayDaySchedule, sysConfig, empSnapForClockIn] = await Promise.all([
                     getDaySchedule(today),
                     getSystemConfig(),
+                    db.collection('employees').doc(uid).get(),
                 ]);
-                const status = determineClockStatus(todayDaySchedule?.shiftTime, clockInTime, null, sysConfig.lateGraceMinutes);
+                const empName = empSnapForClockIn.exists ? empSnapForClockIn.data()!.name : data.name;
+                const myShiftRange = getEmployeeShiftRangeStr(todayDaySchedule, uid, empName);
+                const status = determineClockStatus(myShiftRange, clockInTime, null, sysConfig.lateGraceMinutes);
                 await db.collection('clockRecords').add({
                     empId: uid,
                     name: data.name,
@@ -388,13 +435,16 @@ export const handler: Handler = async (event) => {
                 const [inH, inM] = docSnap.data().clockInTime.split(':').map(Number);
                 const [outH, outM] = clockOutTime.split(':').map(Number);
                 const workHours = Math.round(((outH * 60 + outM) - (inH * 60 + inM)) / 60 * 10) / 10;
-                // 早退判定
-                const [todayDaySchedule, sysConfig] = await Promise.all([
+                // 早退判定：用該員工自己的 shift 範圍
+                const [todayDaySchedule, sysConfig, empSnapForClockOut] = await Promise.all([
                     getDaySchedule(today),
                     getSystemConfig(),
+                    db.collection('employees').doc(uid).get(),
                 ]);
+                const empName = empSnapForClockOut.exists ? empSnapForClockOut.data()!.name : '';
+                const myShiftRange = getEmployeeShiftRangeStr(todayDaySchedule, uid, empName);
                 const status = determineClockStatus(
-                    todayDaySchedule?.shiftTime,
+                    myShiftRange,
                     docSnap.data().clockInTime,
                     clockOutTime,
                     sysConfig.lateGraceMinutes
@@ -442,10 +492,10 @@ export const handler: Handler = async (event) => {
                 ]);
                 if (!empSnap.exists) return ok([]);
                 const user = empSnap.data()!;
-                const schedule = allEvents.filter(event => {
-                    const pt: string[] = event.partTime || [];
-                    return event.staffA === user.name || event.staffB === user.name || pt.includes(user.name) || event.status === '休館';
-                });
+                // v2：保留有自己 shift 的日子 + 全部休館日（讓員工知道哪天休館）
+                const schedule = allEvents.filter(event =>
+                    event.status === '休館' || isEmployeeScheduledForDay(event, uid, user.name)
+                );
                 return ok(schedule);
             }
 
@@ -455,16 +505,27 @@ export const handler: Handler = async (event) => {
             }
 
             case 'update-schedule': {
-                // 寫入 dailySchedule/{date}，不再覆寫整週模板
+                // 寫入 dailySchedule/{date}，v2 結構（shifts + openingHours + requiredHeadcount）
                 const event = data.event as ScheduleEvent;
                 const { date: dateStr, dayOfWeek: _dw, ...scheduleData } = event;
+                // 兩頭班限制：同 empId 同日最多 2 筆 shift
+                const counter = new Map<string, number>();
+                for (const s of event.shifts || []) {
+                    const key = s.empId || `name:${s.name}`;
+                    counter.set(key, (counter.get(key) || 0) + 1);
+                }
+                for (const [k, n] of counter) {
+                    if (n > 2) return fail(400, `員工 ${k.replace('name:', '')} 同日班次超過 2 段（兩頭班上限）`);
+                }
                 await db.collection('dailySchedule').doc(dateStr).set(scheduleData);
-                await writeAuditLog(uid, '更新排班', dateStr, `${event.status} ${event.shiftTime} A:${event.staffA} B:${event.staffB} PT:${event.partTime?.join(',')}`);
+                const shiftSummary = (event.shifts || []).map(s => `${s.name}(${s.role}/${s.from}-${s.to})`).join(', ');
+                await writeAuditLog(uid, '更新排班', dateStr, `${event.status} 營業:${event.openingHours || '-'} 應到:${event.requiredHeadcount ?? '-'} 班次:${shiftSummary || '(空)'}`);
                 return ok(true);
             }
 
             case 'apply-template': {
-                // 將模板套用到指定月份，批次產生 dailySchedule
+                // 套用模板：v2 模板僅描述 status + openingHours + defaultShifts 結構
+                // 套到 dailySchedule 時 shifts=[]（具體人員之後由管理員填）
                 const [year, month] = data.yearMonth.split('-').map(Number);
                 const daysInMonth = new Date(year, month, 0).getDate();
                 const templates = await getScheduleTemplates();
@@ -472,11 +533,17 @@ export const handler: Handler = async (event) => {
                 for (let day = 1; day <= daysInMonth; day++) {
                     const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
                     const dow = new Date(year, month - 1, day).getDay();
-                    batch.set(db.collection('dailySchedule').doc(dateStr), templates[dow]);
+                    const tmpl = templates[dow] || {};
+                    batch.set(db.collection('dailySchedule').doc(dateStr), {
+                        status: tmpl.status || '休館',
+                        openingHours: tmpl.openingHours || tmpl.shiftTime || '',
+                        requiredHeadcount: tmpl.requiredHeadcount ?? 2,
+                        shifts: [],
+                    });
                 }
                 await batch.commit();
-                await writeAuditLog(uid, '套用模板', data.yearMonth, `套用至 ${daysInMonth} 天`);
-                return ok({ message: `已將模板套用至 ${data.yearMonth}，共 ${daysInMonth} 天` });
+                await writeAuditLog(uid, '套用模板', data.yearMonth, `套用至 ${daysInMonth} 天（v2 結構，人員待填）`);
+                return ok({ message: `已將模板套用至 ${data.yearMonth}，共 ${daysInMonth} 天。請進入排班管理填入人員。` });
             }
 
             // ==================== 排班重置（Phase 5.5 / Onboarding）====================
@@ -678,13 +745,15 @@ export const handler: Handler = async (event) => {
                 const monthRecords = allRecords.filter(r => r.date.startsWith(yearMonth));
                 const leaveRequests = leaveSnap.docs.map(d => ({ id: d.id, ...d.data() } as LeaveRequest));
 
-                const scheduledStaff: string[] = [];
-                if (todaySchedule.staffA) scheduledStaff.push(todaySchedule.staffA);
-                if (todaySchedule.staffB) scheduledStaff.push(todaySchedule.staffB);
-                scheduledStaff.push(...(todaySchedule.partTime || []));
+                // v2：scheduledStaff 從 shifts 提取（去重 by empId+name）
+                const scheduledEmpKeys = new Set<string>();
+                (todaySchedule.shifts || []).forEach(s => scheduledEmpKeys.add(s.empId || `name:${s.name}`));
+                const scheduledStaffCount = scheduledEmpKeys.size;
 
                 const todayAttendance: TodayAttendanceComparison[] = employees.map(user => {
-                    const isScheduled = scheduledStaff.includes(user.name);
+                    const myShifts = getEmployeeShiftsForDay(todaySchedule, user.id, user.name);
+                    const isScheduled = myShifts.length > 0;
+                    const myShiftRange = getEmployeeShiftRangeStr(todaySchedule, user.id, user.name);
                     const record = todayRecords.find(r => r.empId === user.id);
                     const leaveToday = leaveRequests.find(
                         lr => lr.empId === user.id && lr.status === LeaveStatus.Approved &&
@@ -699,7 +768,7 @@ export const handler: Handler = async (event) => {
                     }
                     return {
                         empId: user.id, name: user.name, position: user.position,
-                        scheduledShift: isScheduled ? todaySchedule.shiftTime : null,
+                        scheduledShift: isScheduled ? (myShiftRange || null) : null,
                         clockInTime: record?.clockInTime || null,
                         clockOutTime: record?.clockOutTime || null,
                         status,
@@ -729,7 +798,7 @@ export const handler: Handler = async (event) => {
 
                 return ok({
                     todayClockedIn: todayRecords.length,
-                    todayScheduled: scheduledStaff.length,
+                    todayScheduled: scheduledStaffCount,
                     monthlyTotalHours: Math.round(monthRecords.reduce((s, r) => s + (r.workHours || 0), 0) * 10) / 10,
                     pendingLeaves: leaveRequests.filter(r => r.status === LeaveStatus.Pending).length,
                     hourWarnings: pendingItems.filter(p => p.type === '時數警示').length,
@@ -762,20 +831,17 @@ export const handler: Handler = async (event) => {
                 const monthRecords = clockSnap.docs.map(d => ({ id: d.id, ...d.data() } as ClockRecord)).filter(r => r.date.startsWith(data.yearMonth));
                 const leaveRequests = leaveSnap.docs.map(d => ({ id: d.id, ...d.data() } as LeaveRequest));
                 const result = scheduleEvents.map(event => {
-                    const scheduledStaff: string[] = [];
-                    if (event.staffA) scheduledStaff.push(event.staffA);
-                    if (event.staffB) scheduledStaff.push(event.staffB);
-                    scheduledStaff.push(...(event.partTime || []));
                     const dayRecords = monthRecords.filter(r => r.date === event.date);
                     const empList = employees.map(user => {
-                        const isScheduled = scheduledStaff.includes(user.name);
+                        const myShiftRange = getEmployeeShiftRangeStr(event, user.id, user.name);
+                        const isScheduled = !!myShiftRange;
                         const record = dayRecords.find(r => r.empId === user.id);
                         const leaveOnDay = leaveRequests.find(lr => lr.empId === user.id && lr.status === LeaveStatus.Approved && lr.startDate.slice(0, 10) <= event.date && lr.endDate.slice(0, 10) >= event.date);
                         let attendanceStatus: string = '-';
                         if (event.status === '休館') attendanceStatus = '-';
                         else if (leaveOnDay) attendanceStatus = '休假';
                         else if (isScheduled) attendanceStatus = record ? record.status : '缺勤';
-                        return { empId: user.id, name: user.name, position: user.position, scheduled: isScheduled, scheduledShift: isScheduled ? event.shiftTime : null, clockInTime: record?.clockInTime || null, clockOutTime: record?.clockOutTime || null, workHours: record?.workHours || null, attendanceStatus };
+                        return { empId: user.id, name: user.name, position: user.position, scheduled: isScheduled, scheduledShift: myShiftRange || null, clockInTime: record?.clockInTime || null, clockOutTime: record?.clockOutTime || null, workHours: record?.workHours || null, attendanceStatus };
                     });
                     return { date: event.date, dayOfWeek: event.dayOfWeek, status: event.status, employees: empList };
                 });
@@ -1012,21 +1078,29 @@ export const handler: Handler = async (event) => {
             // ==================== 排班衝突檢查（Phase 3.5）====================
 
             case 'check-schedule-conflicts': {
-                // 回傳該月份所有衝突清單：同一人同日重複、人力不足
+                // v2：偵測超過兩頭班上限、應到人數不足、營運日無 staffA
                 const events = await getMonthlyDailySchedule(data.yearMonth);
                 const conflicts: any[] = [];
                 events.forEach(e => {
                     if (e.status === '休館') return;
-                    const all = [e.staffA, e.staffB, ...(e.partTime || [])].filter(Boolean);
-                    // 同人重複
-                    const seen = new Set<string>();
-                    all.forEach(n => {
-                        if (seen.has(n)) conflicts.push({ date: e.date, type: 'duplicate', name: n, message: `${n} 在 ${e.date} 被排兩次以上` });
-                        seen.add(n);
-                    });
-                    // 人力不足（營運日無 staffA）
-                    if (e.status === '營運' && !e.staffA) {
-                        conflicts.push({ date: e.date, type: 'understaffed', message: `${e.date} 無專責人員 A` });
+                    // 1. 兩頭班 > 2 段
+                    const empShiftCount = new Map<string, { name: string; n: number }>();
+                    for (const s of e.shifts) {
+                        const key = s.empId || `name:${s.name}`;
+                        const cur = empShiftCount.get(key) || { name: s.name, n: 0 };
+                        cur.n++;
+                        empShiftCount.set(key, cur);
+                    }
+                    for (const { name, n } of empShiftCount.values()) {
+                        if (n > 2) conflicts.push({ date: e.date, type: 'duplicate', name, message: `${name} 在 ${e.date} 排了 ${n} 段班次（兩頭班上限 2）` });
+                    }
+                    // 2. 應到人數不足（決策 3：僅警示）
+                    if (e.requiredHeadcount && empShiftCount.size < e.requiredHeadcount) {
+                        conflicts.push({ date: e.date, type: 'understaffed', message: `${e.date} 應到 ${e.requiredHeadcount} 人，目前只排了 ${empShiftCount.size} 人` });
+                    }
+                    // 3. 營運日無 staffA
+                    if (e.status === '營運' && !e.shifts.some(s => s.role === 'staffA')) {
+                        conflicts.push({ date: e.date, type: 'understaffed', message: `${e.date} 營運日無專責人員 A` });
                     }
                 });
                 return ok(conflicts);
@@ -1097,24 +1171,35 @@ export const handler: Handler = async (event) => {
                     return { name, date: shift.date, shiftTime: shift.shiftTime };
                 });
 
-                // 同步寫入 dailySchedule.partTime
+                // v2：同步寫入 dailySchedule.shifts（push 一筆 StaffShift）
+                const [from = '', to = ''] = (result.shiftTime || '').split('-');
+                const newShift: StaffShift = { empId: uid, name: result.name, role: 'partTime', from, to };
                 const dailyRef = db.collection('dailySchedule').doc(result.date);
                 const dailySnap = await dailyRef.get();
                 if (dailySnap.exists) {
                     const cur = dailySnap.data()!;
-                    const pt: string[] = cur.partTime || [];
-                    if (!pt.includes(result.name)) {
-                        await dailyRef.update({ partTime: [...pt, result.name] });
+                    const normalized = normalizeScheduleDoc(cur, result.date, '');
+                    // 避免重複 push（同員工同時段）
+                    const dup = normalized.shifts.some(s => s.empId === uid && s.from === from && s.to === to);
+                    if (!dup) {
+                        await dailyRef.set({
+                            status: normalized.status,
+                            openingHours: normalized.openingHours,
+                            requiredHeadcount: normalized.requiredHeadcount,
+                            shifts: [...normalized.shifts, newShift],
+                        });
                     }
                 } else {
-                    // 從模板初始化該日，再加入認領者
+                    // 從模板取 status，再加入認領者
                     const [y, m, d] = result.date.split('-').map(Number);
                     const dow = new Date(y, m - 1, d).getDay();
                     const templates = await getScheduleTemplates();
-                    const tmpl = templates[dow] || { status: '營運', shiftTime: result.shiftTime, staffA: '', staffB: '', partTime: [] };
+                    const tmpl = templates[dow] || {};
                     await dailyRef.set({
-                        ...tmpl,
-                        partTime: [...(tmpl.partTime || []), result.name],
+                        status: tmpl.status || '營運',
+                        openingHours: tmpl.openingHours || tmpl.shiftTime || result.shiftTime,
+                        requiredHeadcount: tmpl.requiredHeadcount ?? 2,
+                        shifts: [newShift],
                     });
                 }
                 await writeAuditLog(uid, '認領開放排班', data.shiftId, `${result.date} ${result.shiftTime}`);
@@ -1142,13 +1227,20 @@ export const handler: Handler = async (event) => {
                     return { name, date: shift.date };
                 });
 
-                // 從 dailySchedule.partTime 移除
+                // v2：從 dailySchedule.shifts 移除該員工的 partTime shift
                 const dailyRef = db.collection('dailySchedule').doc(releaseInfo.date);
                 const dailySnap = await dailyRef.get();
-                if (dailySnap.exists && releaseInfo.name) {
-                    const cur = dailySnap.data()!;
-                    const pt: string[] = (cur.partTime || []).filter((n: string) => n !== releaseInfo.name);
-                    await dailyRef.update({ partTime: pt });
+                if (dailySnap.exists) {
+                    const normalized = normalizeScheduleDoc(dailySnap.data(), releaseInfo.date, '');
+                    const filtered = normalized.shifts.filter(s =>
+                        !(s.role === 'partTime' && ((s.empId && s.empId === uid) || (!s.empId && s.name === releaseInfo.name)))
+                    );
+                    await dailyRef.set({
+                        status: normalized.status,
+                        openingHours: normalized.openingHours,
+                        requiredHeadcount: normalized.requiredHeadcount,
+                        shifts: filtered,
+                    });
                 }
                 await writeAuditLog(uid, '釋出開放排班', data.shiftId, releaseInfo.date);
                 return ok(true);

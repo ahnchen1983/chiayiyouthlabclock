@@ -6,7 +6,7 @@
  */
 import { scryptSync, randomBytes, timingSafeEqual } from 'crypto';
 import { LeaveStatus, LeaveType } from '../../../types';
-import type { ClockRecord, LeaveRequest, ScheduleEvent, SalaryDetail, SystemConfig } from '../../../types';
+import type { ClockRecord, LeaveRequest, ScheduleEvent, StaffShift, SalaryDetail, SystemConfig } from '../../../types';
 
 // ==================== 密碼 ====================
 
@@ -96,6 +96,75 @@ export const computeAnnualLeaveDays = (hireDate: string, asOf: Date = new Date()
     return Math.min(30, 15 + (years - 9));
 };
 
+// ==================== 排班 v2 相容層（Phase 5.1）====================
+
+/**
+ * 將任意 Firestore schedule 文件正規化為 v2 結構。
+ * 遇到舊版（含 staffA/staffB/partTime/shiftTime）自動轉換為 shifts[]。
+ * 不回寫；只是讓後端讀取舊資料時不會崩潰。
+ */
+export const normalizeScheduleDoc = (raw: any, date: string, dayOfWeek: string): ScheduleEvent => {
+    if (!raw) {
+        return { date, dayOfWeek, status: '休館', shifts: [] };
+    }
+    // v2 結構：已有 shifts 陣列
+    if (Array.isArray(raw.shifts)) {
+        return {
+            date,
+            dayOfWeek,
+            status: raw.status || '休館',
+            openingHours: raw.openingHours,
+            requiredHeadcount: raw.requiredHeadcount,
+            shifts: raw.shifts as StaffShift[],
+        };
+    }
+    // v1 結構：轉換 staffA/staffB/partTime + shiftTime → shifts
+    const shiftTime = raw.shiftTime || '';
+    const [from = '', to = ''] = shiftTime.includes('-') ? shiftTime.split('-') : ['', ''];
+    const shifts: StaffShift[] = [];
+    if (raw.staffA && from && to) shifts.push({ empId: '', name: raw.staffA, role: 'staffA', from, to });
+    if (raw.staffB && from && to) shifts.push({ empId: '', name: raw.staffB, role: 'staffB', from, to });
+    if (Array.isArray(raw.partTime) && from && to) {
+        raw.partTime.forEach((name: string) => {
+            if (name) shifts.push({ empId: '', name, role: 'partTime', from, to });
+        });
+    }
+    return {
+        date,
+        dayOfWeek,
+        status: raw.status || '營運',
+        openingHours: shiftTime || undefined,
+        shifts,
+    };
+};
+
+/**
+ * 取得某員工當日的所有 shifts（支援兩頭班）。
+ * 比對優先用 empId，若 shift.empId 為空（舊資料轉換）則 fallback 比對 name。
+ */
+export const getEmployeeShiftsForDay = (event: ScheduleEvent, empId: string, name: string): StaffShift[] => {
+    return event.shifts.filter(s =>
+        (s.empId && s.empId === empId) || (!s.empId && s.name === name)
+    );
+};
+
+/**
+ * 計算單筆 shift 的時數
+ */
+export const shiftHours = (s: { from: string; to: string }): number => {
+    if (!s.from || !s.to) return 0;
+    const [fh, fm] = s.from.split(':').map(Number);
+    const [th, tm] = s.to.split(':').map(Number);
+    return Math.max(0, (th * 60 + tm - fh * 60 - fm) / 60);
+};
+
+/**
+ * 員工該日是否被排班（任何角色、任何時段）
+ */
+export const isEmployeeScheduledForDay = (event: ScheduleEvent, empId: string, name: string): boolean => {
+    return getEmployeeShiftsForDay(event, empId, name).length > 0;
+};
+
 // ==================== 薪資計算 ====================
 
 export const calculateSalaryForEmployee = (
@@ -110,15 +179,10 @@ export const calculateSalaryForEmployee = (
     let scheduledHours = 0;
     for (const event of scheduleEvents) {
         if (!event || event.status === '休館') continue;
-        const staffList = [event.staffA, event.staffB, ...(event.partTime || [])];
-        if (staffList.includes(emp.name)) {
+        const myShifts = getEmployeeShiftsForDay(event, emp.id, emp.name);
+        if (myShifts.length > 0) {
             totalWorkDays++;
-            if (event.shiftTime) {
-                const [start, end] = event.shiftTime.split('-');
-                const [sh, sm] = start.split(':').map(Number);
-                const [eh, em] = end.split(':').map(Number);
-                scheduledHours += (eh + em / 60) - (sh + sm / 60);
-            }
+            for (const s of myShifts) scheduledHours += shiftHours(s);
         }
     }
 

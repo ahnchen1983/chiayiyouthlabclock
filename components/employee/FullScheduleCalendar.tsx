@@ -66,13 +66,20 @@ const FullScheduleCalendar: React.FC = () => {
         <div key={day} className={`p-2 min-h-[120px] border-r border-b ${bgColor}`}>
           <div className="font-bold">{day}</div>
           {event && (
-            <div className="text-xs mt-1 space-y-1">
+            <div className="text-xs mt-1 space-y-0.5">
               <p className={`font-semibold ${event.status === '休館' ? 'text-red-700' : event.status === '休館(值班)' ? 'text-orange-600' : 'text-green-700'}`}>{event.status}</p>
               {(event.status === '營運' || event.status === '休館(值班)') && (
                 <>
-                <p>專責A: <span className="font-medium">{event.staffA || '未排'}</span></p>
-                <p>專責B: <span className="font-medium">{event.staffB || '未排'}</span></p>
-                <p>兼職: <span className="font-medium">{event.partTime.join(', ') || '無'}</span></p>
+                  {event.openingHours && <p className="text-gray-500">{event.openingHours}</p>}
+                  {(['staffA', 'staffB', 'partTime'] as const).map(role => {
+                    const list = (event.shifts || []).filter(s => s.role === role);
+                    if (list.length === 0 && role === 'partTime') return null;
+                    const label = role === 'staffA' ? 'A' : role === 'staffB' ? 'B' : 'PT';
+                    if (list.length === 0) return <p key={role}>{label}: <span className="text-gray-400">未排</span></p>;
+                    return (
+                      <p key={role}>{label}: <span className="font-medium">{list.map(s => s.name).join(', ')}</span></p>
+                    );
+                  })}
                 </>
               )}
             </div>

@@ -77,7 +77,20 @@ const MyScheduleCalendar: React.FC = () => {
           {event && !isOnLeave && (
             <div className="text-xs mt-1">
               <p className={`font-semibold ${event.status === '休館' ? 'text-red-700' : event.status === '休館(值班)' ? 'text-orange-600' : 'text-green-700'}`}>{event.status}</p>
-              {(event.status === '營運' || event.status === '休館(值班)') && <p className="text-gray-600">{event.shiftTime}</p>}
+              {(event.status === '營運' || event.status === '休館(值班)') && (
+                <>
+                  {event.openingHours && <p className="text-gray-500">館：{event.openingHours}</p>}
+                  {event.shifts && event.shifts.length > 0 && (
+                    <div className="space-y-0.5">
+                      {event.shifts
+                        .filter(s => user && ((s.empId && s.empId === user.id) || (!s.empId && s.name === user.name)))
+                        .map((s, i) => (
+                          <p key={i} className="text-brand-green-dark font-medium">我：{s.from}-{s.to}</p>
+                        ))}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           )}
         </div>

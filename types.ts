@@ -37,14 +37,44 @@ export interface ClockRecord {
   editedAt?: string;
 }
 
+// ==================== v2.0 排班模型（Phase 5.1）====================
+//
+// 改為每員工獨立時段陣列，支援兩頭班（同員工同日最多 2 筆 shift）。
+// 舊版 staffA / staffB / partTime / shiftTime 已廢棄。
+// 讀取時若遇到舊資料會由 normalizeScheduleDoc 自動轉換，但不回寫。
+
+export type StaffRole = 'staffA' | 'staffB' | 'partTime';
+
+export interface StaffShift {
+    empId: string;       // 員工編號（必填）
+    name: string;        // 姓名（冗餘儲存，方便顯示）
+    role: StaffRole;
+    from: string;        // "HH:mm"
+    to: string;          // "HH:mm"
+    note?: string;
+}
+
 export interface ScheduleEvent {
     date: string;
     dayOfWeek: string;
     status: '營運' | '休館' | '休館(值班)';
-    shiftTime: string;
-    staffA: string;
-    staffB: string;
-    partTime: string[];
+    openingHours?: string;       // 場館對外營業時段（顯示用，例如 "08:30-20:00"）
+    requiredHeadcount?: number;  // 應到人數（Phase 5.2 使用，僅警示不阻擋）
+    shifts: StaffShift[];        // 每員工獨立時段
+}
+
+// 週模板：不含具體人員，僅記錄營業時段 + 預設班次結構
+export interface ScheduleShiftTemplate {
+    role: StaffRole;
+    from: string;
+    to: string;
+}
+
+export interface ScheduleTemplate {
+    status: '營運' | '休館' | '休館(值班)';
+    openingHours?: string;
+    requiredHeadcount?: number;
+    defaultShifts: ScheduleShiftTemplate[];
 }
 
 export interface PartTimeHourInfo {
