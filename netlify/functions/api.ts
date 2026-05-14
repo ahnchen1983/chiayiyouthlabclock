@@ -1,35 +1,14 @@
 import type { Handler } from '@netlify/functions';
 import { db, adminAuth } from './utils/firebaseAdmin';
+import {
+    hashPassword, verifyPassword, validatePasswordStrength,
+    DEFAULT_SYSTEM_CONFIG, determineClockStatus,
+    computeAnnualLeaveDays, calculateSalaryForEmployee,
+} from './utils/calculations';
 import { UserRole, LeaveStatus, LeaveType, EmployeeStatus } from '../../types';
 import type { ClockRecord, LeaveRequest, Employee, ScheduleEvent, SalaryDetail, TodayAttendanceComparison, PendingItem, SystemConfig, ClockMakeupRequest, Notification, NotificationType } from '../../types';
-import { scryptSync, randomBytes, timingSafeEqual } from 'crypto';
 
 const dayOfWeekMap = ['日', '一', '二', '三', '四', '五', '六'];
-
-// ==================== 密碼 Helper ====================
-
-const hashPassword = (password: string): string => {
-    const salt = randomBytes(16).toString('hex');
-    const hash = scryptSync(password, salt, 64).toString('hex');
-    return `${salt}:${hash}`;
-};
-
-const verifyPassword = (password: string, stored: string): boolean => {
-    // 向下相容：如果 stored 不含 ':'，則為舊版明文密碼
-    if (!stored.includes(':')) return password === stored;
-    const [salt, hash] = stored.split(':');
-    const hashBuffer = Buffer.from(hash, 'hex');
-    const testBuffer = scryptSync(password, salt, 64);
-    return timingSafeEqual(hashBuffer, testBuffer);
-};
-
-// 密碼強度驗證：至少 8 字元，含英文+數字
-const validatePasswordStrength = (password: string): string | null => {
-    if (password.length < 8) return '密碼至少需要 8 個字元';
-    if (!/[a-zA-Z]/.test(password)) return '密碼需包含英文字母';
-    if (!/[0-9]/.test(password)) return '密碼需包含數字';
-    return null;
-};
 
 // ==================== 防暴力破解 Helper ====================
 
@@ -78,16 +57,6 @@ const writeAuditLog = async (userId: string, action: string, targetId: string, d
 
 // ==================== 系統設定 Helper ====================
 
-const DEFAULT_SYSTEM_CONFIG: SystemConfig = {
-    laborInsuranceRate: 0.023,
-    healthInsuranceRate: 0.0211,
-    laborPensionRate: 0.06,
-    overtimeMultiplier: 1.34,
-    ptMonthlyHourLimit: 80,
-    ptWarningThreshold: 70,
-    lateGraceMinutes: 5,
-};
-
 const getSystemConfig = async (): Promise<SystemConfig> => {
     const snap = await db.collection('systemConfig').doc('salary').get();
     if (!snap.exists) return { ...DEFAULT_SYSTEM_CONFIG };
@@ -114,57 +83,7 @@ const writeNotification = async (
     });
 };
 
-// ==================== 遲到/早退判定 ====================
-
-const determineClockStatus = (
-    shiftTime: string | undefined,
-    clockInTime: string | null,
-    clockOutTime: string | null,
-    graceMinutes: number
-): '正常' | '遲到' | '早退' | '遲到+早退' => {
-    if (!shiftTime || !shiftTime.includes('-')) return '正常';
-    const [start, end] = shiftTime.split('-');
-    const [sh, sm] = start.split(':').map(Number);
-    const [eh, em] = end.split(':').map(Number);
-    const startMin = sh * 60 + sm + graceMinutes;
-    const endMin = eh * 60 + em;
-
-    let isLate = false, isEarly = false;
-    if (clockInTime) {
-        const [h, m] = clockInTime.split(':').map(Number);
-        if (h * 60 + m > startMin) isLate = true;
-    }
-    if (clockOutTime) {
-        const [h, m] = clockOutTime.split(':').map(Number);
-        if (h * 60 + m < endMin) isEarly = true;
-    }
-    if (isLate && isEarly) return '遲到+早退';
-    if (isLate) return '遲到';
-    if (isEarly) return '早退';
-    return '正常';
-};
-
 // ==================== 假別餘額 Helper（Phase 4.1）====================
-
-/**
- * 依勞基法計算特休天數（依到職日 → 指定基準日）
- * 6 個月：3 天 / 1 年：7 天 / 2 年：10 天 / 3-4 年：14 天 / 5-9 年：15 天
- * 10 年起每增 1 年加 1 天，最多 30 天
- */
-const computeAnnualLeaveDays = (hireDate: string, asOf: Date = new Date()): number => {
-    if (!hireDate) return 0;
-    const hire = new Date(hireDate);
-    if (Number.isNaN(hire.getTime())) return 0;
-    const months = (asOf.getFullYear() - hire.getFullYear()) * 12 + (asOf.getMonth() - hire.getMonth());
-    if (months < 6) return 0;
-    if (months < 12) return 3;
-    const years = Math.floor(months / 12);
-    if (years < 2) return 7;
-    if (years < 3) return 10;
-    if (years < 5) return 14;
-    if (years < 10) return 15;
-    return Math.min(30, 15 + (years - 9));
-};
 
 /**
  * 取得指定員工本年度的假別餘額（依勞基法 + 已核准請假時數）
@@ -301,79 +220,6 @@ const getMonthlyScheduleMap = async (yearMonth: string): Promise<Map<string, any
     const map = new Map<string, any>();
     events.forEach(e => map.set(e.date, e));
     return map;
-};
-
-// ==================== 薪資計算 ====================
-
-const calculateSalaryForEmployee = (
-    emp: any,
-    yearMonth: string,
-    scheduleEvents: ScheduleEvent[],
-    clockRecords: ClockRecord[],
-    leaveRequests: LeaveRequest[],
-    config: SystemConfig = DEFAULT_SYSTEM_CONFIG
-): SalaryDetail => {
-    let totalWorkDays = 0;
-    let scheduledHours = 0;
-    for (const event of scheduleEvents) {
-        if (!event || event.status === '休館') continue;
-        const staffList = [event.staffA, event.staffB, ...(event.partTime || [])];
-        if (staffList.includes(emp.name)) {
-            totalWorkDays++;
-            if (event.shiftTime) {
-                const [start, end] = event.shiftTime.split('-');
-                const [sh, sm] = start.split(':').map(Number);
-                const [eh, em] = end.split(':').map(Number);
-                scheduledHours += (eh + em / 60) - (sh + sm / 60);
-            }
-        }
-    }
-
-    const empRecords = clockRecords.filter(r => r.empId === emp.id && r.date.startsWith(yearMonth));
-    const totalWorkHours = empRecords.length > 0
-        ? empRecords.reduce((sum, r) => sum + (r.workHours || 0), 0)
-        : scheduledHours;
-
-    const empLeaves = leaveRequests.filter(
-        lr => lr.empId === emp.id && lr.status === LeaveStatus.Approved && lr.startDate.slice(0, 7) === yearMonth
-    );
-    const totalLeaveHours = empLeaves.reduce((sum, lr) => sum + lr.hours, 0);
-    const leaveDetails = empLeaves.map(lr => ({ type: lr.leaveType, hours: lr.hours }));
-
-    const overtimeHours = Math.max(0, totalWorkHours - totalWorkDays * 8);
-    let baseSalary: number;
-    if (emp.position === '專責人員') {
-        baseSalary = emp.monthlySalary || 30000;
-    } else {
-        baseSalary = Math.round((totalWorkHours - overtimeHours) * emp.hourlyRate);
-    }
-
-    const hourlyForOT = emp.position === '專責人員' ? Math.round((emp.monthlySalary || 30000) / 30 / 8) : emp.hourlyRate;
-    const overtimePay = Math.round(overtimeHours * hourlyForOT * config.overtimeMultiplier);
-    const grossSalary = baseSalary + overtimePay;
-
-    const hourlyWage = emp.position === '專責人員' ? Math.round((emp.monthlySalary || 30000) / 30 / 8) : emp.hourlyRate;
-    let leaveDeduction = 0;
-    empLeaves.forEach(lr => {
-        if (lr.leaveType === LeaveType.Personal) leaveDeduction += lr.hours * hourlyWage;
-        else if (lr.leaveType === LeaveType.Sick) leaveDeduction += Math.round(lr.hours * hourlyWage * 0.5);
-    });
-
-    const laborInsurance = Math.round(grossSalary * config.laborInsuranceRate);
-    const healthInsurance = Math.round(grossSalary * config.healthInsuranceRate);
-    const laborPensionSelf = Math.round(grossSalary * config.laborPensionRate);
-    const totalDeductions = laborInsurance + healthInsurance + laborPensionSelf + leaveDeduction;
-    const netSalary = grossSalary - totalDeductions;
-
-    return {
-        empId: emp.id, name: emp.name, position: emp.position, yearMonth,
-        totalWorkDays, totalWorkHours: Math.round(totalWorkHours * 10) / 10,
-        totalLeaveHours, leaveDetails,
-        overtimeHours: Math.round(overtimeHours * 10) / 10,
-        baseSalary, overtimePay, grossSalary,
-        laborInsurance, healthInsurance, laborPensionSelf,
-        leaveDeduction, totalDeductions, netSalary,
-    };
 };
 
 // ==================== Handler 主體 ====================
