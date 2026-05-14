@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { apiGetSystemConfig, apiUpdateSystemConfig } from '../../services/googleAppsScriptAPI';
+import { apiGetSystemConfig, apiUpdateSystemConfig, apiResetAllSchedule } from '../../services/googleAppsScriptAPI';
 import { SystemConfig } from '../../types';
 
 const defaultConfig: SystemConfig = {
@@ -97,6 +97,65 @@ const SystemSettings: React.FC = () => {
             {config.updatedAt && (
                 <p className="mt-4 text-xs text-gray-400">最後更新：{new Date(config.updatedAt).toLocaleString('zh-TW')}（{config.updatedBy}）</p>
             )}
+
+            {/* 危險區（Phase 5.5）— 清空排班資料 */}
+            <div className="mt-12 border-2 border-red-200 rounded-lg p-5 bg-red-50">
+                <h2 className="text-lg font-bold text-red-700 mb-2">⚠️ 危險區 — 排班資料重置</h2>
+                <p className="text-sm text-gray-700 mb-4">
+                    清除所有逐日排班（dailySchedule）資料，用於初次部署或 v1 假人名資料清理。
+                    <strong className="text-red-600">此操作無法復原。</strong>
+                </p>
+                <DangerZone />
+            </div>
+        </div>
+    );
+};
+
+const DangerZone: React.FC = () => {
+    const [busy, setBusy] = useState(false);
+    const [result, setResult] = useState<string | null>(null);
+
+    const handleReset = async (alsoTemplate: boolean) => {
+        const confirmMsg = alsoTemplate
+            ? '⚠️ 確定要清空「所有逐日排班 + 週模板」嗎？\n\n下一次需要重新建立模板才能排班。此操作無法復原。'
+            : '⚠️ 確定要清空「所有逐日排班」嗎？\n\n模板會保留。此操作無法復原。';
+        if (!confirm(confirmMsg)) return;
+        const text = prompt('再次確認：請輸入 "RESET" 以執行');
+        if (text !== 'RESET') {
+            alert('未輸入 RESET，已取消');
+            return;
+        }
+        setBusy(true);
+        setResult(null);
+        try {
+            const r = await apiResetAllSchedule(alsoTemplate);
+            setResult(r.message);
+        } catch (e: any) {
+            setResult(`❌ ${e?.message || '清除失敗'}`);
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    return (
+        <div className="space-y-3">
+            <div className="flex flex-col sm:flex-row gap-2">
+                <button
+                    onClick={() => handleReset(false)}
+                    disabled={busy}
+                    className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 disabled:opacity-50 text-sm"
+                >
+                    {busy ? '清除中…' : '清空所有逐日排班'}
+                </button>
+                <button
+                    onClick={() => handleReset(true)}
+                    disabled={busy}
+                    className="px-4 py-2 bg-red-700 text-white rounded hover:bg-red-800 disabled:opacity-50 text-sm"
+                >
+                    {busy ? '清除中…' : '清空逐日排班 + 週模板'}
+                </button>
+            </div>
+            {result && <p className="text-sm text-gray-700">{result}</p>}
         </div>
     );
 };

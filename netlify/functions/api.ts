@@ -479,6 +479,38 @@ export const handler: Handler = async (event) => {
                 return ok({ message: `已將模板套用至 ${data.yearMonth}，共 ${daysInMonth} 天` });
             }
 
+            // ==================== 排班重置（Phase 5.5 / Onboarding）====================
+
+            case 'reset-all-schedule': {
+                if (!isSuperAdmin) return fail(403, '僅最高管理者可重置排班');
+                // 刪除 dailySchedule 全部文件
+                const dailySnap = await db.collection('dailySchedule').get();
+                const tmplSnap = await db.collection('scheduleTemplate').get();
+                let dailyCount = 0, tmplCount = 0;
+                // 分批刪除（Firestore batch 上限 500）
+                let batch = db.batch();
+                let count = 0;
+                for (const doc of dailySnap.docs) {
+                    batch.delete(doc.ref);
+                    dailyCount++; count++;
+                    if (count >= 450) { await batch.commit(); batch = db.batch(); count = 0; }
+                }
+                if (data.alsoResetTemplate) {
+                    for (const doc of tmplSnap.docs) {
+                        batch.delete(doc.ref);
+                        tmplCount++; count++;
+                        if (count >= 450) { await batch.commit(); batch = db.batch(); count = 0; }
+                    }
+                }
+                if (count > 0) await batch.commit();
+                await writeAuditLog(uid, '重置排班資料', '*', `刪除 dailySchedule:${dailyCount} 筆${data.alsoResetTemplate ? ` + scheduleTemplate:${tmplCount} 筆` : ''}`);
+                return ok({
+                    dailyDeleted: dailyCount,
+                    templateDeleted: data.alsoResetTemplate ? tmplCount : 0,
+                    message: `已清空 ${dailyCount} 筆逐日排班${data.alsoResetTemplate ? `、${tmplCount} 筆週模板` : ''}`,
+                });
+            }
+
             // ==================== 請假 ====================
 
             case 'get-employee-leave-requests': {

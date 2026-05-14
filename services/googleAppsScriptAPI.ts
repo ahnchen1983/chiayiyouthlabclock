@@ -102,6 +102,10 @@ export const apiApplyTemplate = async (yearMonth: string): Promise<{ message: st
     return callAPI('apply-template', { yearMonth });
 };
 
+export const apiResetAllSchedule = async (alsoResetTemplate: boolean = false): Promise<{ dailyDeleted: number; templateDeleted: number; message: string }> => {
+    return callAPI('reset-all-schedule', { alsoResetTemplate });
+};
+
 // ==================== 請假 ====================
 
 export const apiGetEmployeeLeaveRequests = async (empId: string): Promise<LeaveRequest[]> => {

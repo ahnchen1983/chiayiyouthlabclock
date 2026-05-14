@@ -1,12 +1,13 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { apiGetMonthlySchedule, apiUpdateSchedule, apiGetAllEmployees, apiApplyTemplate } from '../../services/googleAppsScriptAPI';
+import { apiGetMonthlySchedule, apiUpdateSchedule, apiGetAllEmployees, apiApplyTemplate, apiCheckScheduleConflicts, ScheduleConflict } from '../../services/googleAppsScriptAPI';
 import { ScheduleEvent, User } from '../../types';
 import { ChevronLeftIcon, ChevronRightIcon } from '../icons';
 
 const ScheduleManager: React.FC = () => {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [schedule, setSchedule] = useState<ScheduleEvent[]>([]);
+  const [conflicts, setConflicts] = useState<ScheduleConflict[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<ScheduleEvent | null>(null);
@@ -17,10 +18,24 @@ const ScheduleManager: React.FC = () => {
 
   const fetchSchedule = useCallback(async () => {
     setLoading(true);
-    const data = await apiGetMonthlySchedule(yearMonth);
+    const [data, cf] = await Promise.all([
+      apiGetMonthlySchedule(yearMonth),
+      apiCheckScheduleConflicts(yearMonth).catch(() => []),
+    ]);
     setSchedule(data);
+    setConflicts(cf);
     setLoading(false);
   }, [yearMonth]);
+
+  // 衝突 by date map
+  const conflictsByDate = React.useMemo(() => {
+    const map = new Map<string, ScheduleConflict[]>();
+    conflicts.forEach(c => {
+      if (!map.has(c.date)) map.set(c.date, []);
+      map.get(c.date)!.push(c);
+    });
+    return map;
+  }, [conflicts]);
 
   useEffect(() => {
     fetchSchedule();
@@ -85,9 +100,18 @@ const ScheduleManager: React.FC = () => {
         else if (['五', '六', '日'].includes(event.dayOfWeek)) bgColor = 'bg-bg-fri-sun';
       }
 
+      const dateConflicts = conflictsByDate.get(dateStr) || [];
       days.push(
-        <div key={day} className={`p-2 min-h-[120px] border-r border-b ${bgColor} transition-all hover:shadow-inner cursor-pointer`} onClick={() => event && openEditModal(event)}>
-          <div className="font-bold">{day}</div>
+        <div key={day} className={`relative p-2 min-h-[120px] border-r border-b ${bgColor} transition-all hover:shadow-inner cursor-pointer`} onClick={() => event && openEditModal(event)}>
+          <div className="flex items-center justify-between">
+            <div className="font-bold">{day}</div>
+            {dateConflicts.length > 0 && (
+              <span
+                title={dateConflicts.map(c => c.message).join('\n')}
+                className="text-red-600 text-sm"
+              >⚠️</span>
+            )}
+          </div>
           {event && (
             <div className="text-xs mt-1 space-y-1">
               <p className={`font-semibold ${event.status === '休館' ? 'text-red-700' : event.status === '休館(值班)' ? 'text-orange-600' : 'text-green-700'}`}>{event.status}</p>
@@ -96,7 +120,9 @@ const ScheduleManager: React.FC = () => {
                 <p className="text-gray-500">{event.shiftTime || '未設定時段'}</p>
                 <p>專責A: {event.staffA || '未排'}</p>
                 <p>專責B: {event.staffB || '未排'}</p>
-                {event.status === '營運' && <p>兼職: {event.partTime.length > 0 ? event.partTime.join(', ') : '無'}</p>}
+                {(event.status === '營運' || event.status === '休館(值班)') && (
+                  <p>兼職: {event.partTime.length > 0 ? event.partTime.join(', ') : '無'}</p>
+                )}
                 </>
               )}
             </div>
@@ -124,6 +150,28 @@ const ScheduleManager: React.FC = () => {
         <h3 className="text-xl font-semibold">{currentDate.getFullYear()} 年 {currentDate.getMonth() + 1} 月</h3>
         <button onClick={() => changeMonth(1)} className="p-2 rounded-full hover:bg-gray-200"><ChevronRightIcon /></button>
       </div>
+
+      {/* 排班衝突警示（Phase 5.8） */}
+      {conflicts.length > 0 && (
+        <div className="mb-4 p-3 bg-yellow-50 border border-yellow-300 rounded-lg">
+          <p className="text-sm font-semibold text-yellow-800 mb-2">
+            ⚠️ 本月發現 {conflicts.length} 筆排班衝突
+          </p>
+          <ul className="text-xs text-yellow-700 space-y-0.5 max-h-32 overflow-y-auto">
+            {conflicts.slice(0, 10).map((c, i) => (
+              <li key={i}>
+                <span className={`inline-block w-16 px-1.5 py-0.5 rounded text-[10px] mr-2 ${c.type === 'duplicate' ? 'bg-orange-200 text-orange-800' : 'bg-red-200 text-red-800'}`}>
+                  {c.type === 'duplicate' ? '重複排班' : '人力不足'}
+                </span>
+                {c.message}
+              </li>
+            ))}
+            {conflicts.length > 10 && (
+              <li className="text-gray-500">…還有 {conflicts.length - 10} 筆</li>
+            )}
+          </ul>
+        </div>
+      )}
       <div className="grid grid-cols-7 border-t border-l text-center font-bold">
         {['日', '一', '二', '三', '四', '五', '六'].map(d => <div key={d} className="p-2 border-r border-b bg-gray-50">{d}</div>)}
       </div>
