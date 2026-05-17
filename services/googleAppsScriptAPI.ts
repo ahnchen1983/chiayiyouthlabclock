@@ -5,7 +5,7 @@ import {
     LeaveRequest, LeaveStatus, PartTimeHourInfo,
     Employee, TodayAttendanceComparison, DashboardStats, SalaryDetail,
     SystemConfig, ClockMakeupRequest, Notification,
-    LeaveBalance, OpenShift,
+    LeaveBalance, OpenShift, MonthLock,
 } from '../types';
 
 // ==================== API 呼叫 Helper ====================
@@ -319,4 +319,22 @@ export const apiReleaseOpenShift = async (shiftId: string): Promise<boolean> => 
 
 export const apiDeleteOpenShift = async (shiftId: string): Promise<boolean> => {
     return callAPI('delete-open-shift', { shiftId });
+};
+
+// ==================== 月結鎖定（Phase 6.3）====================
+
+export const apiLockMonth = async (yearMonth: string): Promise<MonthLock> => {
+    return callAPI('lock-month', { yearMonth });
+};
+
+export const apiUnlockMonth = async (yearMonth: string, reason: string): Promise<boolean> => {
+    return callAPI('unlock-month', { yearMonth, reason });
+};
+
+export const apiGetMonthLock = async (yearMonth: string): Promise<MonthLock | null> => {
+    return callAPI('get-month-lock', { yearMonth });
+};
+
+export const apiListMonthLocks = async (): Promise<MonthLock[]> => {
+    return callAPI('list-month-locks');
 };

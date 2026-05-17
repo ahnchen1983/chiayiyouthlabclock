@@ -7,7 +7,8 @@ import {
     normalizeScheduleDoc, getEmployeeShiftsForDay, isEmployeeScheduledForDay,
     computeCoverageGaps,
 } from './utils/calculations';
-import type { StaffShift, StaffRole } from '../../types';
+import { getMonthKey, isMonthLocked } from './utils/monthLock';
+import type { StaffShift, StaffRole, MonthLock } from '../../types';
 import { UserRole, LeaveStatus, LeaveType, EmployeeStatus } from '../../types';
 import type { ClockRecord, LeaveRequest, Employee, ScheduleEvent, SalaryDetail, TodayAttendanceComparison, PendingItem, SystemConfig, ClockMakeupRequest, Notification, NotificationType } from '../../types';
 
@@ -64,6 +65,23 @@ const getSystemConfig = async (): Promise<SystemConfig> => {
     const snap = await db.collection('systemConfig').doc('salary').get();
     if (!snap.exists) return { ...DEFAULT_SYSTEM_CONFIG };
     return { ...DEFAULT_SYSTEM_CONFIG, ...(snap.data() as Partial<SystemConfig>) };
+};
+
+// ==================== 月結鎖定 Helper（Phase 6.3）====================
+
+const getMonthLock = async (yearMonth: string): Promise<MonthLock | null> => {
+    const snap = await db.collection('monthLocks').doc(yearMonth).get();
+    if (!snap.exists) return null;
+    return snap.data() as MonthLock;
+};
+
+// 給 6 個 actions 共用：擋下「修改鎖定月份資料」的請求
+const assertMonthNotLocked = async (date: string): Promise<{ locked: boolean; lock?: MonthLock }> => {
+    const monthKey = getMonthKey(date);
+    if (!monthKey) return { locked: false };
+    const lock = await getMonthLock(monthKey);
+    if (lock && isMonthLocked(lock)) return { locked: true, lock };
+    return { locked: false };
 };
 
 // ==================== 通知 Helper ====================
@@ -409,6 +427,11 @@ export const handler: Handler = async (event) => {
                 const empName = empSnapForClockIn.exists ? empSnapForClockIn.data()!.name : data.name;
                 const myShiftRange = getEmployeeShiftRangeStr(todayDaySchedule, uid, empName);
                 const status = determineClockStatus(myShiftRange, clockInTime, null, sysConfig.lateGraceMinutes);
+                // Phase 6.3：月結後打卡不擋，但留 note 警示
+                const lockChk = await assertMonthNotLocked(today);
+                const lockedNote = lockChk.locked
+                    ? `[警示] 月結後打卡（${getMonthKey(today)} 已鎖定）`
+                    : '';
                 await db.collection('clockRecords').add({
                     empId: uid,
                     name: data.name,
@@ -420,6 +443,7 @@ export const handler: Handler = async (event) => {
                     workHours: null,
                     status,
                     source: 'normal',
+                    ...(lockedNote ? { note: lockedNote, manuallyEdited: true, editedBy: 'system' } : {}),
                 });
                 return ok(true);
             }
@@ -450,7 +474,18 @@ export const handler: Handler = async (event) => {
                     clockOutTime,
                     sysConfig.lateGraceMinutes
                 );
-                await docSnap.ref.update({ clockOutTime, workHours, status });
+                // Phase 6.3：月結後下班打卡不擋，但 merge 警示 note
+                const recDate = docSnap.data().date;
+                const lockChk = await assertMonthNotLocked(recDate);
+                const existingNote = docSnap.data().note || '';
+                const lockedNote = lockChk.locked
+                    ? `[警示] 月結後下班打卡（${getMonthKey(recDate)} 已鎖定）`
+                    : '';
+                const mergedNote = (existingNote + ' ' + lockedNote).trim();
+                await docSnap.ref.update({
+                    clockOutTime, workHours, status,
+                    ...(lockedNote ? { note: mergedNote } : {}),
+                });
                 return ok(true);
             }
 
@@ -518,6 +553,9 @@ export const handler: Handler = async (event) => {
                 for (const [k, n] of counter) {
                     if (n > 2) return fail(400, `員工 ${k.replace('name:', '')} 同日班次超過 2 段（兩頭班上限）`);
                 }
+                // Phase 6.3：月結鎖定檢查
+                const lockChk = await assertMonthNotLocked(dateStr);
+                if (lockChk.locked) return fail(423, `${getMonthKey(dateStr)} 月結已鎖定，無法修改排班`);
                 await db.collection('dailySchedule').doc(dateStr).set(scheduleData);
                 const shiftSummary = (event.shifts || []).map(s => `${s.name}(${s.role}/${s.from}-${s.to})`).join(', ');
                 await writeAuditLog(uid, '更新排班', dateStr, `${event.status} 營業:${event.openingHours || '-'} 應到:${event.requiredHeadcount ?? '-'} 班次:${shiftSummary || '(空)'}`);
@@ -627,6 +665,10 @@ export const handler: Handler = async (event) => {
                 const lrSnap = await lrRef.get();
                 if (!lrSnap.exists) return fail(404, '請假申請不存在');
                 const lr = lrSnap.data()!;
+                // Phase 6.3：鎖定月份請假審核擋下
+                const leaveDate = (lr.startDate || '').slice(0, 10);
+                const lockChkLeave = await assertMonthNotLocked(leaveDate);
+                if (lockChkLeave.locked) return fail(423, `${getMonthKey(leaveDate)} 月結已鎖定，無法審核該月請假`);
                 const updates: any = {
                     status: data.status,
                     approver: data.approverName,
@@ -911,6 +953,84 @@ export const handler: Handler = async (event) => {
                 return ok(next);
             }
 
+            // ==================== 月結鎖定（Phase 6.3）====================
+
+            case 'lock-month': {
+                if (!isSuperAdmin) return fail(403, '僅最高管理者可鎖定月結');
+                const yearMonth = data.yearMonth as string;
+                if (!/^\d{4}-\d{2}$/.test(yearMonth || '')) return fail(400, 'yearMonth 格式錯誤（需 YYYY-MM）');
+                // 重複鎖定檢查
+                const existing = await getMonthLock(yearMonth);
+                if (existing && isMonthLocked(existing)) return fail(400, `${yearMonth} 已鎖定`);
+                // 計算當下薪資總額作為快照
+                const [scheduleEvents, empSnap, clockSnap, leaveSnap, sysConfig] = await Promise.all([
+                    getMonthlyDailySchedule(yearMonth),
+                    db.collection('employees').get(),
+                    db.collection('clockRecords').get(),
+                    db.collection('leaveRequests').get(),
+                    getSystemConfig(),
+                ]);
+                const clockRecords = clockSnap.docs.map(d => ({ id: d.id, ...d.data() } as ClockRecord));
+                const leaveRequests = leaveSnap.docs.map(d => ({ id: d.id, ...d.data() } as LeaveRequest));
+                const employees = empSnap.docs.map(d => d.data()).filter(e => e.status === '在職' || e.status === '留停');
+                let totalAmount = 0;
+                let employeeCount = 0;
+                for (const emp of employees) {
+                    const detail = calculateSalaryForEmployee(emp, yearMonth, scheduleEvents, clockRecords, leaveRequests, sysConfig);
+                    totalAmount += detail.grossSalary;
+                    employeeCount++;
+                }
+                const meSnap = await db.collection('employees').doc(uid).get();
+                const lockedByName = meSnap.exists ? meSnap.data()!.name : uid;
+                const lock: MonthLock = {
+                    yearMonth,
+                    lockedBy: uid,
+                    lockedByName,
+                    lockedAt: new Date().toISOString(),
+                    totalAmount: Math.round(totalAmount),
+                    employeeCount,
+                };
+                await db.collection('monthLocks').doc(yearMonth).set(lock);
+                await writeAuditLog(uid, '鎖定月結', yearMonth, `總額 ${Math.round(totalAmount)} / ${employeeCount} 人`);
+                return ok(lock);
+            }
+
+            case 'unlock-month': {
+                if (!isSuperAdmin) return fail(403, '僅最高管理者可解鎖月結');
+                const yearMonth = data.yearMonth as string;
+                const reason = ((data.reason as string) || '').trim();
+                if (!yearMonth) return fail(400, '缺少 yearMonth');
+                if (reason.length < 5) return fail(400, '解鎖理由至少 5 字');
+                const existing = await getMonthLock(yearMonth);
+                if (!existing) return fail(404, `${yearMonth} 尚未鎖定`);
+                if (!isMonthLocked(existing)) return fail(400, `${yearMonth} 已是解鎖狀態`);
+                const meSnap = await db.collection('employees').doc(uid).get();
+                const unlockedByName = meSnap.exists ? meSnap.data()!.name : uid;
+                await db.collection('monthLocks').doc(yearMonth).update({
+                    unlockedBy: uid,
+                    unlockedByName,
+                    unlockedAt: new Date().toISOString(),
+                    unlockReason: reason,
+                });
+                await writeAuditLog(uid, '解鎖月結', yearMonth, `理由：${reason}`);
+                return ok(true);
+            }
+
+            case 'get-month-lock': {
+                const yearMonth = data.yearMonth as string;
+                if (!yearMonth) return fail(400, '缺少 yearMonth');
+                const lock = await getMonthLock(yearMonth);
+                return ok(lock);
+            }
+
+            case 'list-month-locks': {
+                if (!isAdmin) return fail(403, '僅管理者可查看鎖定歷史');
+                const snap = await db.collection('monthLocks').get();
+                const list = snap.docs.map(d => d.data() as MonthLock);
+                list.sort((a, b) => b.yearMonth.localeCompare(a.yearMonth));
+                return ok(list);
+            }
+
             // ==================== 打卡紀錄編輯（Phase 3.2）====================
 
             case 'update-clock-record': {
@@ -919,6 +1039,9 @@ export const handler: Handler = async (event) => {
                 const snap = await ref.get();
                 if (!snap.exists) return fail(404, '紀錄不存在');
                 const orig = snap.data()!;
+                // Phase 6.3：鎖定月份打卡紀錄不可改
+                const lockChkCR = await assertMonthNotLocked(orig.date);
+                if (lockChkCR.locked) return fail(423, `${getMonthKey(orig.date)} 月結已鎖定，無法修改打卡紀錄`);
                 const updates: any = {
                     manuallyEdited: true,
                     editedBy: uid,
@@ -981,6 +1104,9 @@ export const handler: Handler = async (event) => {
                 const reqSnap = await reqRef.get();
                 if (!reqSnap.exists) return fail(404, '申請不存在');
                 const req = reqSnap.data()!;
+                // Phase 6.3：鎖定月份補打卡審核擋下
+                const lockChkMK = await assertMonthNotLocked(req.date);
+                if (lockChkMK.locked) return fail(423, `${getMonthKey(req.date)} 月結已鎖定，無法審核該月補打卡`);
                 const updates: any = {
                     status: data.status,
                     approver: data.approverName,

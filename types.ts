@@ -261,3 +261,19 @@ export interface SalaryDetail {
     // 最終
     netSalary: number;
 }
+
+// 月結鎖定（Phase 6.3）
+export interface MonthLock {
+    yearMonth: string;          // "YYYY-MM"（同時也是文件 ID）
+    lockedBy: string;           // empId
+    lockedByName: string;       // 操作者姓名（冗餘儲存供顯示）
+    lockedAt: string;           // ISO timestamp
+    totalAmount: number;        // 鎖定當下的薪資總額（grossSalary 加總，快照用）
+    employeeCount: number;      // 鎖定當下的員工數（快照）
+    // 解鎖欄位（僅當解鎖時填入）
+    unlockedBy?: string;
+    unlockedByName?: string;
+    unlockedAt?: string;
+    unlockReason?: string;      // 必填，解鎖理由
+}
+

@@ -1,10 +1,14 @@
 
 import React, { useState, useEffect } from 'react';
-import { apiGetAllSalaryDetails } from '../../services/googleAppsScriptAPI';
+import {
+    apiGetAllSalaryDetails,
+    apiGetMonthLock, apiLockMonth, apiUnlockMonth,
+} from '../../services/googleAppsScriptAPI';
 import { openPayslipPrintView } from '../../services/payslipPrint';
-import { SalaryDetail } from '../../types';
+import { SalaryDetail, MonthLock, UserRole } from '../../types';
 import { DollarIcon, ChevronRightIcon } from '../icons';
 import { maskName, maskEmpId } from '../../netlify/functions/utils/csvMasking';
+import { useAuth } from '../../contexts/AuthContext';
 
 // 下載 icon
 const DownloadIcon: React.FC<{ className?: string }> = ({ className }) => (
@@ -176,20 +180,73 @@ const exportSalaryCSV = (salaries: SalaryDetail[], month: string, masked: boolea
 
 
 const SalaryCalculation: React.FC = () => {
+    const { user } = useAuth();
+    const isSuperAdmin = user?.role === UserRole.SuperAdmin;
+
     const [salaries, setSalaries] = useState<SalaryDetail[]>([]);
     const [loading, setLoading] = useState(true);
     const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
     const [selectedSalary, setSelectedSalary] = useState<SalaryDetail | null>(null);
+    const [monthLock, setMonthLock] = useState<MonthLock | null>(null);
+    const [lockBusy, setLockBusy] = useState(false);
+    const isLocked = !!monthLock && !monthLock.unlockedAt;
 
     useEffect(() => {
-        const fetchSalaries = async () => {
+        const fetchData = async () => {
             setLoading(true);
-            const data = await apiGetAllSalaryDetails(month);
+            const [data, lock] = await Promise.all([
+                apiGetAllSalaryDetails(month),
+                apiGetMonthLock(month).catch(() => null),
+            ]);
             setSalaries(data);
+            setMonthLock(lock);
             setLoading(false);
         };
-        fetchSalaries();
+        fetchData();
     }, [month]);
+
+    const handleLock = async () => {
+        const totalGrossNow = salaries.reduce((s, x) => s + x.grossSalary, 0);
+        const confirmed = window.confirm(
+            `確定要結算並鎖定 ${month}?\n\n` +
+            `員工數: ${salaries.length}\n應發總額: ${formatCurrency(totalGrossNow)}\n\n` +
+            `鎖定後，本月排班、打卡編輯、請假審核、補打卡審核都會被擋下。\n` +
+            `如需修改需 SuperAdmin 手動解鎖（會留稽核紀錄）。`
+        );
+        if (!confirmed) return;
+        setLockBusy(true);
+        try {
+            const lock = await apiLockMonth(month);
+            setMonthLock(lock);
+            alert(`已鎖定 ${month}`);
+        } catch (e: any) {
+            alert(`鎖定失敗：${e?.message || e}`);
+        } finally {
+            setLockBusy(false);
+        }
+    };
+
+    const handleUnlock = async () => {
+        const reason = window.prompt(
+            `確定要解鎖 ${month}?\n\n解鎖會留下稽核紀錄。請填寫解鎖理由（至少 5 字）：`
+        );
+        if (reason === null) return;
+        if (reason.trim().length < 5) {
+            alert('理由至少 5 字');
+            return;
+        }
+        setLockBusy(true);
+        try {
+            await apiUnlockMonth(month, reason.trim());
+            const fresh = await apiGetMonthLock(month);
+            setMonthLock(fresh);
+            alert(`已解鎖 ${month}`);
+        } catch (e: any) {
+            alert(`解鎖失敗：${e?.message || e}`);
+        } finally {
+            setLockBusy(false);
+        }
+    };
 
     const totalGross = salaries.reduce((sum, s) => sum + s.grossSalary, 0);
     const totalNet = salaries.reduce((sum, s) => sum + s.netSalary, 0);
@@ -244,6 +301,36 @@ const SalaryCalculation: React.FC = () => {
                         <DownloadIcon className="w-5 h-5" />
                         完整匯出（含個資）
                     </button>
+
+                    {/* Phase 6.3：月結鎖定狀態與操作 */}
+                    {isLocked && (
+                        <span className="flex items-center gap-1 px-3 py-2 bg-amber-100 text-amber-800 rounded-md text-sm font-medium">
+                            🔒 已鎖定（{monthLock!.lockedByName} ‧ {monthLock!.lockedAt.slice(0, 10)}）
+                        </span>
+                    )}
+                    {!isLocked && monthLock?.unlockedAt && (
+                        <span className="flex items-center gap-1 px-3 py-2 bg-gray-100 text-gray-600 rounded-md text-sm">
+                            🔓 曾解鎖（{monthLock.unlockedByName}）
+                        </span>
+                    )}
+                    {isSuperAdmin && !isLocked && salaries.length > 0 && (
+                        <button
+                            onClick={handleLock}
+                            disabled={lockBusy}
+                            className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 transition-colors"
+                        >
+                            🔐 結算並鎖定
+                        </button>
+                    )}
+                    {isSuperAdmin && isLocked && (
+                        <button
+                            onClick={handleUnlock}
+                            disabled={lockBusy}
+                            className="flex items-center gap-2 px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700 disabled:opacity-50 transition-colors"
+                        >
+                            🔓 解鎖
+                        </button>
+                    )}
                 </div>
             </div>
 
