@@ -165,6 +165,96 @@ export const isEmployeeScheduledForDay = (event: ScheduleEvent, empId: string, n
     return getEmployeeShiftsForDay(event, empId, name).length > 0;
 };
 
+// ==================== 時段覆蓋率（Phase 5.2）====================
+
+const toMin = (hhmm: string): number => {
+    if (!hhmm || !hhmm.includes(':')) return 0;
+    const [h, m] = hhmm.split(':').map(Number);
+    return h * 60 + m;
+};
+
+const toHHMM = (totalMin: number): string => {
+    const h = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+};
+
+export interface CoverageSlot {
+    from: string;
+    to: string;
+    covered: number;    // 實際覆蓋人數（去重 by empId/name）
+    required: number;   // 應到人數
+    short: number;      // 缺人數（max(0, required - covered)）
+}
+
+export interface CoverageGap {
+    from: string;
+    to: string;
+    covered: number;
+    required: number;
+    short: number;
+}
+
+/**
+ * 將營業時段切成 30 分鐘區段，計算每段的覆蓋人數
+ */
+export const computeCoverageSlots = (event: ScheduleEvent, intervalMin: number = 30): CoverageSlot[] => {
+    if (!event.openingHours || !event.openingHours.includes('-')) return [];
+    const [startStr, endStr] = event.openingHours.split('-');
+    const startMin = toMin(startStr);
+    const endMin = toMin(endStr);
+    if (endMin <= startMin) return [];
+
+    const required = event.requiredHeadcount ?? 0;
+    const slots: CoverageSlot[] = [];
+    for (let t = startMin; t < endMin; t += intervalMin) {
+        const slotFrom = t;
+        const slotTo = Math.min(t + intervalMin, endMin);
+        // 找出涵蓋此 slot 中點的 shifts（去重 by empId/name）
+        const mid = (slotFrom + slotTo) / 2;
+        const covered = new Set<string>();
+        for (const s of event.shifts) {
+            const sFrom = toMin(s.from);
+            const sTo = toMin(s.to);
+            if (sFrom <= mid && mid < sTo) {
+                covered.add(s.empId || `n:${s.name}`);
+            }
+        }
+        slots.push({
+            from: toHHMM(slotFrom),
+            to: toHHMM(slotTo),
+            covered: covered.size,
+            required,
+            short: Math.max(0, required - covered.size),
+        });
+    }
+    return slots;
+};
+
+/**
+ * 合併連續缺人的 slots 為較少筆 gap（方便提示）
+ */
+export const computeCoverageGaps = (event: ScheduleEvent, intervalMin: number = 30): CoverageGap[] => {
+    const slots = computeCoverageSlots(event, intervalMin);
+    const gaps: CoverageGap[] = [];
+    let cur: CoverageGap | null = null;
+    for (const s of slots) {
+        if (s.short > 0) {
+            if (cur && cur.short === s.short && cur.to === s.from) {
+                cur.to = s.to;
+            } else {
+                if (cur) gaps.push(cur);
+                cur = { from: s.from, to: s.to, covered: s.covered, required: s.required, short: s.short };
+            }
+        } else if (cur) {
+            gaps.push(cur);
+            cur = null;
+        }
+    }
+    if (cur) gaps.push(cur);
+    return gaps;
+};
+
 // ==================== 薪資計算 ====================
 
 export const calculateSalaryForEmployee = (

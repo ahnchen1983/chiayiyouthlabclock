@@ -5,6 +5,7 @@ import {
     DEFAULT_SYSTEM_CONFIG, determineClockStatus,
     computeAnnualLeaveDays, calculateSalaryForEmployee,
     normalizeScheduleDoc, getEmployeeShiftsForDay, isEmployeeScheduledForDay,
+    computeCoverageGaps,
 } from './utils/calculations';
 import type { StaffShift, StaffRole } from '../../types';
 import { UserRole, LeaveStatus, LeaveType, EmployeeStatus } from '../../types';
@@ -1101,6 +1102,17 @@ export const handler: Handler = async (event) => {
                     // 3. 營運日無 staffA
                     if (e.status === '營運' && !e.shifts.some(s => s.role === 'staffA')) {
                         conflicts.push({ date: e.date, type: 'understaffed', message: `${e.date} 營運日無專責人員 A` });
+                    }
+                    // 4. 30 分鐘區段覆蓋率（Phase 5.2）
+                    if (e.status === '營運' && (e.requiredHeadcount ?? 0) > 0) {
+                        const gaps = computeCoverageGaps(e);
+                        for (const g of gaps) {
+                            conflicts.push({
+                                date: e.date,
+                                type: 'understaffed',
+                                message: `${e.date} ${g.from}-${g.to} 缺 ${g.short} 人（應到 ${g.required}，實際 ${g.covered}）`,
+                            });
+                        }
                     }
                 });
                 return ok(conflicts);

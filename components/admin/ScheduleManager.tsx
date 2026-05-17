@@ -1,7 +1,26 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { apiGetMonthlySchedule, apiUpdateSchedule, apiGetAllEmployees, apiApplyTemplate, apiCheckScheduleConflicts, ScheduleConflict } from '../../services/googleAppsScriptAPI';
 import { ScheduleEvent, StaffShift, StaffRole, User } from '../../types';
 import { ChevronLeftIcon, ChevronRightIcon } from '../icons';
+
+// ===== 時段視覺化 helpers =====
+const toMin = (hhmm: string): number => {
+  if (!hhmm || !hhmm.includes(':')) return 0;
+  const [h, m] = hhmm.split(':').map(Number);
+  return h * 60 + m;
+};
+
+const ROLE_COLOR: Record<StaffRole, string> = {
+  staffA: 'bg-blue-500',
+  staffB: 'bg-emerald-500',
+  partTime: 'bg-orange-500',
+};
+
+const ROLE_COLOR_LIGHT: Record<StaffRole, string> = {
+  staffA: 'bg-blue-200 text-blue-900',
+  staffB: 'bg-emerald-200 text-emerald-900',
+  partTime: 'bg-orange-200 text-orange-900',
+};
 
 // ==========================================================
 // v2.0 排班管理 — 每員工獨立時段，支援兩頭班（同人 ≤ 2 段）
@@ -272,9 +291,35 @@ const EditScheduleModal: React.FC<{
     .filter(([, n]) => n > 2)
     .map(([k]) => k.replace(/^n:/, ''));
 
-  // 應到 vs 實際（決策 3：僅警示）
-  const uniqueEmps = new Set(editedEvent.shifts.map(s => s.empId || `n:${s.name}`)).size;
-  const shortfall = (editedEvent.requiredHeadcount ?? 0) - uniqueEmps;
+  // 應到 vs 實際（決策 3：僅警示）— v2 改為每 30 分鐘區段檢核
+  const coverageGaps = useMemo(() => {
+    const opening = editedEvent.openingHours || '';
+    const [s, e] = opening.split('-');
+    if (!opening.includes('-')) return [];
+    const oStart = toMin(s), oEnd = toMin(e);
+    if (oEnd <= oStart) return [];
+    const required = editedEvent.requiredHeadcount ?? 0;
+    if (required === 0) return [];
+    const gaps: { from: string; to: string; covered: number; short: number }[] = [];
+    let cur: typeof gaps[0] | null = null;
+    for (let t = oStart; t < oEnd; t += 30) {
+      const tTo = Math.min(t + 30, oEnd);
+      const mid = (t + tTo) / 2;
+      const set = new Set<string>();
+      for (const sh of editedEvent.shifts) {
+        if (toMin(sh.from) <= mid && mid < toMin(sh.to)) set.add(sh.empId || `n:${sh.name}`);
+      }
+      const short = Math.max(0, required - set.size);
+      const fromStr = `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
+      const toStr = `${String(Math.floor(tTo / 60)).padStart(2, '0')}:${String(tTo % 60).padStart(2, '0')}`;
+      if (short > 0) {
+        if (cur && cur.short === short && cur.to === fromStr) cur.to = toStr;
+        else { if (cur) gaps.push(cur); cur = { from: fromStr, to: toStr, covered: set.size, short }; }
+      } else if (cur) { gaps.push(cur); cur = null; }
+    }
+    if (cur) gaps.push(cur);
+    return gaps;
+  }, [editedEvent.shifts, editedEvent.openingHours, editedEvent.requiredHeadcount]);
 
   const showShifts = editedEvent.status === '營運' || editedEvent.status === '休館(值班)';
 
@@ -319,6 +364,9 @@ const EditScheduleModal: React.FC<{
 
         {showShifts && (
           <>
+            {/* 時間軸視覺化（Phase 5.3） */}
+            <ScheduleTimeline event={editedEvent} />
+
             {/* 營業時段 + 應到人數 */}
             <div className="mb-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
@@ -405,10 +453,15 @@ const EditScheduleModal: React.FC<{
                   ⚠️ {overTwoEmps.join(', ')} 同日超過 2 段（兩頭班上限）
                 </p>
               )}
-              {shortfall > 0 && (
-                <p className="mt-2 text-xs text-yellow-700 bg-yellow-50 px-2 py-1 rounded inline-block">
-                  ⚠️ 應到 {editedEvent.requiredHeadcount} 人，目前只排了 {uniqueEmps} 人（缺 {shortfall} 人）
-                </p>
+              {coverageGaps.length > 0 && (
+                <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded">
+                  <p className="text-xs font-semibold text-yellow-800 mb-1">⚠️ 應到人數不足時段（僅警示，不阻擋儲存）</p>
+                  <ul className="text-xs text-yellow-700 space-y-0.5">
+                    {coverageGaps.map((g, i) => (
+                      <li key={i}>{g.from}-{g.to}：覆蓋 {g.covered}/{editedEvent.requiredHeadcount} 人，缺 {g.short} 人</li>
+                    ))}
+                  </ul>
+                </div>
               )}
             </div>
           </>
@@ -419,6 +472,150 @@ const EditScheduleModal: React.FC<{
           <button onClick={handleSave} className="px-4 py-2 rounded bg-brand-blue-dark text-white hover:bg-blue-700">儲存</button>
         </div>
       </div>
+    </div>
+  );
+};
+
+// ==========================================================
+// ScheduleTimeline — 時間軸視覺化 + 覆蓋率條（Phase 5.3 + 5.2）
+// ==========================================================
+
+const ScheduleTimeline: React.FC<{ event: ScheduleEvent }> = ({ event }) => {
+  const opening = event.openingHours || '';
+  const [oStartStr, oEndStr] = opening.split('-');
+  const oStart = toMin(oStartStr);
+  const oEnd = toMin(oEndStr);
+
+  // 30 分鐘 slot 覆蓋率
+  const slots = useMemo(() => {
+    if (!opening.includes('-') || oEnd <= oStart) return [];
+    const required = event.requiredHeadcount ?? 0;
+    const out: { from: number; to: number; covered: number; required: number; short: number }[] = [];
+    for (let t = oStart; t < oEnd; t += 30) {
+      const tFrom = t;
+      const tTo = Math.min(t + 30, oEnd);
+      const mid = (tFrom + tTo) / 2;
+      const empSet = new Set<string>();
+      for (const s of event.shifts) {
+        const sf = toMin(s.from), st = toMin(s.to);
+        if (sf <= mid && mid < st) empSet.add(s.empId || `n:${s.name}`);
+      }
+      out.push({
+        from: tFrom, to: tTo,
+        covered: empSet.size, required,
+        short: Math.max(0, required - empSet.size),
+      });
+    }
+    return out;
+  }, [event.shifts, event.openingHours, event.requiredHeadcount, oStart, oEnd]);
+
+  // 每員工一行渲染（同人多段在同一行）
+  const empRows = useMemo(() => {
+    const map = new Map<string, { name: string; role: StaffRole; shifts: StaffShift[] }>();
+    event.shifts.forEach(s => {
+      const key = s.empId || `n:${s.name}`;
+      if (!map.has(key)) map.set(key, { name: s.name || '(未指派)', role: s.role, shifts: [] });
+      map.get(key)!.shifts.push(s);
+    });
+    return Array.from(map.values());
+  }, [event.shifts]);
+
+  if (!opening.includes('-') || oEnd <= oStart) {
+    return (
+      <div className="mb-4 p-3 bg-gray-50 rounded text-xs text-gray-400 text-center">
+        請先設定場館營業時段以顯示時間軸
+      </div>
+    );
+  }
+
+  const totalMin = oEnd - oStart;
+  // 整點刻度
+  const hourTicks: number[] = [];
+  const startHour = Math.ceil(oStart / 60);
+  const endHour = Math.floor(oEnd / 60);
+  for (let h = startHour; h <= endHour; h++) hourTicks.push(h * 60);
+
+  const pctLeft = (min: number) => `${((min - oStart) / totalMin) * 100}%`;
+  const pctWidth = (from: number, to: number) => `${((to - from) / totalMin) * 100}%`;
+
+  const maxCovered = Math.max(1, ...slots.map(s => s.covered), event.requiredHeadcount ?? 1);
+
+  return (
+    <div className="mb-4 border rounded-lg p-3 bg-gray-50">
+      <div className="flex items-center justify-between mb-2">
+        <h4 className="text-sm font-semibold text-gray-700">時間軸視覺化</h4>
+        <div className="flex gap-2 text-[10px]">
+          <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded bg-blue-500" />專責A</span>
+          <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded bg-emerald-500" />專責B</span>
+          <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded bg-orange-500" />兼職</span>
+        </div>
+      </div>
+
+      {/* 小時刻度 */}
+      <div className="relative h-5 mb-1 text-[10px] text-gray-500">
+        {hourTicks.map(t => (
+          <div key={t} className="absolute -translate-x-1/2" style={{ left: pctLeft(t) }}>
+            <div className="border-l border-gray-300 h-2" />
+            <div>{Math.floor(t / 60)}:00</div>
+          </div>
+        ))}
+      </div>
+
+      {/* 員工列 */}
+      <div className="space-y-1 mb-2">
+        {empRows.length === 0 ? (
+          <div className="h-7 flex items-center justify-center text-xs text-gray-400">尚無排班</div>
+        ) : empRows.map((row, idx) => (
+          <div key={idx} className="relative h-7 bg-white rounded border border-gray-200">
+            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[11px] font-medium text-gray-700 z-10 pointer-events-none">
+              {row.name}
+            </span>
+            {row.shifts.map((s, si) => {
+              const sf = toMin(s.from), st = toMin(s.to);
+              return (
+                <div
+                  key={si}
+                  className={`absolute top-1 bottom-1 ${ROLE_COLOR[s.role]} rounded text-[10px] text-white px-1 flex items-center justify-end overflow-hidden`}
+                  style={{ left: pctLeft(sf), width: pctWidth(sf, st) }}
+                  title={`${row.name} ${s.from}-${s.to}`}
+                >
+                  {s.from}-{s.to}
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+
+      {/* 覆蓋率條 */}
+      {(event.requiredHeadcount ?? 0) > 0 && slots.length > 0 && (
+        <div>
+          <div className="flex items-center justify-between text-[10px] text-gray-500 mb-1">
+            <span>覆蓋人數（每 30 分鐘）</span>
+            <span>應到 {event.requiredHeadcount} 人</span>
+          </div>
+          <div className="relative h-6 flex bg-white rounded border border-gray-200 overflow-hidden">
+            {slots.map((s, i) => {
+              const bg = s.short > 0
+                ? 'bg-red-300'
+                : s.covered === s.required
+                  ? 'bg-green-300'
+                  : 'bg-green-500';
+              const opacity = Math.min(1, s.covered / maxCovered);
+              return (
+                <div
+                  key={i}
+                  className={`${bg} border-r border-white last:border-r-0 flex items-center justify-center text-[10px]`}
+                  style={{ width: pctWidth(s.from, s.to), opacity: 0.4 + opacity * 0.6 }}
+                  title={`${String(Math.floor(s.from / 60)).padStart(2, '0')}:${String(s.from % 60).padStart(2, '0')}-${String(Math.floor(s.to / 60)).padStart(2, '0')}:${String(s.to % 60).padStart(2, '0')} 覆蓋 ${s.covered}/${s.required}`}
+                >
+                  {s.covered}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

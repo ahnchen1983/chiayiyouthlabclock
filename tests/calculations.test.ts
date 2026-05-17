@@ -10,6 +10,8 @@ import {
     normalizeScheduleDoc,
     getEmployeeShiftsForDay,
     shiftHours,
+    computeCoverageSlots,
+    computeCoverageGaps,
     DEFAULT_SYSTEM_CONFIG,
 } from '../netlify/functions/utils/calculations';
 import { LeaveStatus, LeaveType } from '../types';
@@ -361,5 +363,104 @@ describe('getEmployeeShiftsForDay / shiftHours', () => {
         expect(shiftHours({ from: '08:30', to: '13:00' })).toBe(4.5);
         expect(shiftHours({ from: '17:00', to: '20:00' })).toBe(3);
         expect(shiftHours({ from: '', to: '13:00' })).toBe(0);
+    });
+});
+
+// =============================================================
+// 時段覆蓋率（Phase 5.2）
+// =============================================================
+
+describe('computeCoverageSlots / computeCoverageGaps', () => {
+    const evtFull: ScheduleEvent = {
+        date: '2026-04-15', dayOfWeek: '三', status: '營運',
+        openingHours: '08:30-17:30',
+        requiredHeadcount: 2,
+        shifts: [
+            { empId: 'E1', name: 'A', role: 'staffA', from: '08:30', to: '17:30' },
+            { empId: 'E2', name: 'B', role: 'staffB', from: '08:30', to: '17:30' },
+        ],
+    };
+
+    it('全程覆蓋 2 人 = 無缺人', () => {
+        const slots = computeCoverageSlots(evtFull);
+        expect(slots.length).toBeGreaterThan(0);
+        expect(slots.every(s => s.covered === 2)).toBe(true);
+        expect(slots.every(s => s.short === 0)).toBe(true);
+        expect(computeCoverageGaps(evtFull)).toEqual([]);
+    });
+
+    it('30 分鐘解析度切割正確（9 小時 = 18 個 slot）', () => {
+        const slots = computeCoverageSlots(evtFull);
+        expect(slots).toHaveLength(18);
+        expect(slots[0]).toMatchObject({ from: '08:30', to: '09:00' });
+        expect(slots[slots.length - 1]).toMatchObject({ from: '17:00', to: '17:30' });
+    });
+
+    it('中午缺人 12:00-13:00 應偵測到', () => {
+        const evt: ScheduleEvent = {
+            ...evtFull,
+            shifts: [
+                { empId: 'E1', name: 'A', role: 'staffA', from: '08:30', to: '12:00' },
+                { empId: 'E1', name: 'A', role: 'staffA', from: '13:00', to: '17:30' },
+                { empId: 'E2', name: 'B', role: 'staffB', from: '08:30', to: '12:00' },
+                { empId: 'E2', name: 'B', role: 'staffB', from: '13:00', to: '17:30' },
+            ],
+        };
+        const gaps = computeCoverageGaps(evt);
+        expect(gaps).toHaveLength(1);
+        expect(gaps[0]).toMatchObject({ from: '12:00', to: '13:00', covered: 0, required: 2, short: 2 });
+    });
+
+    it('部分覆蓋（1 人在中段）', () => {
+        const evt: ScheduleEvent = {
+            ...evtFull,
+            shifts: [
+                { empId: 'E1', name: 'A', role: 'staffA', from: '08:30', to: '13:00' },
+                { empId: 'E2', name: 'B', role: 'staffB', from: '12:00', to: '17:30' },
+            ],
+        };
+        const gaps = computeCoverageGaps(evt);
+        // 08:30-12:00 只有 A、13:00-17:30 只有 B；中間 12:00-13:00 兩人重疊
+        const morningGap = gaps.find(g => g.from === '08:30');
+        const afternoonGap = gaps.find(g => g.from === '13:00');
+        expect(morningGap?.to).toBe('12:00');
+        expect(morningGap?.covered).toBe(1);
+        expect(afternoonGap?.to).toBe('17:30');
+        expect(afternoonGap?.covered).toBe(1);
+    });
+
+    it('無 openingHours 回傳空陣列', () => {
+        const evt: ScheduleEvent = {
+            date: '2026-04-15', dayOfWeek: '三', status: '營運',
+            shifts: [], requiredHeadcount: 2,
+        };
+        expect(computeCoverageSlots(evt)).toEqual([]);
+        expect(computeCoverageGaps(evt)).toEqual([]);
+    });
+
+    it('requiredHeadcount=0 時無缺人 gaps', () => {
+        const evt: ScheduleEvent = {
+            ...evtFull,
+            requiredHeadcount: 0,
+            shifts: [],
+        };
+        expect(computeCoverageGaps(evt)).toEqual([]);
+    });
+
+    it('兩頭班同人不重複計入覆蓋', () => {
+        const evt: ScheduleEvent = {
+            date: '2026-04-15', dayOfWeek: '三', status: '營運',
+            openingHours: '08:00-20:00',
+            requiredHeadcount: 2,
+            shifts: [
+                { empId: 'E1', name: 'A', role: 'staffA', from: '08:00', to: '13:00' },
+                { empId: 'E1', name: 'A', role: 'staffA', from: '15:00', to: '20:00' },
+            ],
+        };
+        const slots = computeCoverageSlots(evt);
+        // 即使有 2 筆 shift，同一人覆蓋的 slot 只算 1
+        slots.forEach(s => {
+            expect(s.covered).toBeLessThanOrEqual(1);
+        });
     });
 });
