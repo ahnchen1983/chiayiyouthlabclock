@@ -30,7 +30,20 @@
    FIREBASE_PROJECT_ID=your-project-id
    FIREBASE_CLIENT_EMAIL=your-client-email
    FIREBASE_PRIVATE_KEY=your-private-key
+
+   # 選用：Sentry 錯誤監控（Phase 7.5）
+   VITE_SENTRY_DSN=https://<public_key>@<org>.ingest.sentry.io/<project_id>
    ```
+
+### Sentry 錯誤監控（選用）
+
+Production 部署到 Netlify 時，於 Netlify Dashboard > Site settings > Environment variables 設定：
+
+| 變數名 | 值 | 說明 |
+|--------|-----|------|
+| `VITE_SENTRY_DSN` | `https://...@sentry.io/...` | Sentry 專案 Settings > Client Keys (DSN) 取得 |
+
+留空或不設則 Sentry 不會啟動。**個資原則：** 本系統送往 Sentry 的 user context 僅含 `id` (empId) 與 `role`，**絕不送姓名、email、電話**。Dev 模式（`npm run dev`）的事件會被 `beforeSend` 直接 drop，不會吃 Sentry 配額。
 
 3. 啟動開發伺服器：
    ```bash

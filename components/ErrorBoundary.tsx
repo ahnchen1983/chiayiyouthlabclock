@@ -1,4 +1,5 @@
 import React from 'react';
+import * as Sentry from '@sentry/react';
 
 interface ErrorBoundaryProps {
     children: React.ReactNode;
@@ -23,6 +24,12 @@ export default class ErrorBoundary extends React.Component<ErrorBoundaryProps, E
 
     componentDidCatch(error: Error, info: React.ErrorInfo) {
         console.error('ErrorBoundary caught:', error, info);
+        // Phase 7.5：上報 Sentry（DSN 未設時為 no-op）
+        Sentry.captureException(error, {
+            extra: {
+                componentStack: info.componentStack,
+            },
+        });
     }
 
     render() {

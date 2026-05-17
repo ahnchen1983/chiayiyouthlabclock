@@ -2,6 +2,7 @@
 import React, { createContext, useState, useContext, ReactNode, useEffect } from 'react';
 import { User } from '../types';
 import { apiLogin, apiLogout, apiInitializeDatabase } from '../services/googleAppsScriptAPI';
+import { applyUserToSentry } from '../services/sentryUser';
 
 interface AuthContextType {
   user: User | null;
@@ -22,7 +23,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     // Check for saved user session
     const savedUser = sessionStorage.getItem('user');
     if (savedUser) {
-      setUser(JSON.parse(savedUser));
+      const parsed: User = JSON.parse(savedUser);
+      setUser(parsed);
+      // Phase 7.5：session 還原時也設 Sentry user context
+      applyUserToSentry({ id: parsed.id, role: parsed.role });
     }
     setLoading(false);
   }, []);
@@ -34,6 +38,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if (loggedInUser) {
         setUser(loggedInUser);
         sessionStorage.setItem('user', JSON.stringify(loggedInUser));
+        // Phase 7.5：登入時設 Sentry user context（只送 id + role）
+        applyUserToSentry({ id: loggedInUser.id, role: loggedInUser.role });
         return loggedInUser;
       }
       return null;
@@ -48,6 +54,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const logout = () => {
     setUser(null);
     sessionStorage.removeItem('user');
+    // Phase 7.5：登出清除 Sentry user context
+    applyUserToSentry(null);
     apiLogout().catch(console.error);
   };
 
