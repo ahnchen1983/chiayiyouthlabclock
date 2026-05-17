@@ -6,6 +6,71 @@
 
 ---
 
+## [v2.0] - 2026-04-10 — 排班模型重構（Phase 5 全部完成）
+
+### 重大變更 (Breaking)
+- **ScheduleEvent 資料模型**從 v1 全日單一 `shiftTime` + 三欄位（`staffA`/`staffB`/`partTime`）
+  改為 v2 統一陣列 `shifts: StaffShift[]`，每員工獨立時段並支援兩頭班
+- **scheduleTemplate** 結構同步重構，改為 `status + openingHours + requiredHeadcount + defaultShifts`
+- 舊資料庫文件透過 `normalizeScheduleDoc` 自動 in-memory 轉換，**不回寫**，保證舊環境不崩潰
+- 客戶決策 4：採「直接切換 + 清空重建」策略，不做 v1→v2 migration
+
+### 新增 (Added)
+- **5.1 ScheduleEvent → StaffShift[]**
+  - `StaffShift` / `StaffRole` / `ScheduleTemplate` / `ScheduleShiftTemplate` 型別
+  - 後端 `normalizeScheduleDoc` 相容層 + `getEmployeeShiftsForDay` / `shiftHours` / `isEmployeeScheduledForDay` helpers
+  - `update-schedule` 後端驗證兩頭班 ≤ 2 段
+- **5.2 應到人數 + 30 分鐘區段覆蓋檢核**
+  - `ScheduleEvent.requiredHeadcount` 欄位
+  - `computeCoverageSlots` / `computeCoverageGaps` 純函式
+  - `check-schedule-conflicts` API 整合覆蓋率分析
+  - 客戶決策 3：僅警示，**不阻擋儲存**
+- **5.3 時間軸視覺化排班 UI**
+  - `ScheduleTimeline` 子元件：整點刻度 + 員工色塊（按角色分色）+ 覆蓋率條
+  - EditModal 班次列表編輯器（員工選擇 / 角色 / from / to / 刪除 / + 新增）
+  - 缺人警示列出「12:00-13:00 缺 2 人」精確時段
+- **5.5 `reset-all-schedule` API + SystemSettings 危險區**
+  - SuperAdmin 可清空 `dailySchedule`（可選同清 `scheduleTemplate`）
+  - 雙重確認（confirm + 輸入 `RESET` 字串）
+- **5.8 排班衝突即時警告**
+  - 月份頂部摘要區塊（最多 10 筆）+ 日曆格子 ⚠️ icon
+
+### 變更 (Changed)
+- `clock-in` / `clock-out`：遲到/早退判定改用「員工自己的 shift 範圍」（最早 from + 最晚 to）而非全日 shiftTime
+- `calculateSalaryForEmployee`：從 shifts 加總工時，正確支援兩頭班
+- `apply-template`：v2 模板僅描述班次框架（status + openingHours + defaultShifts），套用後 `shifts: []` 待管理員填人
+- `claim-open-shift` / `release-open-shift`：push/remove `StaffShift` 到 `dailySchedule.shifts`
+- `get-employee-schedule` / `get-dashboard-stats` / `get-schedule-attendance-comparison`：改用 `isEmployeeScheduledForDay` + `getEmployeeShiftRangeStr`
+- `initialize-database` 預設模板改為 v2 結構
+
+### 修正 (Fixed)
+- **5.4** ScheduleManager.tsx 條件修正：休館(值班) 也顯示兼職人員列表
+
+### 測試
+- Vitest 從 36 → **51 個測試**（+15）覆蓋：
+  - normalizeScheduleDoc（v1→v2、v2 passthrough、null 處理）
+  - getEmployeeShiftsForDay（empId 優先、name fallback、兩頭班）
+  - shiftHours、calculateSalaryForEmployee 兩頭班加總
+  - computeCoverageSlots / computeCoverageGaps（全程覆蓋、30 分鐘解析度、中午缺人、部分覆蓋、無 openingHours、requiredHeadcount=0、兩頭班同人不重複）
+
+### 文件
+- SDD.md → v2.0（資料模型、API 清單、缺陷清單、變更紀錄）
+- DEVELOPMENT_ROADMAP.md → Phase 5 全 7 項完成（5.7 取消）
+- VERIFICATION_MANUAL.md → 新增 Phase 5 測試案例
+- SDD_v2_PROPOSAL.md → 標註實作狀態
+
+### 客戶 V2 需求對應
+| 編號 | 需求 | 對應 |
+|------|------|------|
+| V2-1a | 假人名資料殘留 | 5.5 |
+| V2-1b | 應到人數設定 | 5.2 |
+| V2-2 | 個別員工時段 | 5.1 |
+| V2-3 | 兩頭班 | 5.1 |
+| V2-4 | 休館值班顯示 bug | 5.4 |
+| V2-5 | 兼職可調時段 | 5.1 |
+
+---
+
 ## [v1.6] - 2026-04-10 — Phase 4 全部完成
 
 ### 新增 (Added)
@@ -224,5 +289,12 @@
 
 - **v1.5** — Phase 3 功能完善（2026-04-09）✅
 - **v1.6** — Phase 4 進階功能（2026-04-10）✅
+- **v2.0** — Phase 5 排班模型重構（2026-04-10）✅
 
-所有計畫中的 Phase 1~4 功能已全部完成。
+## 規劃中
+
+- **Phase 6** — 排班協作（換班、版本歷史、月結鎖定、員工偏好）
+- **Phase 7** — 系統健全化剩餘（e2e、code splitting、Sentry、FCM、CSV 脫敏）
+- **Phase 8** — HR 細節補強（特休結轉、留停、PDF、月結報表、自助申請）
+
+詳見 [DEVELOPMENT_ROADMAP.md](./DEVELOPMENT_ROADMAP.md) 與 [SDD_v2_PROPOSAL.md](./SDD_v2_PROPOSAL.md)。

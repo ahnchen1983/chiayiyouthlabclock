@@ -1,10 +1,10 @@
 # 嘉義青年實驗室打卡系統 — 軟體設計文件 (SDD)
 
-> **版本：** v1.6
+> **版本：** v2.0
 > **建立日期：** 2026-04-08
 > **最後更新：** 2026-04-10
-> **對應程式版本：** Phase 4 全部完成
-> **開發進度：** Phase 1 ✅ · Phase 2 ✅ · Phase 3 ✅ · Phase 4 ✅
+> **對應程式版本：** Phase 5 全部完成（v2.0 核心 — 排班模型重構）
+> **開發進度：** Phase 1 ✅ · Phase 2 ✅ · Phase 3 ✅ · Phase 4 ✅ · Phase 5 ✅ · Phase 6/7/8 規劃中
 >
 > **相關文件：**
 > - [DEVELOPMENT_ROADMAP.md](./DEVELOPMENT_ROADMAP.md) — 開發階段規劃
@@ -398,7 +398,7 @@ chiayiyouthlabclock/
 | status | string | `'在職'` / `'離職'` / `'留停'` |
 | password | string | 密碼（**scrypt 雜湊**，格式 `salt:hash`，v1.2） |
 
-#### `scheduleTemplate` — 排班模板
+#### `scheduleTemplate` — 排班模板（v2.0 結構，Phase 5.1）
 | 文件 ID | 說明 |
 |---------|------|
 | "0" | 週日 |
@@ -406,23 +406,46 @@ chiayiyouthlabclock/
 | ... | ... |
 | "6" | 週六 |
 
-每筆文件欄位：
+每筆文件欄位（v2.0）：
 | 欄位 | 型別 | 說明 |
 |------|------|------|
-| status | string | `'營運'` / `'休館(值班)'` / `'休館'`（v1.2 新增值班） |
-| shiftTime | string | 時段（如 `"08:30-17:30"`） |
-| staffA | string | 專責人員 A 姓名 |
-| staffB | string | 專責人員 B 姓名 |
-| partTime | string[] | 兼職人員姓名陣列 |
+| status | string | `'營運'` / `'休館(值班)'` / `'休館'` |
+| openingHours | string | 場館營業時段（如 `"08:30-17:30"`），僅供顯示 |
+| requiredHeadcount | number | 應到人數（警示用，不阻擋） |
+| defaultShifts | array | 預設班次結構 `{ role, from, to }`（不含具體人員） |
 
-#### `dailySchedule` — 逐日排班（Phase 1 新增）
+#### `dailySchedule` — 逐日排班（v2.0 結構，Phase 5.1）
 | 文件 ID | 說明 |
 |---------|------|
 | "YYYY-MM-DD" | 該日班表 |
 
-每筆文件欄位與 `scheduleTemplate` 相同（status, shiftTime, staffA, staffB, partTime）。
+每筆文件欄位（v2.0）：
+| 欄位 | 型別 | 說明 |
+|------|------|------|
+| status | string | `'營運'` / `'休館(值班)'` / `'休館'` |
+| openingHours | string? | 場館營業時段（如 `"08:30-17:30"`） |
+| requiredHeadcount | number? | 應到人數（警示用，不阻擋） |
+| shifts | StaffShift[] | 每員工獨立時段，支援兩頭班（同人 ≤ 2 段） |
 
-查詢邏輯：優先讀取 `dailySchedule/{date}`，不存在則 fallback 到 `scheduleTemplate`（以星期幾為 key）。
+`StaffShift` 欄位：
+| 欄位 | 型別 | 說明 |
+|------|------|------|
+| empId | string | 員工編號（v2.0 新增，舊資料可能為空字串） |
+| name | string | 姓名（冗餘儲存方便顯示） |
+| role | string | `'staffA'` / `'staffB'` / `'partTime'` |
+| from | string | 起始時間 `"HH:mm"` |
+| to | string | 結束時間 `"HH:mm"` |
+| note | string? | 備註 |
+
+**v2.0 變更摘要：**
+- 取代 v1 的 `shiftTime`（全日單一）為每員工獨立時段
+- 取代 `staffA / staffB / partTime` 三個欄位為統一的 `shifts` 陣列
+- 新增 `requiredHeadcount`、`openingHours` 兩個欄位
+- 支援兩頭班（如三、四營業時間長，正職可拆早班+晚班）
+
+**讀取相容層：** 後端 `normalizeScheduleDoc` 自動將 v1 舊文件 in-memory 轉換為 v2 結構，不回寫資料庫。舊資料 `empId` 欄位為空，比對時 fallback 到 `name`。
+
+查詢邏輯：優先讀取 `dailySchedule/{date}`，不存在則 fallback 到 `scheduleTemplate`（取 status + openingHours，shifts 為空陣列）。
 
 #### `clockRecords` — 打卡紀錄
 | 欄位 | 型別 | 說明 |
@@ -579,8 +602,9 @@ chiayiyouthlabclock/
 | **排班** | | | |
 | `get-employee-schedule` | `yearMonth` | `ScheduleEvent[]` | 個人班表（v1.1 起讀 dailySchedule） |
 | `get-monthly-schedule` | `yearMonth` | `ScheduleEvent[]` | 全月班表（v1.1 起讀 dailySchedule） |
-| `update-schedule` | `event` | `boolean` | 更新排班（v1.1 起寫入 `dailySchedule/{date}`） |
-| `apply-template` | `yearMonth` | `boolean` | 批次將 scheduleTemplate 套用到該月（v1.1 新增） |
+| `update-schedule` | `event` | `boolean` | 更新排班（v1.1 起寫入 `dailySchedule/{date}`；v2.0 改寫入 `shifts[]` 結構，並驗證兩頭班 ≤ 2 段） |
+| `apply-template` | `yearMonth` | `boolean` | 批次將 scheduleTemplate 套用到該月（v1.1 新增；v2.0 起 shifts=[] 待管理員填人） |
+| `reset-all-schedule` | `alsoResetTemplate?` | `{ dailyDeleted, templateDeleted, message }` | 清空所有排班資料（v2.0 / Phase 5.5，限 SuperAdmin） |
 | **請假** | | | |
 | `get-employee-leave-requests` | — | `LeaveRequest[]` | 個人請假紀錄 |
 | `get-all-leave-requests` | — | `LeaveRequest[]` | 全部請假紀錄 |
@@ -620,8 +644,8 @@ chiayiyouthlabclock/
 | `get-notifications` | `limit?` | `Notification[]` | 個人通知列表 |
 | `mark-notification-read` | `notificationId` | `boolean` | 標記已讀 |
 | `mark-all-notifications-read` | — | `number` | 全部標記已讀 |
-| **排班衝突（v1.5）** | | | |
-| `check-schedule-conflicts` | `yearMonth` | `ScheduleConflict[]` | 排班衝突偵測 |
+| **排班衝突（v1.5 / v2.0 升級）** | | | |
+| `check-schedule-conflicts` | `yearMonth` | `ScheduleConflict[]` | 排班衝突偵測；v2.0 升級為（1）兩頭班 > 2 段（2）應到人數不足（3）營運日無 staffA（4）30 分鐘區段覆蓋率不足 |
 | **假別餘額（v1.6）** | | | |
 | `get-leave-balance` | `empId?` | `LeaveBalance[]` | 依勞基法計算特休/事假/病假餘額 |
 | **開放排班（v1.6）** | | | |
@@ -733,6 +757,27 @@ chiayiyouthlabclock/
 - ✅ 4.3 薪資條列印/下載（可列印 HTML + 瀏覽器另存 PDF）
 - ✅ 4.4 ErrorBoundary + UI 統一化（Logo 本地化、響應式 sidebar、底部 nav 可滑動）
 
+**客戶 V2 第二輪回報（已於 v2.0 解決）：**
+| 編號 | 客戶需求 | 對應修正 |
+|------|---------|---------|
+| V2-1a | 假人名修改後仍在資料庫殘留 | Phase 5.5「清空 dailySchedule + scheduleTemplate」工具 |
+| V2-1b | 管理員無法設定當日「應到人數」 | Phase 5.2 `requiredHeadcount` 欄位 + 警示 |
+| V2-2 | 無法為每員工選個別上班時段 | Phase 5.1 `StaffShift[]` 資料模型 |
+| V2-3 | 專責人員需要兩頭班 | Phase 5.1 允許同員工同日 ≤ 2 段 |
+| V2-4 | 休館(值班)排兼職不會顯示在日曆 | Phase 5.4 修 bug |
+| V2-5 | 兼職人員時段是否能調整 | Phase 5.1 每筆 shift 可獨立設定 from/to |
+
+**Phase 5 已完成（v2.0）：**
+- ✅ 5.1 ScheduleEvent → StaffShift[] 資料模型重構（含 normalize 相容層）
+- ✅ 5.2 應到人數 + 30 分鐘區段覆蓋檢核
+- ✅ 5.3 排班時間軸視覺化 + 班次列表編輯 + 覆蓋率條
+- ✅ 5.4 休館(值班) 兼職顯示
+- ✅ 5.5 清空排班資料工具（取代 v1→v2 migration）
+- ✅ 5.6 薪資 / 遲到 / 打卡比對遷移到 shifts
+- ✅ 5.8 排班衝突即時警告（前端整合）
+
+**Phase 6/7/8 待處理：** 詳見 [SDD_v2_PROPOSAL.md](./SDD_v2_PROPOSAL.md) § 3 / [DEVELOPMENT_ROADMAP.md](./DEVELOPMENT_ROADMAP.md) Phase 6-8。
+
 ---
 
 ## 9. 變更紀錄
@@ -745,5 +790,6 @@ chiayiyouthlabclock/
 | 2026-04-09 | v1.2.1 | 修正 `initialize-database` 在既有資料庫環境無法建立 SuperAdmin 帳號的問題；改為獨立檢查 scheduleTemplate 與 ADMIN 是否存在，並以 scrypt 雜湊儲存預設密碼 |
 | 2026-04-09 | v1.3 | 文件同步 — 將 SDD 資料模型、權限表、API 清單、頁面子視圖、功能缺陷清單全面更新至 Phase 1+2 實際程式狀態；新增 Phase 3/4 待處理清單 |
 | 2026-04-10 | v1.4 | Roadmap 重整 — 客戶回報三項需求（正職月薪、管理員改打卡、補打卡）整併至 Phase 3；原 Phase 4.2 補打卡提前為 3.3；Phase 3 從 5 項擴充為 6 項（3.1 薪資設定完善、3.2 打卡紀錄管理、3.3 補打卡、3.4 請假驗證、3.5 排班衝突、3.6 通知）；Phase 4 重新編號為 4.1~4.4 |
+| 2026-04-10 | v2.0 | **排班模型重構（v2.0 核心 / Phase 5 完成）**：(1) 5.1 ScheduleEvent 改為 `shifts: StaffShift[]`，每員工獨立時段，支援兩頭班 ≤ 2 段，移除 staffA/staffB/partTime/shiftTime；後端 `normalizeScheduleDoc` 自動轉換 v1 舊資料（不回寫）(2) 5.2 `requiredHeadcount` 應到人數 + 30 分鐘區段覆蓋檢核（僅警示不阻擋）(3) 5.3 排班時間軸視覺化（橫向時間刻度 + 員工色塊 + 覆蓋率條）+ 班次列表編輯器 (4) 5.4 修 bug — 休館(值班) 兼職在日曆顯示 (5) 5.5 `reset-all-schedule` 清空工具（取代 v1→v2 migration，決策 4）(6) 5.6 薪資計算 / 遲到判定 / 打卡比對全部遷移到 shifts (7) 5.8 排班衝突即時警告前端整合。Vitest 51 個測試全綠（從 36 → +15 含 normalize / 兩頭班 / shiftHours / 覆蓋率）。 |
 | 2026-04-10 | v1.6 | Phase 4 全部完成：(1) 4.1 假別餘額管理 — 依勞基法年資計算特休天數，前後端餘額檢查，MyLeaveBalance 頁面，LeaveRequestForm 內嵌餘額顯示 (2) 4.2 員工自選班表 — openShifts collection，Transaction 認領/釋出，自動同步 dailySchedule.partTime，管理端 OpenShiftManager，員工端 OpenShiftPicker (3) 4.3 薪資條列印下載 — openPayslipPrintView 可列印 HTML，員工/管理端皆有下載按鈕 (4) 4.4 ErrorBoundary 包覆全 App，Logo 改為本地文字，AdminDashboard sidebar 響應式（手機漢堡選單），EmployeeDashboard 底部 nav 可水平滑動 |
 | 2026-04-09 | v1.5 | Phase 3 全部完成：(1) 3.1 Employee.monthlySalary 欄位 + systemConfig/salary collection + SystemSettings 頁面（SuperAdmin），費率/PT 上限/遲到寬限改為設定化 (2) 3.2 打卡自動比對排班判定遲到/早退，AttendanceLog 新增編輯功能（update-clock-record），ClockRecord 擴充 note/manuallyEdited/source/editedBy/editedAt (3) 3.3 補打卡申請流程：makeupRequests collection、員工 ClockMakeupForm、管理端 MakeupApprovalQueue，核准後自動寫入 clockRecords (4) 3.4 請假前後端日期驗證，駁回必填理由（rejectReason） (5) 3.5 check-schedule-conflicts API（重複排班 + 營運日無 A） (6) 3.6 notifications collection + NotificationBell 元件（請假/補打卡核准/駁回自動通知，60s 輪詢） |
