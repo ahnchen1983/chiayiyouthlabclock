@@ -15,7 +15,7 @@
 | **Phase 4 進階功能** | ✅ 完成 (2026-04-10) | 4/4 |
 | **Phase 5 排班模型重構（v2.0 核心）** | ✅ 完成 (2026-04-10) | 7/7 |
 | **Phase 6 排班協作** | ⬜ 規劃中 | 0/4 |
-| **Phase 7 系統健全化（技術債）** | 🟡 進行中 | 2/7 |
+| **Phase 7 系統健全化（技術債）** | 🟡 進行中 | 3/7 |
 | **Phase 8 HR 細節補強** | ⬜ 規劃中 | 0/5 |
 
 > **v2.0 規劃：** 詳見 [SDD_v2_PROPOSAL.md](./SDD_v2_PROPOSAL.md)。Phase 5 為 v2.0 核心（資料模型重構），Phase 6~8 為延伸。
@@ -429,7 +429,7 @@ Phase 3: 功能完善         <───────────┘
 |------|------|------|
 | 7.1 | Vitest 單元測試（薪資、遲到、餘額、密碼）— **36 個測試** | [x] 完成 (2026-04-10) |
 | 7.2 | Playwright e2e（登入→打卡→請假→審核） | [ ] |
-| 7.3 | Code splitting — dashboard view lazy load | [ ] |
+| 7.3 | Code splitting — dashboard view lazy load + vendor chunk 拆分 | [x] 完成 (2026-04-10)：27 view chunks + react-vendor + firebase-vendor；entry 503KB→217KB raw（gzip 127→67KB），無 chunk-size 警告 |
 | 7.4 | GitHub Actions CI（typecheck + test + build） | [x] 完成 (2026-04-10) |
 | 7.5 | 錯誤監控整合（Sentry 或自架） | [ ] |
 | 7.6 | FCM Push 通知取代 60s 輪詢 | [ ] |
