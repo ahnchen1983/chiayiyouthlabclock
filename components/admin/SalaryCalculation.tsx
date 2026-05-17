@@ -4,6 +4,7 @@ import { apiGetAllSalaryDetails } from '../../services/googleAppsScriptAPI';
 import { openPayslipPrintView } from '../../services/payslipPrint';
 import { SalaryDetail } from '../../types';
 import { DollarIcon, ChevronRightIcon } from '../icons';
+import { maskName, maskEmpId } from '../../netlify/functions/utils/csvMasking';
 
 // 下載 icon
 const DownloadIcon: React.FC<{ className?: string }> = ({ className }) => (
@@ -143,23 +144,30 @@ const SalaryDetailModal: React.FC<{ salary: SalaryDetail; onClose: () => void }>
     );
 };
 
-// 匯出 CSV
-const exportSalaryCSV = (salaries: SalaryDetail[], month: string) => {
+// 匯出 CSV（Phase 7.7：加入 masked 參數、CSV 警語；薪資數字「不」脫敏，因會計月結用）
+const exportSalaryCSV = (salaries: SalaryDetail[], month: string, masked: boolean) => {
     const headers = ['員工編號', '姓名', '職位', '出勤天數', '總工時', '請假時數', '加班時數', '底薪', '加班費', '應發薪資', '勞保', '健保', '勞退', '請假扣薪', '扣除合計', '實發薪資'];
     const csvContent = [
         headers.join(','),
         ...salaries.map(s => [
-            s.empId, s.name, s.position, s.totalWorkDays, s.totalWorkHours, s.totalLeaveHours, s.overtimeHours,
+            masked ? maskEmpId(s.empId) : s.empId,
+            masked ? maskName(s.name) : s.name,
+            s.position, s.totalWorkDays, s.totalWorkHours, s.totalLeaveHours, s.overtimeHours,
             s.baseSalary, s.overtimePay, s.grossSalary, s.laborInsurance, s.healthInsurance, s.laborPensionSelf,
             s.leaveDeduction, s.totalDeductions, s.netSalary
-        ].map(f => `"${f}"`).join(','))
+        ].map(f => `"${f}"`).join(',')),
+        // 警語列（CSV 末尾）
+        '',
+        `"# 匯出時間: ${new Date().toLocaleString('zh-TW')}"`,
+        `"# 模式: ${masked ? '脫敏匯出（員工編號、姓名遮罩；薪資數字保留）' : '完整匯出（含個資）'}"`,
+        '"# 薪資為極敏感資料，請依個資法妥善處理；不得另行傳遞至非經授權之第三方。"',
     ].join('\n');
 
     const BOM = '\uFEFF';
     const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.setAttribute('href', URL.createObjectURL(blob));
-    link.setAttribute('download', `薪資明細_${month}.csv`);
+    link.setAttribute('download', `薪資明細_${month}${masked ? '_脫敏' : ''}.csv`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
@@ -204,11 +212,37 @@ const SalaryCalculation: React.FC = () => {
                         className="p-2 border rounded-md"
                     />
                     <button
-                        onClick={() => salaries.length > 0 && exportSalaryCSV(salaries, month)}
+                        onClick={() => {
+                            if (salaries.length === 0) {
+                                alert('沒有可匯出的薪資資料');
+                                return;
+                            }
+                            exportSalaryCSV(salaries, month, true);
+                        }}
+                        title="員工編號、姓名遮罩；薪資數字保留供會計使用"
                         className="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 transition-colors"
                     >
                         <DownloadIcon className="w-5 h-5" />
-                        匯出
+                        脫敏匯出 CSV
+                    </button>
+                    <button
+                        onClick={() => {
+                            if (salaries.length === 0) {
+                                alert('沒有可匯出的薪資資料');
+                                return;
+                            }
+                            const confirmed = window.confirm(
+                                '即將匯出「完整」薪資 CSV，含未遮罩的員工姓名與編號，且薪資為極敏感資料。\n\n' +
+                                '請確認檔案會妥善保管，並僅供授權人員使用。\n\n要繼續匯出嗎？'
+                            );
+                            if (!confirmed) return;
+                            exportSalaryCSV(salaries, month, false);
+                        }}
+                        title="含未遮罩個資，需二次確認"
+                        className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 border border-gray-300 rounded-md hover:bg-gray-200 transition-colors"
+                    >
+                        <DownloadIcon className="w-5 h-5" />
+                        完整匯出（含個資）
                     </button>
                 </div>
             </div>

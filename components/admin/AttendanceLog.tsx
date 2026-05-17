@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { apiGetAllClockRecords, apiGetAllEmployees, apiUpdateClockRecord } from '../../services/googleAppsScriptAPI';
 import { ClockRecord, ClockRecordStatus, User } from '../../types';
 import { ClockIcon } from '../icons';
+import { maskName, maskEmpId, maskVerificationData } from '../../netlify/functions/utils/csvMasking';
 
 // 編輯 icon
 const PencilIcon: React.FC<{ className?: string }> = ({ className }) => (
@@ -114,22 +115,37 @@ const VerificationBadge: React.FC<{ method: 'IP' | 'GPS' }> = ({ method }) => {
     );
 };
 
-// 匯出 Excel 函數
-const exportToExcel = (records: ClockRecord[], month: string) => {
-    // 建立 CSV 內容
-    const headers = ['員工編號', '姓名', '日期', '上班時間', '下班時間', '工時', '狀態', '驗證方式'];
-    const csvContent = [
-        headers.join(','),
-        ...records.map(record => [
-            record.empId,
-            record.name,
+// 匯出 Excel 函數（Phase 7.7：加入 masked 參數、驗證資料欄、CSV 警語）
+const exportToExcel = (records: ClockRecord[], month: string, masked: boolean) => {
+    // 建立 CSV 內容（v7.7：新增「驗證資料」欄，IP/GPS 可被脫敏遮罩）
+    const headers = ['員工編號', '姓名', '日期', '上班時間', '下班時間', '工時', '狀態', '驗證方式', '驗證資料'];
+    const dataRows = records.map(record => {
+        const empId = masked ? maskEmpId(record.empId) : record.empId;
+        const name = masked ? maskName(record.name) : record.name;
+        const vData = masked
+            ? maskVerificationData(record.verificationMethod, record.verificationData || '')
+            : (record.verificationData || '');
+        return [
+            empId,
+            name,
             record.date,
             record.clockInTime || '',
             record.clockOutTime || '',
             record.workHours?.toFixed(2) || '',
             record.status,
-            record.verificationMethod
-        ].map(field => `"${field}"`).join(','))
+            record.verificationMethod,
+            vData,
+        ].map(field => `"${field}"`).join(',');
+    });
+
+    const csvContent = [
+        headers.join(','),
+        ...dataRows,
+        // 警語列（CSV 末尾）
+        '',
+        `"# 匯出時間: ${new Date().toLocaleString('zh-TW')}"`,
+        `"# 模式: ${masked ? '脫敏匯出' : '完整匯出（含個資）'}"`,
+        '"# 本檔可能含敏感個資，請依個資法妥善處理；不得另行傳遞至非經授權之第三方。"',
     ].join('\n');
 
     // 加入 BOM 以支援中文
@@ -139,7 +155,7 @@ const exportToExcel = (records: ClockRecord[], month: string) => {
     const url = URL.createObjectURL(blob);
 
     link.setAttribute('href', url);
-    link.setAttribute('download', `出勤紀錄_${month}.csv`);
+    link.setAttribute('download', `出勤紀錄_${month}${masked ? '_脫敏' : ''}.csv`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
@@ -197,12 +213,25 @@ const AttendanceLog: React.FC = () => {
         totalHours: filteredRecords.reduce((sum, r) => sum + (r.workHours || 0), 0),
     };
 
-    const handleExport = () => {
+    const handleMaskedExport = () => {
         if (filteredRecords.length === 0) {
             alert('沒有可匯出的紀錄');
             return;
         }
-        exportToExcel(filteredRecords, month);
+        exportToExcel(filteredRecords, month, true);
+    };
+
+    const handleFullExport = () => {
+        if (filteredRecords.length === 0) {
+            alert('沒有可匯出的紀錄');
+            return;
+        }
+        const confirmed = window.confirm(
+            '即將匯出「完整」CSV，含未遮罩的員工姓名、員工編號、IP 或 GPS 等個資。\n\n' +
+            '請確認檔案會妥善保管，並僅供授權人員使用。\n\n要繼續匯出嗎？'
+        );
+        if (!confirmed) return;
+        exportToExcel(filteredRecords, month, false);
     };
 
     return (
@@ -213,13 +242,24 @@ const AttendanceLog: React.FC = () => {
                     <ClockIcon className="w-7 h-7 text-green-500" />
                     出勤紀錄
                 </h1>
-                <button
-                    onClick={handleExport}
-                    className="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 transition-colors"
-                >
-                    <DownloadIcon className="w-5 h-5" />
-                    匯出 Excel
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                    <button
+                        onClick={handleMaskedExport}
+                        title="員工編號、姓名、IP/GPS 將被遮罩"
+                        className="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 transition-colors"
+                    >
+                        <DownloadIcon className="w-5 h-5" />
+                        脫敏匯出 CSV
+                    </button>
+                    <button
+                        onClick={handleFullExport}
+                        title="含未遮罩個資，需二次確認"
+                        className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 border border-gray-300 rounded-md hover:bg-gray-200 transition-colors"
+                    >
+                        <DownloadIcon className="w-5 h-5" />
+                        完整匯出（含個資）
+                    </button>
+                </div>
             </div>
 
             {/* 統計卡片 */}
