@@ -114,7 +114,11 @@ const getLeaveBalanceForEmployee = async (empId: string): Promise<any[]> => {
     if (!empSnap.exists) return [];
     const emp = empSnap.data()!;
     const year = new Date().getFullYear();
-    const annualDays = computeAnnualLeaveDays(emp.hireDate);
+    // Phase 8.2：將員工留停期間傳入年資計算
+    const loaPeriods = emp.leaveOfAbsenceStart
+        ? [{ start: emp.leaveOfAbsenceStart, end: emp.leaveOfAbsenceEnd }]
+        : [];
+    const annualDays = computeAnnualLeaveDays(emp.hireDate, new Date(), loaPeriods);
 
     // 本年度已核准假
     const lrSnap = await db.collection('leaveRequests').where('empId', '==', empId).get();
@@ -730,10 +734,26 @@ export const handler: Handler = async (event) => {
                 const ref = db.collection('employees').doc(data.empId);
                 const snap = await ref.get();
                 if (!snap.exists) return ok(null);
+                const before = snap.data()!;
                 await ref.update(data.updates);
                 const updated = await ref.get();
                 const { password: _p, ...emp } = updated.data()!;
                 await writeAuditLog(uid, '更新員工', data.empId, JSON.stringify(data.updates));
+
+                // Phase 8.2：留停欄位變動專屬 audit log
+                const startChanged = 'leaveOfAbsenceStart' in (data.updates || {}) && data.updates.leaveOfAbsenceStart !== before.leaveOfAbsenceStart;
+                const endChanged = 'leaveOfAbsenceEnd' in (data.updates || {}) && data.updates.leaveOfAbsenceEnd !== before.leaveOfAbsenceEnd;
+                if (startChanged || endChanged) {
+                    const newStart = data.updates.leaveOfAbsenceStart ?? before.leaveOfAbsenceStart;
+                    const newEnd = data.updates.leaveOfAbsenceEnd ?? before.leaveOfAbsenceEnd;
+                    if (newStart && !newEnd) {
+                        await writeAuditLog(uid, '設定留停', data.empId, `${before.name} 留停起始 ${newStart}`);
+                    } else if (newStart && newEnd) {
+                        await writeAuditLog(uid, '結束留停', data.empId, `${before.name} 留停 ${newStart} ~ ${newEnd}`);
+                    } else if (!newStart && before.leaveOfAbsenceStart) {
+                        await writeAuditLog(uid, '清除留停', data.empId, `${before.name} 原留停 ${before.leaveOfAbsenceStart} ~ ${before.leaveOfAbsenceEnd || '進行中'}`);
+                    }
+                }
                 return ok(emp);
             }
 

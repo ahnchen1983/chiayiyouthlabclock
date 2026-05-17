@@ -155,6 +155,59 @@ describe('computeAnnualLeaveDays（勞基法）', () => {
 });
 
 // =============================================================
+// 留停期間扣除（Phase 8.2）
+// =============================================================
+
+describe('computeAnnualLeaveDays — 留停期間扣除（Phase 8.2）', () => {
+    it('未留停（傳入空陣列）= 簡單年資計算（向後相容）', () => {
+        const asOf = new Date('2026-01-01');
+        expect(computeAnnualLeaveDays('2024-01-01', asOf, [])).toBe(10);
+        expect(computeAnnualLeaveDays('2024-01-01', asOf)).toBe(10);   // 預設空陣列
+    });
+
+    it('留停 183 天（2025-04-01 ~ 2025-09-30）扣 6 個月：24 月 → 18 月 → 7 天', () => {
+        const asOf = new Date('2026-01-01');
+        const days = computeAnnualLeaveDays('2024-01-01', asOf, [
+            { start: '2025-04-01', end: '2025-09-30' }
+        ]);
+        expect(days).toBe(7);
+    });
+
+    it('留停跨年（2024-10-01 ~ 2025-03-31，182 天）→ 跨年的天數也扣', () => {
+        const asOf = new Date('2026-01-01');
+        const days = computeAnnualLeaveDays('2024-01-01', asOf, [
+            { start: '2024-10-01', end: '2025-03-31' }
+        ]);
+        expect(days).toBe(7);
+    });
+
+    it('留停尚未結束（end 為空字串）→ 用 asOf 當結束點', () => {
+        const asOf = new Date('2026-01-01');
+        const days = computeAnnualLeaveDays('2024-01-01', asOf, [
+            { start: '2025-04-01', end: '' }
+        ]);
+        expect(days).toBe(7);
+    });
+
+    it('多次留停累加扣除（helper 支援陣列）', () => {
+        const asOf = new Date('2026-01-01');
+        const days = computeAnnualLeaveDays('2024-01-01', asOf, [
+            { start: '2024-04-01', end: '2024-06-30' },  // 91 天
+            { start: '2025-04-01', end: '2025-06-30' },  // 91 天 → 共 182 天 = 6 個月
+        ]);
+        expect(days).toBe(7);
+    });
+
+    it('留停 < 30 天（不滿一個月）= 不扣月份', () => {
+        const asOf = new Date('2026-01-01');
+        const days = computeAnnualLeaveDays('2024-01-01', asOf, [
+            { start: '2025-04-01', end: '2025-04-10' }
+        ]);
+        expect(days).toBe(10);
+    });
+});
+
+// =============================================================
 // 假別餘額
 // =============================================================
 

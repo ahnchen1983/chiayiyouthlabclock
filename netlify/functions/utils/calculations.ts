@@ -74,18 +74,71 @@ export const determineClockStatus = (
     return '正常';
 };
 
+// ==================== 留停期間（Phase 8.2）====================
+
+export interface LeaveOfAbsencePeriod {
+    start: string;       // YYYY-MM-DD
+    end?: string;        // 空字串或缺值 = 仍在留停
+}
+
+/**
+ * 計算所有留停期間在 [hireDate, asOf] 區間內被吃掉的「總天數」。
+ * - 含頭含尾：(end - start) + 1 天
+ * - end 缺值 = 用 asOf 當結束點
+ * - 自動裁切到 [hireDate, asOf]
+ * - 多筆留停累加
+ */
+export const computeLeaveOfAbsenceDays = (
+    hireDate: string,
+    periods: LeaveOfAbsencePeriod[],
+    asOf: Date
+): number => {
+    if (!periods || periods.length === 0) return 0;
+    const hire = new Date(hireDate);
+    if (Number.isNaN(hire.getTime())) return 0;
+    const asOfTime = asOf.getTime();
+    const hireTime = hire.getTime();
+
+    let totalDays = 0;
+    for (const p of periods) {
+        if (!p.start) continue;
+        const start = new Date(p.start);
+        if (Number.isNaN(start.getTime())) continue;
+        const end = (p.end && p.end.length > 0) ? new Date(p.end) : asOf;
+        if (Number.isNaN(end.getTime())) continue;
+
+        const clampedStart = Math.max(start.getTime(), hireTime);
+        const clampedEnd = Math.min(end.getTime(), asOfTime);
+        if (clampedEnd < clampedStart) continue;
+
+        const days = Math.floor((clampedEnd - clampedStart) / (24 * 60 * 60 * 1000)) + 1;
+        totalDays += days;
+    }
+    return totalDays;
+};
+
 // ==================== 特休天數計算 ====================
 
 /**
  * 依勞基法計算特休天數（依到職日 → 指定基準日）
  * 6 個月：3 / 1 年：7 / 2 年：10 / 3-4 年：14 / 5-9 年：15
  * 10 年起每增 1 年加 1 天，最多 30 天
+ *
+ * Phase 8.2：留停期間從年資中扣除（30 天 = 1 個月）
  */
-export const computeAnnualLeaveDays = (hireDate: string, asOf: Date = new Date()): number => {
+export const computeAnnualLeaveDays = (
+    hireDate: string,
+    asOf: Date = new Date(),
+    leaveOfAbsencePeriods: LeaveOfAbsencePeriod[] = []
+): number => {
     if (!hireDate) return 0;
     const hire = new Date(hireDate);
     if (Number.isNaN(hire.getTime())) return 0;
-    const months = (asOf.getFullYear() - hire.getFullYear()) * 12 + (asOf.getMonth() - hire.getMonth());
+    const rawMonths = (asOf.getFullYear() - hire.getFullYear()) * 12 + (asOf.getMonth() - hire.getMonth());
+    // Phase 8.2：扣除留停天數
+    const loaDays = computeLeaveOfAbsenceDays(hireDate, leaveOfAbsencePeriods, asOf);
+    const loaMonths = Math.floor(loaDays / 30);
+    const months = Math.max(0, rawMonths - loaMonths);
     if (months < 6) return 0;
     if (months < 12) return 3;
     const years = Math.floor(months / 12);

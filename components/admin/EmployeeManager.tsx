@@ -85,8 +85,11 @@ const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({ employee, onClose
         status: employee?.status || '在職',
         position: employee?.position || '兼職人員',
         role: employee?.role || UserRole.Employee,
+        leaveOfAbsenceStart: employee?.leaveOfAbsenceStart || '',
+        leaveOfAbsenceEnd: employee?.leaveOfAbsenceEnd || '',
     });
     const [initialPassword, setInitialPassword] = useState('Aa123456');
+    const [showLoa, setShowLoa] = useState<boolean>(!!(employee?.leaveOfAbsenceStart));
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
         const { name, value } = e.target;
@@ -290,6 +293,57 @@ const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({ employee, onClose
                             <option value="留停">留停</option>
                         </select>
                     </div>
+
+                    {/* 留停期間（Phase 8.2，僅編輯模式） */}
+                    {!isNew && (
+                        <div className="border-t pt-3">
+                            <label className="flex items-center gap-2 text-sm font-medium text-gray-700 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={showLoa}
+                                    onChange={(e) => {
+                                        setShowLoa(e.target.checked);
+                                        if (!e.target.checked) {
+                                            setFormData(prev => ({
+                                                ...prev,
+                                                leaveOfAbsenceStart: '',
+                                                leaveOfAbsenceEnd: '',
+                                            }));
+                                        }
+                                    }}
+                                    className="w-4 h-4"
+                                />
+                                設定留停期間
+                            </label>
+                            {showLoa && (
+                                <div className="grid grid-cols-2 gap-4 mt-2 pl-6">
+                                    <div>
+                                        <label className="block text-xs text-gray-600 mb-1">留停起始日</label>
+                                        <input
+                                            type="date"
+                                            name="leaveOfAbsenceStart"
+                                            value={formData.leaveOfAbsenceStart || ''}
+                                            onChange={handleChange}
+                                            className="w-full p-2 border rounded-md"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs text-gray-600 mb-1">留停結束日（空 = 仍在留停）</label>
+                                        <input
+                                            type="date"
+                                            name="leaveOfAbsenceEnd"
+                                            value={formData.leaveOfAbsenceEnd || ''}
+                                            onChange={handleChange}
+                                            className="w-full p-2 border rounded-md"
+                                        />
+                                    </div>
+                                    <p className="col-span-2 text-xs text-gray-500">
+                                        留停期間特休不累積、不扣除；回任後從留停前的剩餘餘額繼續計算。
+                                    </p>
+                                </div>
+                            )}
+                        </div>
+                    )}
 
                     {/* 初始密碼（僅新增時顯示） */}
                     {isNew && (

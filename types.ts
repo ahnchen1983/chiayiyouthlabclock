@@ -131,6 +131,9 @@ export interface Employee {
     status: EmployeeStatus;
     position: '專責人員' | '兼職人員';
     role: UserRole;
+    // === Phase 8.2 留停期間 ===
+    leaveOfAbsenceStart?: string;   // 留停起始日 YYYY-MM-DD
+    leaveOfAbsenceEnd?: string;     // 留停結束日 YYYY-MM-DD；空字串或 undefined = 仍在留停
 }
 
 // 系統設定（薪資費率等）
