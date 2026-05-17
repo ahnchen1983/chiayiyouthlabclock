@@ -1,18 +1,33 @@
 // FIX: Correctly import React and the useState hook.
-import React, { useState } from 'react';
+import React, { useState, lazy, Suspense } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import ClockIn from '../components/employee/ClockIn';
-import MyScheduleCalendar from '../components/employee/MyScheduleCalendar';
-import MyRecords from '../components/employee/MyRecords';
-import LeaveRequestForm from '../components/employee/LeaveRequestForm';
-import FullScheduleCalendar from '../components/employee/FullScheduleCalendar';
-import MySalary from '../components/employee/MySalary';
-import ClockMakeupForm from '../components/employee/ClockMakeupForm';
-import MyLeaveBalance from '../components/employee/MyLeaveBalance';
-import OpenShiftPicker from '../components/employee/OpenShiftPicker';
+
+// Phase 7.3 — 子 view 改為 React.lazy，由 Suspense 切割成獨立 chunk
+const ClockIn              = lazy(() => import('../components/employee/ClockIn'));
+const MyScheduleCalendar   = lazy(() => import('../components/employee/MyScheduleCalendar'));
+const FullScheduleCalendar = lazy(() => import('../components/employee/FullScheduleCalendar'));
+const MyRecords            = lazy(() => import('../components/employee/MyRecords'));
+const LeaveRequestForm     = lazy(() => import('../components/employee/LeaveRequestForm'));
+const MySalary             = lazy(() => import('../components/employee/MySalary'));
+const ClockMakeupForm      = lazy(() => import('../components/employee/ClockMakeupForm'));
+const MyLeaveBalance       = lazy(() => import('../components/employee/MyLeaveBalance'));
+const OpenShiftPicker      = lazy(() => import('../components/employee/OpenShiftPicker'));
+
+// 頭部常駐元件、控制元件、icon — 保留 static import
 import ChangePasswordModal from '../components/ChangePasswordModal';
 import NotificationBell from '../components/NotificationBell';
 import { ClockIcon, CalendarIcon, ListIcon, SendIcon, LogOutIcon, UsersIcon, DollarIcon } from '../components/icons';
+
+// View 切換時的 Suspense fallback — 強制保留高度避免主區塊跳動
+const ViewLoadingFallback: React.FC = () => (
+  <div className="flex items-center justify-center py-20 text-gray-400">
+    <svg className="animate-spin h-6 w-6 mr-3" viewBox="0 0 24 24">
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+    </svg>
+    <span className="text-sm">載入中…</span>
+  </div>
+);
 
 // 鑰匙圖示
 const KeyIcon: React.FC<{ className?: string }> = ({ className }) => (
@@ -100,7 +115,9 @@ const EmployeeDashboard: React.FC = () => {
       </header>
 
       <main className="flex-1 overflow-y-auto p-4 sm:p-6">
-        {renderView()}
+        <Suspense fallback={<ViewLoadingFallback />}>
+          {renderView()}
+        </Suspense>
       </main>
 
       <nav className="flex bg-white border-t border-gray-200 shadow-t-lg overflow-x-auto">

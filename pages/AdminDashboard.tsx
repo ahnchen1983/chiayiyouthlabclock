@@ -1,28 +1,43 @@
 
-import React, { useState } from 'react';
+import React, { useState, lazy, Suspense } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { UserRole } from '../types';
-import AdminOverview from '../components/admin/AdminOverview';
-import ScheduleManager from '../components/admin/ScheduleManager';
-import AttendanceLog from '../components/admin/AttendanceLog';
-import LeaveApprovalQueue from '../components/admin/LeaveApprovalQueue';
-import EmployeeManager from '../components/admin/EmployeeManager';
-import ScheduleComparison from '../components/admin/ScheduleComparison';
-import SalaryCalculation from '../components/admin/SalaryCalculation';
-import AuditLogViewer from '../components/admin/AuditLogViewer';
-import SystemSettings from '../components/admin/SystemSettings';
-import MakeupApprovalQueue from '../components/admin/MakeupApprovalQueue';
-import OpenShiftManager from '../components/admin/OpenShiftManager';
-import ClockIn from '../components/employee/ClockIn';
-import LeaveRequestForm from '../components/employee/LeaveRequestForm';
-import MyRecords from '../components/employee/MyRecords';
-import MySalary from '../components/employee/MySalary';
-import ClockMakeupForm from '../components/employee/ClockMakeupForm';
-import MyLeaveBalance from '../components/employee/MyLeaveBalance';
-import OpenShiftPicker from '../components/employee/OpenShiftPicker';
+
+// Phase 7.3 — 子 view 改為 React.lazy，由 Suspense 切割成獨立 chunk
+const AdminOverview        = lazy(() => import('../components/admin/AdminOverview'));
+const ScheduleManager      = lazy(() => import('../components/admin/ScheduleManager'));
+const AttendanceLog        = lazy(() => import('../components/admin/AttendanceLog'));
+const LeaveApprovalQueue   = lazy(() => import('../components/admin/LeaveApprovalQueue'));
+const EmployeeManager      = lazy(() => import('../components/admin/EmployeeManager'));
+const ScheduleComparison   = lazy(() => import('../components/admin/ScheduleComparison'));
+const SalaryCalculation    = lazy(() => import('../components/admin/SalaryCalculation'));
+const AuditLogViewer       = lazy(() => import('../components/admin/AuditLogViewer'));
+const SystemSettings       = lazy(() => import('../components/admin/SystemSettings'));
+const MakeupApprovalQueue  = lazy(() => import('../components/admin/MakeupApprovalQueue'));
+const OpenShiftManager     = lazy(() => import('../components/admin/OpenShiftManager'));
+const ClockIn              = lazy(() => import('../components/employee/ClockIn'));
+const LeaveRequestForm     = lazy(() => import('../components/employee/LeaveRequestForm'));
+const MyRecords            = lazy(() => import('../components/employee/MyRecords'));
+const MySalary             = lazy(() => import('../components/employee/MySalary'));
+const ClockMakeupForm      = lazy(() => import('../components/employee/ClockMakeupForm'));
+const MyLeaveBalance       = lazy(() => import('../components/employee/MyLeaveBalance'));
+const OpenShiftPicker      = lazy(() => import('../components/employee/OpenShiftPicker'));
+
+// 頭部常駐元件、控制元件、icon — 保留 static import
 import ChangePasswordModal from '../components/ChangePasswordModal';
 import NotificationBell from '../components/NotificationBell';
 import { DashboardIcon, CalendarIcon, ListIcon, CheckSquareIcon, UsersIcon, LogOutIcon, DollarIcon, ClockIcon, SendIcon } from '../components/icons';
+
+// View 切換時的 Suspense fallback — 強制保留高度避免主區塊跳動
+const ViewLoadingFallback: React.FC = () => (
+  <div className="flex items-center justify-center py-20 text-gray-400">
+    <svg className="animate-spin h-6 w-6 mr-3" viewBox="0 0 24 24">
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+    </svg>
+    <span className="text-sm">載入中…</span>
+  </div>
+);
 
 // 鑰匙圖示
 const KeyIcon: React.FC<{ className?: string }> = ({ className }) => (
@@ -178,7 +193,9 @@ const AdminDashboard: React.FC = () => {
           <NotificationBell />
         </header>
         <main className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-100 p-6">
-          {renderView()}
+          <Suspense fallback={<ViewLoadingFallback />}>
+            {renderView()}
+          </Suspense>
         </main>
       </div>
 
