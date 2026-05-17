@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { apiGetClockRecords } from '../../services/googleAppsScriptAPI';
+import { openAttendancePrintView } from '../../services/attendancePrint';
 import { ClockRecord } from '../../types';
 
 const MyRecords: React.FC = () => {
@@ -25,15 +26,33 @@ const MyRecords: React.FC = () => {
   return (
     <div className="p-4 bg-white rounded-lg shadow-md">
       <h2 className="text-2xl font-bold text-center mb-4 text-gray-800">我的打卡紀錄</h2>
-      <div className="mb-4">
-        <label htmlFor="month-select" className="mr-2 font-semibold">選擇月份:</label>
-        <input
-          type="month"
-          id="month-select"
-          value={month}
-          onChange={(e) => setMonth(e.target.value)}
-          className="p-2 border rounded-md"
-        />
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <label htmlFor="month-select" className="mr-2 font-semibold">選擇月份:</label>
+          <input
+            type="month"
+            id="month-select"
+            value={month}
+            onChange={(e) => setMonth(e.target.value)}
+            className="p-2 border rounded-md"
+          />
+        </div>
+        <button
+          onClick={() => {
+            if (records.length === 0) {
+              alert('本月無打卡紀錄可列印');
+              return;
+            }
+            openAttendancePrintView(records, {
+              empName: user?.name || '',
+              month,
+              isAdminView: false,
+            });
+          }}
+          className="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 transition-colors"
+        >
+          📥 列印出勤紀錄
+        </button>
       </div>
       <div className="overflow-x-auto">
         <table className="min-w-full bg-white">

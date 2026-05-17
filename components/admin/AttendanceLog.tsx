@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { apiGetAllClockRecords, apiGetAllEmployees, apiUpdateClockRecord } from '../../services/googleAppsScriptAPI';
+import { openAttendancePrintView } from '../../services/attendancePrint';
 import { ClockRecord, ClockRecordStatus, User } from '../../types';
 import { ClockIcon } from '../icons';
 import { maskName, maskEmpId, maskVerificationData } from '../../netlify/functions/utils/csvMasking';
@@ -258,6 +259,23 @@ const AttendanceLog: React.FC = () => {
                     >
                         <DownloadIcon className="w-5 h-5" />
                         完整匯出（含個資）
+                    </button>
+                    <button
+                        onClick={() => {
+                            if (filteredRecords.length === 0) {
+                                alert('無符合條件的紀錄可列印');
+                                return;
+                            }
+                            openAttendancePrintView(filteredRecords, {
+                                month,
+                                isAdminView: true,
+                            });
+                        }}
+                        title="列印目前篩選結果（依員工分組）"
+                        className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors"
+                    >
+                        <DownloadIcon className="w-5 h-5" />
+                        列印出勤紀錄
                     </button>
                 </div>
             </div>
