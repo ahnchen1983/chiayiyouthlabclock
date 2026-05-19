@@ -9,6 +9,15 @@ import {
 } from './utils/calculations';
 import { getMonthKey, isMonthLocked } from './utils/monthLock';
 import { corsHeaders } from './utils/cors';
+import {
+    generateSecret as totpGenerateSecret,
+    verifyTotp,
+    buildOtpAuthUrl,
+    generateRecoveryCodes,
+    hashRecoveryCode,
+    findRecoveryCodeIndex,
+} from './utils/totp';
+import { randomBytes as randomBytesNode } from 'crypto';
 import type { StaffShift, StaffRole, MonthLock } from '../../types';
 import { UserRole, LeaveStatus, LeaveType, EmployeeStatus } from '../../types';
 import type { ClockRecord, LeaveRequest, Employee, ScheduleEvent, SalaryDetail, TodayAttendanceComparison, PendingItem, SystemConfig, ClockMakeupRequest, Notification, NotificationType } from '../../types';
@@ -350,11 +359,97 @@ export const handler: Handler = async (event) => {
                 await db.collection('employees').doc(data.empId).update({ password: hashPassword(data.password) });
             }
 
-            // 產生 custom token（UID = empId）
-            const customToken = await adminAuth.createCustomToken(data.empId);
+            // Phase 9.2：檢查 TOTP 啟用狀態
+            const totpSnap = await db.collection('totpSecrets').doc(emp.id).get();
+            const totpEnabled = totpSnap.exists && totpSnap.data()!.enabled === true;
+
+            if (totpEnabled) {
+                // 產生 challenge token（5 分鐘 TTL，僅一次性使用）
+                const totpToken = randomBytesNode(32).toString('hex');
+                const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+                await db.collection('totpChallenges').doc(totpToken).set({
+                    empId: emp.id,
+                    expiresAt,
+                    createdAt: new Date().toISOString(),
+                });
+                return ok({ kind: 'requireTotp', totpToken, expiresAt });
+            }
+
+            // 無 TOTP → 直接核發 customToken
+            const customToken = await adminAuth.createCustomToken(emp.id);
             return ok({
+                kind: 'success',
                 user: { id: emp.id, name: emp.name, role: emp.role, position: emp.position },
-                customToken
+                customToken,
+            });
+        } catch (e: any) {
+            return fail(500, e.message);
+        }
+    }
+
+    if (action === 'verify-totp-login') {
+        // Phase 9.2 stage 2：消費 challenge token + 驗證 TOTP 或 recovery code
+        try {
+            const totpToken = data.totpToken as string;
+            const code = (data.code as string || '').trim();
+            const useRecovery = data.useRecovery === true;
+            if (!totpToken || !code) return fail(400, 'totpToken 與 code 為必填');
+
+            const chRef = db.collection('totpChallenges').doc(totpToken);
+            const chSnap = await chRef.get();
+            if (!chSnap.exists) return fail(401, '驗證階段已過期，請重新登入');
+            const ch = chSnap.data()!;
+            // consume challenge（用後立即刪除，防 replay）
+            await chRef.delete();
+            if (new Date(ch.expiresAt).getTime() < Date.now()) {
+                return fail(401, '驗證階段已過期，請重新登入');
+            }
+
+            const empId = ch.empId as string;
+            // 防暴力破解：用 stage-2 失敗也計入鎖定
+            const lockout2 = await checkLoginLockout(empId);
+            if (lockout2.locked) return ok({ error: lockout2.message });
+
+            const totpSnap = await db.collection('totpSecrets').doc(empId).get();
+            if (!totpSnap.exists) return fail(401, '帳號未啟用 2FA');
+            const totpData = totpSnap.data()!;
+
+            let pass = false;
+            if (useRecovery) {
+                const idx = findRecoveryCodeIndex(code, totpData.recoveryCodes || []);
+                if (idx >= 0) {
+                    const remaining = [...totpData.recoveryCodes];
+                    remaining.splice(idx, 1);
+                    await totpSnap.ref.update({
+                        recoveryCodes: remaining,
+                        lastVerifiedAt: new Date().toISOString(),
+                    });
+                    pass = true;
+                }
+            } else {
+                if (verifyTotp(totpData.secret, code)) {
+                    await totpSnap.ref.update({ lastVerifiedAt: new Date().toISOString() });
+                    pass = true;
+                }
+            }
+
+            if (!pass) {
+                await recordLoginFail(empId);
+                return ok(null);
+            }
+            await clearLoginFails(empId);
+
+            const empSnap = await db.collection('employees').doc(empId).get();
+            if (!empSnap.exists) return fail(404, '員工不存在');
+            const emp = empSnap.data()!;
+            const customToken = await adminAuth.createCustomToken(empId);
+            return ok({
+                kind: 'success',
+                user: { id: emp.id, name: emp.name, role: emp.role, position: emp.position },
+                customToken,
+                recoveryCodesRemaining: useRecovery
+                    ? Math.max(0, (totpData.recoveryCodes?.length || 0) - 1)
+                    : (totpData.recoveryCodes?.length || 0),
             });
         } catch (e: any) {
             return fail(500, e.message);
@@ -1077,6 +1172,99 @@ export const handler: Handler = async (event) => {
                 const list = snap.docs.map(d => d.data() as MonthLock);
                 list.sort((a, b) => b.yearMonth.localeCompare(a.yearMonth));
                 return ok(list);
+            }
+
+            // ==================== TOTP 2FA（Phase 9.2）====================
+            // 個資紅線：secret / recoveryCodes 明文絕對不寫 console / Sentry / auditLog
+            // SuperAdmin 不可 disable 自己（強制啟用，D9-1 a）
+
+            case 'get-totp-status': {
+                const snap = await db.collection('totpSecrets').doc(uid).get();
+                if (!snap.exists) return ok({ enabled: false, recoveryCodesRemaining: 0 });
+                const d = snap.data()!;
+                return ok({
+                    enabled: d.enabled === true,
+                    enabledAt: d.enabledAt,
+                    recoveryCodesRemaining: (d.recoveryCodes || []).length,
+                });
+            }
+
+            case 'setup-totp': {
+                // 已啟用不可再 setup（避免覆蓋現有 secret 損毀現存綁定）
+                const existing = await db.collection('totpSecrets').doc(uid).get();
+                if (existing.exists && existing.data()!.enabled === true) {
+                    return fail(400, '已啟用 2FA，若要更換金鑰請先停用');
+                }
+                const secret = totpGenerateSecret();
+                await db.collection('totpSecrets').doc(uid).set({
+                    secret,
+                    enabled: false,
+                    recoveryCodes: [],
+                    setupAt: new Date().toISOString(),
+                });
+                const empSnap = await db.collection('employees').doc(uid).get();
+                const labelId = empSnap.exists ? empSnap.data()!.id : uid;
+                const otpauthUrl = buildOtpAuthUrl(labelId, secret);
+                // 注意：otpauthUrl 含 secret，**只** return 給前端用於 QR；
+                // auditLog 只記動作名，**不**寫 URL
+                await writeAuditLog(uid, '啟動 2FA 設定流程', uid, '');
+                return ok({ secret, otpauthUrl });
+            }
+
+            case 'verify-totp-setup': {
+                // setup 階段：驗證一次 TOTP，通過後產 recovery codes 並啟用
+                const code = ((data.code as string) || '').trim();
+                if (!/^\d{6}$/.test(code)) return fail(400, '驗證碼格式錯誤');
+                const ref = db.collection('totpSecrets').doc(uid);
+                const snap = await ref.get();
+                if (!snap.exists) return fail(400, '尚未啟動 2FA 設定');
+                const d = snap.data()!;
+                if (d.enabled === true) return fail(400, '已啟用 2FA');
+                if (!verifyTotp(d.secret, code)) return fail(401, '驗證碼錯誤');
+                // 產 10 組 recovery codes 並雜湊存
+                const plainCodes = generateRecoveryCodes(10);
+                const hashedCodes = plainCodes.map(hashRecoveryCode);
+                const now = new Date().toISOString();
+                await ref.update({
+                    enabled: true,
+                    enabledAt: now,
+                    recoveryCodes: hashedCodes,
+                    lastVerifiedAt: now,
+                });
+                await writeAuditLog(uid, '啟用 2FA', uid, '');
+                // 只回明文一次，前端顯示完即丟
+                return ok({ recoveryCodes: plainCodes });
+            }
+
+            case 'disable-totp': {
+                // D9-1：SuperAdmin 強制啟用，**不可關**
+                if (isSuperAdmin) return fail(403, '最高管理者帳號不可停用 2FA');
+                const code = ((data.code as string) || '').trim();
+                if (!code) return fail(400, '請輸入當前 6 位數驗證碼');
+                const ref = db.collection('totpSecrets').doc(uid);
+                const snap = await ref.get();
+                if (!snap.exists || snap.data()!.enabled !== true) return fail(400, '尚未啟用 2FA');
+                if (!verifyTotp(snap.data()!.secret, code)) return fail(401, '驗證碼錯誤');
+                await ref.delete();
+                await writeAuditLog(uid, '停用 2FA', uid, '');
+                return ok(true);
+            }
+
+            case 'regenerate-recovery-codes': {
+                const code = ((data.code as string) || '').trim();
+                if (!code) return fail(400, '請輸入當前 6 位數驗證碼');
+                const ref = db.collection('totpSecrets').doc(uid);
+                const snap = await ref.get();
+                if (!snap.exists || snap.data()!.enabled !== true) return fail(400, '尚未啟用 2FA');
+                if (!verifyTotp(snap.data()!.secret, code)) return fail(401, '驗證碼錯誤');
+                const plainCodes = generateRecoveryCodes(10);
+                const hashedCodes = plainCodes.map(hashRecoveryCode);
+                await ref.update({
+                    recoveryCodes: hashedCodes,
+                    lastVerifiedAt: new Date().toISOString(),
+                });
+                await writeAuditLog(uid, '重新產生 2FA 備援碼', uid, '');
+                return ok({ recoveryCodes: plainCodes });
             }
 
             // ==================== 打卡紀錄編輯（Phase 3.2）====================

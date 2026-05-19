@@ -265,6 +265,34 @@ export interface SalaryDetail {
     netSalary: number;
 }
 
+// TOTP 雙因素認證（Phase 9.2）
+
+export interface TotpSecretDoc {
+    secret: string;                 // base32 secret（純後端，前端永遠看不到）
+    enabled: boolean;
+    enabledAt?: string;
+    recoveryCodes: string[];        // 10 個 scrypt hash（用過即移除）
+    lastVerifiedAt?: string;
+    setupAt?: string;
+}
+
+export interface TotpLoginChallenge {
+    empId: string;
+    expiresAt: string;              // 5 分鐘 TTL
+    createdAt: string;
+}
+
+export type LoginResult =
+    | { kind: 'success'; user: User; customToken: string }
+    | { kind: 'requireTotp'; totpToken: string; expiresAt: string }
+    | { kind: 'fail'; message?: string };
+
+export interface TotpStatus {
+    enabled: boolean;
+    enabledAt?: string;
+    recoveryCodesRemaining: number;
+}
+
 // 月結鎖定（Phase 6.3）
 export interface MonthLock {
     yearMonth: string;          // "YYYY-MM"（同時也是文件 ID）
