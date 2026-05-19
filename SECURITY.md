@@ -91,6 +91,16 @@
 
 詳見 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) 與 [`.github/dependabot.yml`](.github/dependabot.yml)。
 
+## 已知供應鏈風險追蹤
+
+2026-05-19 執行 `npm audit --omit=dev`，目前回報 8 個 low severity vulnerabilities，來源集中於 `firebase-admin` 依賴的 Google Cloud 套件鏈（`@tootallnate/once` / `http-proxy-agent` / `teeny-request` / `retry-request` / `google-gax` / `@google-cloud/firestore` / `@google-cloud/storage`）。
+
+目前判斷：
+
+- 無 high / critical CVE，不觸發 CI 阻擋條件
+- `npm audit fix --force` 會降到 `firebase-admin@10.3.0`，屬破壞性變更，暫不採用
+- 持續由 Dependabot 與後續手動 audit 追蹤，待上游 patch / minor 版本釋出後再升級
+
 ## 法律聲明
 
 - 我們**不提供**漏洞獎金（無 Bug Bounty 預算）
