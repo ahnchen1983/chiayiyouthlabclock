@@ -3,7 +3,8 @@ import { db, adminAuth } from './utils/firebaseAdmin';
 import {
     hashPassword, verifyPassword, validatePasswordStrength,
     DEFAULT_SYSTEM_CONFIG, determineClockStatus,
-    computeAnnualLeaveDays, calculateSalaryForEmployee,
+    computeAnnualLeaveDays, computeLeaveBalanceWithCarryover,
+    calculateSalaryForEmployee,
     normalizeScheduleDoc, getEmployeeShiftsForDay, isEmployeeScheduledForDay,
     computeCoverageGaps,
 } from './utils/calculations';
@@ -123,37 +124,73 @@ const getLeaveBalanceForEmployee = async (empId: string): Promise<any[]> => {
     const empSnap = await db.collection('employees').doc(empId).get();
     if (!empSnap.exists) return [];
     const emp = empSnap.data()!;
-    const year = new Date().getFullYear();
+    const asOf = new Date();
+    const year = asOf.getFullYear();
     // Phase 8.2：將員工留停期間傳入年資計算
     const loaPeriods = emp.leaveOfAbsenceStart
         ? [{ start: emp.leaveOfAbsenceStart, end: emp.leaveOfAbsenceEnd }]
         : [];
-    const annualDays = computeAnnualLeaveDays(emp.hireDate, new Date(), loaPeriods);
 
-    // 本年度已核准假
+    // 讀全部已核准假；同時做兩件事：
+    //   1) 本年度其他假別 → usedByTypeThisYear（保留原行為）
+    //   2) 特休 → 按年份聚合給 computeLeaveBalanceWithCarryover 用
     const lrSnap = await db.collection('leaveRequests').where('empId', '==', empId).get();
-    const usedByType = new Map<string, number>();
+    const usedByTypeThisYear = new Map<string, number>();
+    const annualLeaveUsageByYear: Record<number, number> = {};
     lrSnap.docs.forEach(d => {
         const lr = d.data();
         if (lr.status !== LeaveStatus.Approved) return;
-        if (!lr.startDate || !lr.startDate.startsWith(String(year))) return;
-        usedByType.set(lr.leaveType, (usedByType.get(lr.leaveType) || 0) + (lr.hours || 0));
+        if (!lr.startDate) return;
+        const lrYear = Number(lr.startDate.slice(0, 4));
+        if (Number.isNaN(lrYear)) return;
+        if (lrYear === year) {
+            usedByTypeThisYear.set(lr.leaveType, (usedByTypeThisYear.get(lr.leaveType) || 0) + (lr.hours || 0));
+        }
+        if (lr.leaveType === LeaveType.Annual) {
+            annualLeaveUsageByYear[lrYear] = (annualLeaveUsageByYear[lrYear] || 0) + (lr.hours || 0);
+        }
     });
 
+    // Phase 8.1：特休跨年結轉計算
+    const annualSnap = computeLeaveBalanceWithCarryover(emp.hireDate, asOf, loaPeriods, annualLeaveUsageByYear);
+    const annualQuotaHours = annualSnap.newGrantedHours + annualSnap.carriedFromPreviousYear;
+    const carriedNote = annualSnap.carriedFromPreviousYear > 0
+        ? `；其中 ${annualSnap.carriedFromPreviousYear}h 為去年結轉，於 ${annualSnap.carriedExpiresAt} 失效`
+        : '';
+    const expiredNote = annualSnap.expiredHours > 0
+        ? `；已失效 ${annualSnap.expiredHours}h（超過 1 年保留期）`
+        : '';
+
     const quotas: Record<string, { hours: number; note: string }> = {
-        [LeaveType.Annual]:   { hours: annualDays * 8, note: `依到職日 ${emp.hireDate || '未設定'} 計算 ${annualDays} 天` },
+        [LeaveType.Annual]: {
+            hours: annualQuotaHours,
+            note: `依到職日 ${emp.hireDate || '未設定'} 計算本年 ${annualSnap.newGrantedHours / 8} 天${carriedNote}${expiredNote}`,
+        },
         [LeaveType.Personal]: { hours: 14 * 8, note: '勞基法事假上限 14 天/年（不給薪）' },
         [LeaveType.Sick]:     { hours: 30 * 8, note: '勞基法普通病假上限 30 天/年（半薪）' },
         [LeaveType.Other]:    { hours: 9999, note: '其他假別不設上限' },
     };
 
-    return Object.entries(quotas).map(([type, q]) => ({
-        leaveType: type,
-        quotaHours: q.hours,
-        usedHours: Math.round((usedByType.get(type) || 0) * 10) / 10,
-        remainingHours: Math.round((q.hours - (usedByType.get(type) || 0)) * 10) / 10,
-        note: q.note,
-    }));
+    return Object.entries(quotas).map(([type, q]) => {
+        if (type === LeaveType.Annual) {
+            return {
+                leaveType: type,
+                quotaHours: q.hours,
+                usedHours: annualSnap.usedHours,
+                remainingHours: annualSnap.remainingHours,
+                note: q.note,
+                annualLeaveDetail: annualSnap,
+            };
+        }
+        const used = usedByTypeThisYear.get(type) || 0;
+        return {
+            leaveType: type,
+            quotaHours: q.hours,
+            usedHours: Math.round(used * 10) / 10,
+            remainingHours: Math.round((q.hours - used) * 10) / 10,
+            note: q.note,
+        };
+    });
 };
 
 // ==================== 回應 Helper ====================

@@ -6,7 +6,9 @@
  */
 import { scryptSync, randomBytes, timingSafeEqual } from 'crypto';
 import { LeaveStatus, LeaveType } from '../../../types';
-import type { ClockRecord, LeaveRequest, ScheduleEvent, StaffShift, SalaryDetail, SystemConfig } from '../../../types';
+import type { ClockRecord, LeaveRequest, ScheduleEvent, StaffShift, SalaryDetail, SystemConfig, AnnualLeaveSnapshot } from '../../../types';
+
+export type { AnnualLeaveSnapshot };
 
 // ==================== 密碼 ====================
 
@@ -147,6 +149,76 @@ export const computeAnnualLeaveDays = (
     if (years < 5) return 14;
     if (years < 10) return 15;
     return Math.min(30, 15 + (years - 9));
+};
+
+// ==================== 特休跨年結轉（Phase 8.1 / D4 勞基法 §38 IV）====================
+//
+// AnnualLeaveSnapshot 定義於 types.ts，本檔 re-export 以維持單一匯入點
+
+/**
+ * 計算特休餘額（含跨年結轉，1 年保留期）
+ *
+ * 規則（勞基法 §38 第 4 項）：
+ * - 上年未休完的特休保留 1 年
+ * - 本年請假先扣去年結轉（FIFO），再扣本年新發配額
+ * - 超過 1 年仍未用 → expiredHours
+ *
+ * 內部呼叫 computeAnnualLeaveDays（簽名不動），透傳 leaveOfAbsencePeriods
+ * 以保留 Phase 8.2 留停扣年資的行為。
+ *
+ * @param hireDate 到職日
+ * @param asOf 基準日
+ * @param leaveOfAbsencePeriods 留停期間（8.2 相容）
+ * @param annualLeaveUsageByYear 每年「特休」請假時數 { 2024: 16, 2025: 24 }
+ */
+export const computeLeaveBalanceWithCarryover = (
+    hireDate: string,
+    asOf: Date,
+    leaveOfAbsencePeriods: LeaveOfAbsencePeriod[],
+    annualLeaveUsageByYear: Record<number, number>
+): AnnualLeaveSnapshot => {
+    const year = asOf.getFullYear();
+    const prevYear = year - 1;
+    const prevPrevYear = year - 2;
+
+    const quotaHoursAt = (y: number): number => {
+        // 取「該年 1/1」作為基準計算當年配額。
+        // 注意：1/1 那天的「months 差」剛好等於完整年資；computeAnnualLeaveDays
+        // 內部以 floor(months/12) 算 years，因此與「該整年配額」對齊。
+        const days = computeAnnualLeaveDays(hireDate, new Date(y, 0, 1), leaveOfAbsencePeriods);
+        return days * 8;
+    };
+
+    const newGrantedHours = quotaHoursAt(year);
+    const prevQuota = quotaHoursAt(prevYear);
+    const prevPrevQuota = quotaHoursAt(prevPrevYear);
+
+    const prevUsed = Math.max(0, annualLeaveUsageByYear[prevYear] || 0);
+    const prevPrevUsed = Math.max(0, annualLeaveUsageByYear[prevPrevYear] || 0);
+    const usedHours = Math.max(0, annualLeaveUsageByYear[year] || 0);
+
+    // 上上年的結轉到了上年仍可用：先看「上上年配額 - 上上年用量」
+    const prevPrevCarried = Math.max(0, prevPrevQuota - prevPrevUsed);
+    // 上年的用量 FIFO 先抵掉 上上年結轉
+    const prevPrevConsumedInPrev = Math.min(prevPrevCarried, prevUsed);
+    // 上上年結轉走到本年初仍沒用掉的就 expired
+    const expiredHours = Math.max(0, prevPrevCarried - prevPrevConsumedInPrev);
+
+    // 上年實際從「上年配額」扣的量 = 上年用量超出「上上年結轉」的部分
+    const prevConsumedFromQuota = Math.max(0, prevUsed - prevPrevCarried);
+    const carriedFromPreviousYear = Math.max(0, prevQuota - prevConsumedFromQuota);
+
+    const remainingHours = Math.max(0, newGrantedHours + carriedFromPreviousYear - usedHours);
+
+    return {
+        year,
+        newGrantedHours,
+        carriedFromPreviousYear,
+        usedHours: Math.round(usedHours * 10) / 10,
+        expiredHours: Math.round(expiredHours * 10) / 10,
+        remainingHours: Math.round(remainingHours * 10) / 10,
+        carriedExpiresAt: `${year}-12-31`,
+    };
 };
 
 // ==================== 排班 v2 相容層（Phase 5.1）====================

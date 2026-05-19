@@ -183,12 +183,25 @@ export interface Notification {
 }
 
 // 假別餘額（Phase 4.1）
+// Phase 8.1：特休跨年結轉快照（純資料；行為定義於 calculations.ts）
+export interface AnnualLeaveSnapshot {
+    year: number;
+    newGrantedHours: number;
+    carriedFromPreviousYear: number;
+    usedHours: number;
+    expiredHours: number;
+    remainingHours: number;
+    carriedExpiresAt: string;       // YYYY-12-31
+}
+
 export interface LeaveBalance {
     leaveType: LeaveType;
     quotaHours: number;       // 年度配額（小時）
     usedHours: number;        // 已使用（小時）
     remainingHours: number;   // 剩餘（小時）
     note?: string;            // 計算說明
+    // Phase 8.1：特休專屬，含結轉資訊（僅在 leaveType === Annual 時提供）
+    annualLeaveDetail?: AnnualLeaveSnapshot;
 }
 
 // 員工自選班表（Phase 4.2）

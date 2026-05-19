@@ -55,6 +55,17 @@ const MyLeaveBalance: React.FC = () => {
                             {b.note && (
                                 <p className="text-xs text-gray-400 mt-2">{b.note}</p>
                             )}
+                            {/* Phase 8.1：特休卡顯示結轉與失效資訊 */}
+                            {b.annualLeaveDetail && b.annualLeaveDetail.carriedFromPreviousYear > 0 && (
+                                <p className="text-xs text-blue-600 mt-1">
+                                    其中 {b.annualLeaveDetail.carriedFromPreviousYear}h 為去年結轉，於 {b.annualLeaveDetail.carriedExpiresAt} 失效
+                                </p>
+                            )}
+                            {b.annualLeaveDetail && b.annualLeaveDetail.expiredHours > 0 && (
+                                <p className="text-xs text-red-600 mt-1 font-medium">
+                                    已失效 {b.annualLeaveDetail.expiredHours}h（超過 1 年保留期）
+                                </p>
+                            )}
                         </div>
                     );
                 })}

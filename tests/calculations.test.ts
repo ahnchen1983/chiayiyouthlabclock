@@ -12,6 +12,7 @@ import {
     shiftHours,
     computeCoverageSlots,
     computeCoverageGaps,
+    computeLeaveBalanceWithCarryover,
     DEFAULT_SYSTEM_CONFIG,
 } from '../netlify/functions/utils/calculations';
 import { LeaveStatus, LeaveType } from '../types';
@@ -515,5 +516,100 @@ describe('computeCoverageSlots / computeCoverageGaps', () => {
         slots.forEach(s => {
             expect(s.covered).toBeLessThanOrEqual(1);
         });
+    });
+});
+
+// =============================================================
+// 特休跨年結轉（Phase 8.1 / D4）
+// =============================================================
+
+describe('computeLeaveBalanceWithCarryover — 特休跨年結轉', () => {
+    it('案例 1：第一次發特休的年份（上年無配額）→ carried = 0', () => {
+        // 到職 2024-07-01 → 2025-01-01 為 6 個月 → 3 天 = 24h
+        const snap = computeLeaveBalanceWithCarryover(
+            '2024-07-01', new Date('2025-06-01'), [], {},
+        );
+        expect(snap.year).toBe(2025);
+        expect(snap.newGrantedHours).toBe(24);
+        expect(snap.carriedFromPreviousYear).toBe(0);
+        expect(snap.expiredHours).toBe(0);
+        expect(snap.remainingHours).toBe(24);
+        expect(snap.carriedExpiresAt).toBe('2025-12-31');
+    });
+
+    // 註：以下案例 2~5 共用 hire=2022-01-01, asOf=2025-06-01；故
+    //   newGrantedHours (2025) = 36 個月 → years 3 → 14 天 → 112h
+    //   prevQuota   (2024)     = 24 個月 → years 2 → 10 天 →  80h
+    //   prevPrevQuota (2023)  = 12 個月 → years 1 →  7 天 →  56h
+    // 為了讓案例聚焦在「上年 → 本年」單跳結轉，刻意把 2023 全部用掉
+    // 讓 prevPrevCarried = 0，避免雙跳結轉污染期望值。
+
+    it('案例 2：上年特休全用完 → carried = 0', () => {
+        const snap = computeLeaveBalanceWithCarryover(
+            '2022-01-01', new Date('2025-06-01'), [],
+            { 2023: 56, 2024: 80 },
+        );
+        expect(snap.newGrantedHours).toBe(112);
+        expect(snap.carriedFromPreviousYear).toBe(0);
+        expect(snap.expiredHours).toBe(0);
+        expect(snap.remainingHours).toBe(112);
+    });
+
+    it('案例 3：上年完全沒用 → carried = 上年完整配額', () => {
+        const snap = computeLeaveBalanceWithCarryover(
+            '2022-01-01', new Date('2025-06-01'), [],
+            { 2023: 56, 2024: 0 },
+        );
+        expect(snap.carriedFromPreviousYear).toBe(80);
+        expect(snap.remainingHours).toBe(192);   // 112 + 80
+    });
+
+    it('案例 4：上年用一部分 → carried = 上年配額 − 用量', () => {
+        const snap = computeLeaveBalanceWithCarryover(
+            '2022-01-01', new Date('2025-06-01'), [],
+            { 2023: 56, 2024: 24 },
+        );
+        expect(snap.carriedFromPreviousYear).toBe(56);   // 80 - 24
+        expect(snap.remainingHours).toBe(168);            // 112 + 56
+    });
+
+    it('案例 5：本年又用了一些 → FIFO 先扣結轉', () => {
+        const snap = computeLeaveBalanceWithCarryover(
+            '2022-01-01', new Date('2025-06-01'), [],
+            { 2023: 56, 2024: 24, 2025: 32 },
+        );
+        expect(snap.carriedFromPreviousYear).toBe(56);
+        expect(snap.usedHours).toBe(32);
+        expect(snap.remainingHours).toBe(136);            // 112 + 56 - 32
+    });
+
+    it('案例 6：跨 2 年 → 上上年結轉 expired', () => {
+        // 到職 2021-01-01；asOf 2025-06-01
+        //   quotaHoursAt(2023) = 80（年資 2 → 10 天）
+        //   quotaHoursAt(2024) = 112（年資 3 → 14 天）
+        //   quotaHoursAt(2025) = 112（年資 4 → 14 天）
+        // 情境：2023 配額 80h 全沒用 → 2024 用 40h（FIFO 抵掉 2023 結轉 40h）
+        //   2023 結轉殘 40h → 至 2025/1/1 已逾 1 年 → expiredHours = 40
+        //   2024 配額完全沒從自己扣 → 全數結轉 = 112h
+        const snap = computeLeaveBalanceWithCarryover(
+            '2021-01-01', new Date('2025-06-01'), [],
+            { 2023: 0, 2024: 40, 2025: 0 },
+        );
+        expect(snap.expiredHours).toBe(40);
+        expect(snap.carriedFromPreviousYear).toBe(112);
+        expect(snap.newGrantedHours).toBe(112);
+        expect(snap.remainingHours).toBe(224);            // 112 + 112
+    });
+
+    it('案例 7：留停期間扣年資 → 配額減少（8.2 相容）', () => {
+        // 到職 2022-01-01；2023-04-01 ~ 2023-09-30 留停 183 天
+        // 2025-01-01 為 36 個月，扣 6 個月 → 30 個月 = 2 年 → 10 天 = 80h
+        // 若無留停，2025 應為 36 個月 → 3 年 → 14 天 = 112h
+        const snap = computeLeaveBalanceWithCarryover(
+            '2022-01-01', new Date('2025-06-01'),
+            [{ start: '2023-04-01', end: '2023-09-30' }],
+            {},
+        );
+        expect(snap.newGrantedHours).toBe(80);
     });
 });
