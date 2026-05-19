@@ -15,6 +15,10 @@
   - 新增管理者後台「月結報表」頁面：摘要、請假分布、打卡異常、PT 時數狀況、員工工時排名
   - CSV 匯出含鎖定狀態、摘要、請假分布、打卡異常、PT 時數、工時排名
   - 複用既有 `calculateSalaryForEmployee` 與 Phase 6.3 月結鎖定資料
+- **8.5 員工自助申請流程工單**
+  - 新增 `docs/PHASE_8.5_EMPLOYEE_SELF_SERVICE.md`
+  - 明確拆分：特休沿用既有 `leaveRequests`；留停新增 `leaveOfAbsenceRequests`
+  - 規劃員工留停申請、Admin 審核、通知、audit log、月結鎖定防護與測試
 
 ### 測試
 - Vitest 增至 **145 個測試**，新增 `tests/monthlyReport.test.ts`
