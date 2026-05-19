@@ -8,10 +8,13 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --exclude tests/firestore-rules.test.ts",
+    "test:all": "vitest run",
     "test:watch": "vitest",
     "audit:prod": "npm audit --audit-level=high --omit=dev",
-    "audit:report": "npm audit --json > audit-report.json"
+    "audit:report": "npm audit --json > audit-report.json",
+    "firebase:rules:test": "vitest run tests/firestore-rules.test.ts",
+    "firebase:rules:deploy": "npx firebase-tools deploy --only firestore:rules"
   },
   "dependencies": {
     "@sentry/react": "^10.53.1",
@@ -21,6 +24,7 @@
     "react-dom": "^19.2.3"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.1",
     "@netlify/functions": "^5.1.2",
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",

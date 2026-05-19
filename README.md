@@ -77,6 +77,33 @@ Production 部署到 Netlify 時，於 Netlify Dashboard > Site settings > Envir
 
 Firebase 環境變數需在 Netlify Dashboard > Site settings > Environment variables 中設定。
 
+## Firestore Rules 部署（Phase 9.4）
+
+本專案 Firestore rules 採「**client 全 deny**」策略 — 所有資料讀寫必須走後端 API。
+前端任何 `db.collection(...).get()` 都會被 Firebase 拒絕，僅後端 service account
+（Firebase Admin SDK）能繞過 rules 操作資料。
+
+### 本機測試 rules
+
+```bash
+# 需先安裝 Java 11+（macOS：brew install openjdk@17）
+npm run firebase:rules:test
+```
+
+### 部署 rules 到 production
+
+```bash
+npx firebase-tools login     # 第一次需先登入
+npm run firebase:rules:deploy
+
+# 同時部署 indexes
+npx firebase-tools deploy --only firestore:indexes
+```
+
+> ⚠️ **警告：任何前端程式碼直接讀寫 Firestore 都會被 deny。**
+> 所有資料操作必須透過 `services/googleAppsScriptAPI.ts` 的 fetch 呼叫
+> `/.netlify/functions/api`，由後端用 service account 操作 Firestore。
+
 ## 資安回報
 
 如發現本系統有資安漏洞，請依 [SECURITY.md](./SECURITY.md) 所述方式回報至 `ahnchen@yuncidigital.com`，**請勿在 GitHub Issue 公開回報細節**。
