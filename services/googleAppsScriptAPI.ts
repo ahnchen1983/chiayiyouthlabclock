@@ -6,7 +6,7 @@ import {
     Employee, TodayAttendanceComparison, DashboardStats, SalaryDetail,
     SystemConfig, ClockMakeupRequest, Notification,
     LeaveBalance, OpenShift, MonthLock, LoginResult, TotpStatus,
-    MonthlyReportData,
+    MonthlyReportData, LeaveOfAbsenceRequest,
 } from '../types';
 
 // ==================== API 呼叫 Helper ====================
@@ -396,4 +396,29 @@ export const apiDisableTotp = async (code: string): Promise<boolean> => {
 
 export const apiRegenerateRecoveryCodes = async (code: string): Promise<{ recoveryCodes: string[] }> => {
     return callAPI('regenerate-recovery-codes', { code });
+};
+
+// ==================== 員工自助申請 — 留停（Phase 8.5）====================
+
+export const apiSubmitLeaveOfAbsenceRequest = async (
+    payload: { startDate: string; endDate?: string; reason: string; contactInfo?: string },
+): Promise<LeaveOfAbsenceRequest> => {
+    return callAPI('submit-leave-of-absence-request', payload);
+};
+
+export const apiGetMyLeaveOfAbsenceRequests = async (): Promise<LeaveOfAbsenceRequest[]> => {
+    return callAPI('get-my-leave-of-absence-requests');
+};
+
+export const apiGetLeaveOfAbsenceRequests = async (): Promise<LeaveOfAbsenceRequest[]> => {
+    return callAPI('get-leave-of-absence-requests');
+};
+
+export const apiApproveLeaveOfAbsenceRequest = async (
+    requestId: string,
+    status: '核准' | '駁回',
+    approverName: string,
+    rejectReason?: string,
+): Promise<boolean> => {
+    return callAPI('approve-leave-of-absence-request', { requestId, status, approverName, rejectReason });
 };

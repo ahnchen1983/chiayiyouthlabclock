@@ -168,8 +168,26 @@ export interface ClockMakeupRequest {
     rejectReason?: string;
 }
 
+// 留停自助申請（Phase 8.5）— 走獨立 collection leaveOfAbsenceRequests，不混進 leaveRequests
+export type LeaveOfAbsenceRequestStatus = '待審核' | '核准' | '駁回';
+
+export interface LeaveOfAbsenceRequest {
+    id: string;
+    empId: string;
+    name: string;
+    startDate: string;       // YYYY-MM-DD
+    endDate?: string;        // YYYY-MM-DD；空值 = 仍在留停
+    reason: string;
+    contactInfo?: string;    // 留停期間聯絡方式
+    requestDate: string;     // ISO
+    status: LeaveOfAbsenceRequestStatus;
+    approver?: string;
+    approvalDate?: string;
+    rejectReason?: string;
+}
+
 // 通知
-export type NotificationType = 'leave-approved' | 'leave-rejected' | 'makeup-approved' | 'makeup-rejected' | 'schedule-changed' | 'clock-warning' | 'system';
+export type NotificationType = 'leave-approved' | 'leave-rejected' | 'makeup-approved' | 'makeup-rejected' | 'schedule-changed' | 'clock-warning' | 'loa-approved' | 'loa-rejected' | 'loa-submitted' | 'system';
 
 export interface Notification {
     id: string;

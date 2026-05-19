@@ -100,16 +100,40 @@ const LeaveRequestForm: React.FC = () => {
             {Object.values(LeaveType).map(lt => <option key={lt} value={lt}>{lt}</option>)}
           </select>
           {currentBalance && leaveType !== LeaveType.Other && (
-            <p className="mt-1 text-xs text-gray-500">
-              本年度{leaveType}剩餘 <span className="font-semibold text-brand-green-dark">{currentBalance.remainingHours}h</span>
-              （配額 {currentBalance.quotaHours}h，已用 {currentBalance.usedHours}h）
-              {requestedHours > 0 && (
-                <span className={`ml-2 ${requestedHours > currentBalance.remainingHours ? 'text-red-600' : 'text-gray-500'}`}>
-                  本次申請 {requestedHours.toFixed(1)}h
-                </span>
+            <div className="mt-1 text-xs text-gray-500 space-y-0.5">
+              <p>
+                本年度{leaveType}剩餘 <span className="font-semibold text-brand-green-dark">{currentBalance.remainingHours}h</span>
+                （配額 {currentBalance.quotaHours}h，已用 {currentBalance.usedHours}h）
+                {requestedHours > 0 && (
+                  <span className={`ml-2 ${requestedHours > currentBalance.remainingHours ? 'text-red-600' : 'text-gray-500'}`}>
+                    本次申請 {requestedHours.toFixed(1)}h
+                  </span>
+                )}
+              </p>
+              {/* Phase 8.5：特休專屬結轉提示（沿用 Phase 8.1 annualLeaveDetail） */}
+              {leaveType === LeaveType.Annual && currentBalance.annualLeaveDetail && (
+                <>
+                  <p className="text-gray-500">
+                    今年新給 {currentBalance.annualLeaveDetail.newGrantedHours}h
+                    {currentBalance.annualLeaveDetail.carriedFromPreviousYear > 0 && (
+                      <>
+                        ｜去年結轉 <span className="text-blue-600 font-medium">{currentBalance.annualLeaveDetail.carriedFromPreviousYear}h</span>
+                        ，於 {currentBalance.annualLeaveDetail.carriedExpiresAt} 失效
+                      </>
+                    )}
+                  </p>
+                  {currentBalance.annualLeaveDetail.expiredHours > 0 && (
+                    <p className="text-red-600 font-medium">
+                      已失效 {currentBalance.annualLeaveDetail.expiredHours}h（超過 1 年保留期）
+                    </p>
+                  )}
+                </>
               )}
-            </p>
+            </div>
           )}
+          <p className="mt-2 text-xs text-gray-400">
+            ℹ️ 特休、事假、病假皆依剩餘餘額檢查；留停請至「留停申請」頁面提出。
+          </p>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

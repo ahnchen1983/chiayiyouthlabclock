@@ -12,6 +12,7 @@ const MySalary             = lazy(() => import('../components/employee/MySalary'
 const ClockMakeupForm      = lazy(() => import('../components/employee/ClockMakeupForm'));
 const MyLeaveBalance       = lazy(() => import('../components/employee/MyLeaveBalance'));
 const OpenShiftPicker      = lazy(() => import('../components/employee/OpenShiftPicker'));
+const LeaveOfAbsenceRequestForm = lazy(() => import('../components/employee/LeaveOfAbsenceRequestForm'));
 
 // 頭部常駐元件、控制元件、icon — 保留 static import
 import ChangePasswordModal from '../components/ChangePasswordModal';
@@ -36,7 +37,7 @@ const KeyIcon: React.FC<{ className?: string }> = ({ className }) => (
   </svg>
 );
 
-type View = 'clock' | 'schedule' | 'records' | 'leave' | 'fullSchedule' | 'salary' | 'makeup' | 'leaveBalance' | 'openShifts';
+type View = 'clock' | 'schedule' | 'records' | 'leave' | 'fullSchedule' | 'salary' | 'makeup' | 'leaveBalance' | 'openShifts' | 'leaveOfAbsence';
 
 const EmployeeDashboard: React.FC = () => {
   const { user, logout } = useAuth();
@@ -63,6 +64,8 @@ const EmployeeDashboard: React.FC = () => {
         return <MyLeaveBalance />;
       case 'openShifts':
         return <OpenShiftPicker />;
+      case 'leaveOfAbsence':
+        return <LeaveOfAbsenceRequestForm />;
       default:
         return <ClockIn />;
     }
@@ -127,6 +130,7 @@ const EmployeeDashboard: React.FC = () => {
         <NavItem view="openShifts" icon={<CalendarIcon className="w-6 h-6" />} label="認領班次" />
         <NavItem view="records" icon={<ListIcon className="w-6 h-6" />} label="打卡紀錄" />
         <NavItem view="leave" icon={<SendIcon className="w-6 h-6" />} label="請假申請" />
+        <NavItem view="leaveOfAbsence" icon={<SendIcon className="w-6 h-6" />} label="留停申請" />
         <NavItem view="leaveBalance" icon={<ListIcon className="w-6 h-6" />} label="假別餘額" />
         <NavItem view="makeup" icon={<SendIcon className="w-6 h-6" />} label="補打卡" />
         <NavItem view="salary" icon={<DollarIcon className="w-6 h-6" />} label="薪資明細" />

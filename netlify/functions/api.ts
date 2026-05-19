@@ -9,6 +9,7 @@ import {
     computeCoverageGaps,
 } from './utils/calculations';
 import { getMonthKey, isMonthLocked } from './utils/monthLock';
+import { validateLeaveOfAbsenceRequest } from './utils/selfServiceRequests';
 import {
     aggregateClockAnomalies,
     aggregateLeaveDistribution,
@@ -25,7 +26,7 @@ import {
     findRecoveryCodeIndex,
 } from './utils/totp';
 import { randomBytes as randomBytesNode } from 'crypto';
-import type { StaffShift, StaffRole, MonthLock, MonthlyReportData } from '../../types';
+import type { StaffShift, StaffRole, MonthLock, MonthlyReportData, LeaveOfAbsenceRequest } from '../../types';
 import { UserRole, LeaveStatus, LeaveType } from '../../types';
 import type { ClockRecord, LeaveRequest, Employee, ScheduleEvent, SalaryDetail, TodayAttendanceComparison, PendingItem, SystemConfig, ClockMakeupRequest, Notification, NotificationType } from '../../types';
 
@@ -1278,6 +1279,123 @@ export const handler: Handler = async (event) => {
                 const list = snap.docs.map(d => d.data() as MonthLock);
                 list.sort((a, b) => b.yearMonth.localeCompare(a.yearMonth));
                 return ok(list);
+            }
+
+            // ==================== 員工自助申請（Phase 8.5）====================
+            // 留停走獨立 collection leaveOfAbsenceRequests，不混進 leaveRequests
+
+            case 'submit-leave-of-absence-request': {
+                const empSnap = await db.collection('employees').doc(uid).get();
+                if (!empSnap.exists) return fail(404, '員工不存在');
+                const emp = empSnap.data()!;
+
+                const startDate = (data.startDate as string || '').trim();
+                const endDate = (data.endDate as string || '').trim();
+                const reason = (data.reason as string || '').trim();
+                const contactInfo = (data.contactInfo as string || '').trim();
+
+                const validationErr = validateLeaveOfAbsenceRequest(startDate, endDate || undefined, reason);
+                if (validationErr) return fail(400, validationErr);
+
+                // 已在留停中（status=留停 且無 end）→ 擋
+                if (emp.status === '留停' && !emp.leaveOfAbsenceEnd) {
+                    return fail(400, '目前已在留停中，無法再次申請');
+                }
+
+                // 同員工已有待審核申請 → 擋
+                const pendingSnap = await db.collection('leaveOfAbsenceRequests')
+                    .where('empId', '==', uid)
+                    .where('status', '==', '待審核')
+                    .limit(1)
+                    .get();
+                if (!pendingSnap.empty) return fail(400, '您已有待審核的留停申請，請等待 Admin 處理');
+
+                const reqDoc: Omit<LeaveOfAbsenceRequest, 'id'> = {
+                    empId: uid,
+                    name: emp.name,
+                    startDate,
+                    endDate: endDate || undefined,
+                    reason,
+                    contactInfo: contactInfo || undefined,
+                    requestDate: new Date().toISOString(),
+                    status: '待審核',
+                };
+                const refNew = await db.collection('leaveOfAbsenceRequests').add(reqDoc);
+
+                // 通知系統管理員（單一 ADMIN；廣播改進列為 follow-up）
+                await writeNotification('ADMIN', 'loa-submitted', '新的留停申請', `${emp.name} 申請留停 ${startDate}${endDate ? ` ~ ${endDate}` : ' 起'}`);
+                await writeAuditLog(uid, '提交留停申請', refNew.id, `${emp.name} ${startDate}${endDate ? ` ~ ${endDate}` : ''}`);
+                return ok({ id: refNew.id, ...reqDoc });
+            }
+
+            case 'get-my-leave-of-absence-requests': {
+                const snap = await db.collection('leaveOfAbsenceRequests').where('empId', '==', uid).get();
+                const list = snap.docs.map(d => ({ id: d.id, ...d.data() } as LeaveOfAbsenceRequest));
+                list.sort((a, b) => (b.requestDate || '').localeCompare(a.requestDate || ''));
+                return ok(list);
+            }
+
+            case 'get-leave-of-absence-requests': {
+                if (!isAdmin) return fail(403, '僅管理者可查看留停申請');
+                const snap = await db.collection('leaveOfAbsenceRequests').get();
+                const list = snap.docs.map(d => ({ id: d.id, ...d.data() } as LeaveOfAbsenceRequest));
+                // 待審核排前，再依 requestDate desc
+                list.sort((a, b) => {
+                    if (a.status === '待審核' && b.status !== '待審核') return -1;
+                    if (a.status !== '待審核' && b.status === '待審核') return 1;
+                    return (b.requestDate || '').localeCompare(a.requestDate || '');
+                });
+                return ok(list);
+            }
+
+            case 'approve-leave-of-absence-request': {
+                if (!isAdmin) return fail(403, '僅管理者可審核留停申請');
+                const requestId = data.requestId as string;
+                const status = data.status as '核准' | '駁回';
+                const approverName = (data.approverName as string || '').trim();
+                const rejectReason = (data.rejectReason as string || '').trim();
+                if (!requestId) return fail(400, '缺少 requestId');
+                if (status !== '核准' && status !== '駁回') return fail(400, 'status 必須為「核准」或「駁回」');
+
+                const reqRef = db.collection('leaveOfAbsenceRequests').doc(requestId);
+                const reqSnap = await reqRef.get();
+                if (!reqSnap.exists) return fail(404, '留停申請不存在');
+                const req = reqSnap.data() as LeaveOfAbsenceRequest;
+
+                if (req.status !== '待審核') return fail(400, '該申請已被審核過，無法重複處理');
+                if (status === '駁回' && rejectReason.length < 2) return fail(400, '駁回理由至少 2 字');
+
+                // 月結鎖定檢查：對 startDate 做擋（兼顧 retroactive 與已鎖月度）
+                const lockChk = await assertMonthNotLocked(req.startDate);
+                if (lockChk.locked) {
+                    return fail(423, `${getMonthKey(req.startDate)} 月結已鎖定，無法審核該月留停申請`);
+                }
+
+                const nowIso = new Date().toISOString();
+                const updates: Partial<LeaveOfAbsenceRequest> = {
+                    status,
+                    approver: approverName || (await db.collection('employees').doc(uid).get()).data()?.name || uid,
+                    approvalDate: nowIso,
+                };
+                if (status === '駁回') updates.rejectReason = rejectReason;
+                await reqRef.update(updates as any);
+
+                if (status === '核准') {
+                    // 更新 employee 狀態與留停期間
+                    await db.collection('employees').doc(req.empId).update({
+                        status: '留停',
+                        leaveOfAbsenceStart: req.startDate,
+                        leaveOfAbsenceEnd: req.endDate || '',
+                    });
+                    await writeAuditLog(uid, '核准留停', requestId, `${req.name} ${req.startDate}${req.endDate ? ` ~ ${req.endDate}` : ' 起（無結束日）'}`);
+                    await writeNotification(req.empId, 'loa-approved', '留停申請已核准',
+                        `${req.startDate}${req.endDate ? ` ~ ${req.endDate}` : ' 起'} 留停申請已核准，期間特休年資將凍結。`);
+                } else {
+                    await writeAuditLog(uid, '駁回留停', requestId, `${req.name} 理由：${rejectReason}`);
+                    await writeNotification(req.empId, 'loa-rejected', '留停申請已駁回',
+                        `${req.startDate}${req.endDate ? ` ~ ${req.endDate}` : ' 起'} 留停申請被駁回。理由：${rejectReason}`);
+                }
+                return ok(true);
             }
 
             // ==================== TOTP 2FA（Phase 9.2）====================
