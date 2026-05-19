@@ -321,3 +321,44 @@ export interface MonthLock {
     unlockReason?: string;      // 必填，解鎖理由
 }
 
+// 月結報表（Phase 8.4）
+export interface MonthlyReportData {
+    yearMonth: string;
+    lock: MonthLock | null;
+    summary: {
+        totalEmployees: number;
+        totalWorkDays: number;
+        totalWorkHours: number;
+        totalOvertimeHours: number;
+        totalLeaveHours: number;
+        avgWorkHoursPerEmployee: number;
+    };
+    leaveDistribution: {
+        [LeaveType.Annual]: number;
+        [LeaveType.Sick]: number;
+        [LeaveType.Personal]: number;
+        [LeaveType.Other]: number;
+    };
+    clockAnomalies: {
+        lateCount: number;
+        earlyLeaveCount: number;
+        missingClockOutCount: number;
+        manuallyEditedCount: number;
+        makeupCount: number;
+    };
+    partTimeStatus: {
+        empId: string;
+        name: string;
+        monthHours: number;
+        limit: number;
+        usagePercent: number;
+        overLimit: boolean;
+    }[];
+    employeeRanking: {
+        empId: string;
+        name: string;
+        totalHours: number;
+        overtimeHours: number;
+        workDays: number;
+    }[];
+}

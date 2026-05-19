@@ -9,6 +9,12 @@ import {
     computeCoverageGaps,
 } from './utils/calculations';
 import { getMonthKey, isMonthLocked } from './utils/monthLock';
+import {
+    aggregateClockAnomalies,
+    aggregateLeaveDistribution,
+    buildSummary,
+    rankEmployeesByHours,
+} from './utils/monthlyReport';
 import { corsHeaders } from './utils/cors';
 import {
     generateSecret as totpGenerateSecret,
@@ -19,8 +25,8 @@ import {
     findRecoveryCodeIndex,
 } from './utils/totp';
 import { randomBytes as randomBytesNode } from 'crypto';
-import type { StaffShift, StaffRole, MonthLock } from '../../types';
-import { UserRole, LeaveStatus, LeaveType, EmployeeStatus } from '../../types';
+import type { StaffShift, StaffRole, MonthLock, MonthlyReportData } from '../../types';
+import { UserRole, LeaveStatus, LeaveType } from '../../types';
 import type { ClockRecord, LeaveRequest, Employee, ScheduleEvent, SalaryDetail, TodayAttendanceComparison, PendingItem, SystemConfig, ClockMakeupRequest, Notification, NotificationType } from '../../types';
 
 const dayOfWeekMap = ['日', '一', '二', '三', '四', '五', '六'];
@@ -529,7 +535,7 @@ export const handler: Handler = async (event) => {
                     id: 'ADMIN', name: '系統管理員', role: UserRole.SuperAdmin, position: '專責人員',
                     phone: '', email: '', hourlyRate: 0, monthlySalary: 0,
                     hireDate: new Date().toISOString().slice(0, 10),
-                    status: '在職' as EmployeeStatus, password: hashPassword('admin1234'),
+                    status: '在職', password: hashPassword('admin1234'),
                 });
                 await batch.commit();
                 return ok({ message: '已建立 SuperAdmin 帳號，請使用 ADMIN / admin1234 登入' });
@@ -1100,6 +1106,69 @@ export const handler: Handler = async (event) => {
                 const clockRecords = clockSnap.docs.map(d => ({ id: d.id, ...d.data() } as ClockRecord));
                 const leaveRequests = leaveSnap.docs.map(d => ({ id: d.id, ...d.data() } as LeaveRequest));
                 return ok(calculateSalaryForEmployee(empSnap.data()!, data.yearMonth, scheduleEvents, clockRecords, leaveRequests, cfg));
+            }
+
+            case 'get-monthly-report': {
+                if (!isAdmin) return fail(403, '僅管理者可查看月結報表');
+                const yearMonth = data.yearMonth as string;
+                if (!/^\d{4}-\d{2}$/.test(yearMonth || '')) {
+                    return fail(400, 'yearMonth 格式錯誤（需 YYYY-MM）');
+                }
+
+                const [scheduleEvents, empSnap, clockSnap, leaveSnap, cfg, lock] = await Promise.all([
+                    getMonthlyDailySchedule(yearMonth),
+                    db.collection('employees').get(),
+                    db.collection('clockRecords').get(),
+                    db.collection('leaveRequests').get(),
+                    getSystemConfig(),
+                    getMonthLock(yearMonth),
+                ]);
+
+                const allEmployees = empSnap.docs.map(d => d.data() as Employee);
+                const activeEmployees = allEmployees.filter(e => e.status === '在職' || e.status === '留停');
+                const allClockRecords = clockSnap.docs.map(d => ({ id: d.id, ...d.data() } as ClockRecord));
+                const monthClockRecords = allClockRecords.filter(r => r.date?.startsWith(yearMonth));
+                const allLeaveRequests = leaveSnap.docs.map(d => ({ id: d.id, ...d.data() } as LeaveRequest));
+
+                const salaries = activeEmployees.map(emp =>
+                    calculateSalaryForEmployee(emp, yearMonth, scheduleEvents, allClockRecords, allLeaveRequests, cfg)
+                );
+                const summary = buildSummary(salaries);
+                const leaveDistribution = aggregateLeaveDistribution(allLeaveRequests, yearMonth);
+                const clockAnomalies = aggregateClockAnomalies(monthClockRecords);
+
+                const limit = cfg.ptMonthlyHourLimit ?? 80;
+                const partTimeStatus = activeEmployees
+                    .filter(e => e.position === '兼職人員')
+                    .map(pt => {
+                        const monthHours = Math.round(
+                            monthClockRecords
+                                .filter(r => r.empId === pt.id)
+                                .reduce((sum, r) => sum + (r.workHours || 0), 0) * 10
+                        ) / 10;
+                        const usagePercent = limit > 0 ? Math.round((monthHours / limit) * 1000) / 10 : 0;
+                        return {
+                            empId: pt.id,
+                            name: pt.name,
+                            monthHours,
+                            limit,
+                            usagePercent,
+                            overLimit: monthHours > limit,
+                        };
+                    })
+                    .sort((a, b) => b.usagePercent - a.usagePercent);
+
+                const report: MonthlyReportData = {
+                    yearMonth,
+                    lock: lock || null,
+                    summary,
+                    leaveDistribution,
+                    clockAnomalies,
+                    partTimeStatus,
+                    employeeRanking: rankEmployeesByHours(salaries),
+                };
+
+                return ok(report);
             }
 
             // ==================== 稽核日誌 ====================

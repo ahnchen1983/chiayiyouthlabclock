@@ -9,6 +9,7 @@ const ScheduleManager      = lazy(() => import('../components/admin/ScheduleMana
 const AttendanceLog        = lazy(() => import('../components/admin/AttendanceLog'));
 const LeaveApprovalQueue   = lazy(() => import('../components/admin/LeaveApprovalQueue'));
 const EmployeeManager      = lazy(() => import('../components/admin/EmployeeManager'));
+const MonthlyReport        = lazy(() => import('../components/admin/MonthlyReport'));
 const ScheduleComparison   = lazy(() => import('../components/admin/ScheduleComparison'));
 const SalaryCalculation    = lazy(() => import('../components/admin/SalaryCalculation'));
 const AuditLogViewer       = lazy(() => import('../components/admin/AuditLogViewer'));
@@ -53,7 +54,7 @@ const CompareIcon: React.FC<{ className?: string }> = ({ className }) => (
   </svg>
 );
 
-type AdminView = 'overview' | 'schedule' | 'attendance' | 'leave' | 'employees' | 'comparison' | 'salary' | 'auditLog' | 'systemSettings' | 'makeupApproval' | 'openShifts' | 'myClock' | 'myLeave' | 'myRecords' | 'mySalary' | 'myMakeup' | 'myLeaveBalance' | 'myOpenShifts';
+type AdminView = 'overview' | 'schedule' | 'attendance' | 'leave' | 'employees' | 'monthlyReport' | 'comparison' | 'salary' | 'auditLog' | 'systemSettings' | 'makeupApproval' | 'openShifts' | 'myClock' | 'myLeave' | 'myRecords' | 'mySalary' | 'myMakeup' | 'myLeaveBalance' | 'myOpenShifts';
 
 const AdminDashboard: React.FC = () => {
   const { user, logout } = useAuth();
@@ -68,6 +69,7 @@ const AdminDashboard: React.FC = () => {
       case 'attendance': return <AttendanceLog />;
       case 'leave': return <LeaveApprovalQueue />;
       case 'employees': return <EmployeeManager />;
+      case 'monthlyReport': return <MonthlyReport />;
       case 'comparison': return <ScheduleComparison />;
       case 'salary': return <SalaryCalculation />;
       case 'auditLog': return <AuditLogViewer />;
@@ -128,6 +130,7 @@ const AdminDashboard: React.FC = () => {
             <NavItem view="makeupApproval" icon={<CheckSquareIcon className="w-6 h-6" />} label="補打卡審核" />
             <NavItem view="openShifts" icon={<CalendarIcon className="w-6 h-6" />} label="開放排班" />
             <NavItem view="employees" icon={<UsersIcon className="w-6 h-6" />} label="員工管理" />
+            <NavItem view="monthlyReport" icon={<ListIcon className="w-6 h-6" />} label="月結報表" />
             {user?.role === UserRole.SuperAdmin && (
               <>
                 <NavItem view="salary" icon={<DollarIcon className="w-6 h-6" />} label="薪資計算" />

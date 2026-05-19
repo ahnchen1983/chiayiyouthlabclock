@@ -6,6 +6,22 @@
 
 ---
 
+## [Unreleased] - 2026-05-19 — Phase 8 HR 細節補強
+
+### 新增 (Added)
+- **8.4 月結報表（管理員月度統計）**
+  - 新增 `get-monthly-report` API action，Admin+ 可一次讀取月結摘要
+  - 新增 `MonthlyReportData` 型別與 `monthlyReport.ts` 純聚合函數
+  - 新增管理者後台「月結報表」頁面：摘要、請假分布、打卡異常、PT 時數狀況、員工工時排名
+  - CSV 匯出含鎖定狀態、摘要、請假分布、打卡異常、PT 時數、工時排名
+  - 複用既有 `calculateSalaryForEmployee` 與 Phase 6.3 月結鎖定資料
+
+### 測試
+- Vitest 增至 **145 個測試**，新增 `tests/monthlyReport.test.ts`
+- 覆蓋請假分布、打卡異常、員工工時排名、月結摘要與空陣列平均值
+
+---
+
 ## [v2.0] - 2026-04-10 — 排班模型重構（Phase 5 全部完成）
 
 ### 重大變更 (Breaking)

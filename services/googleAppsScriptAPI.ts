@@ -6,6 +6,7 @@ import {
     Employee, TodayAttendanceComparison, DashboardStats, SalaryDetail,
     SystemConfig, ClockMakeupRequest, Notification,
     LeaveBalance, OpenShift, MonthLock, LoginResult, TotpStatus,
+    MonthlyReportData,
 } from '../types';
 
 // ==================== API 呼叫 Helper ====================
@@ -235,6 +236,10 @@ export const apiGetAllSalaryDetails = async (yearMonth: string): Promise<SalaryD
 
 export const apiGetEmployeeSalary = async (empId: string, yearMonth: string): Promise<SalaryDetail | null> => {
     return callAPI('get-employee-salary', { empId, yearMonth });
+};
+
+export const apiGetMonthlyReport = async (yearMonth: string): Promise<MonthlyReportData> => {
+    return callAPI('get-monthly-report', { yearMonth });
 };
 
 // ==================== 稽核日誌 ====================
