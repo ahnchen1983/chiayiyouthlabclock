@@ -7,7 +7,7 @@ import {
     SystemConfig, ClockMakeupRequest, Notification,
     LeaveBalance, OpenShift, MonthLock, LoginResult, TotpStatus,
     MonthlyReportData, LeaveOfAbsenceRequest,
-    ScheduleVersion,
+    ScheduleVersion, ShiftSwapRequest,
 } from '../types';
 
 // ==================== API 呼叫 Helper ====================
@@ -345,6 +345,45 @@ export const apiGetScheduleVersion = async (versionId: string): Promise<Schedule
 
 export const apiRestoreScheduleVersion = async (versionId: string, reason: string): Promise<{ restoredDays: number }> => {
     return callAPI('restore-schedule-version', { versionId, reason });
+};
+
+// ==================== 換班/替班申請（Phase 6.1）====================
+
+export const apiSubmitShiftSwap = async (data: {
+    fromDate: string;
+    fromShiftIndex: number;
+    toEmpId: string;
+    toDate: string;
+    toShiftIndex: number;
+    reason: string;
+}): Promise<ShiftSwapRequest> => {
+    return callAPI('submit-shift-swap', data);
+};
+
+export const apiPeerRespondShiftSwap = async (
+    requestId: string,
+    agree: boolean,
+    rejectReason?: string,
+): Promise<boolean> => {
+    return callAPI('peer-respond-shift-swap', { requestId, agree, rejectReason });
+};
+
+export const apiAdminApproveShiftSwap = async (
+    requestId: string,
+    approve: boolean,
+    rejectReason?: string,
+): Promise<boolean> => {
+    return callAPI('admin-approve-shift-swap', { requestId, approve, rejectReason });
+};
+
+export const apiCancelShiftSwap = async (requestId: string): Promise<boolean> => {
+    return callAPI('cancel-shift-swap', { requestId });
+};
+
+export const apiListShiftSwapRequests = async (
+    mode: 'mine' | 'admin-pending' | 'admin-all' = 'mine',
+): Promise<ShiftSwapRequest[]> => {
+    return callAPI('list-shift-swap-requests', { mode });
 };
 
 // ==================== 假別餘額（Phase 4.1）====================

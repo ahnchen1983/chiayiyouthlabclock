@@ -186,8 +186,38 @@ export interface LeaveOfAbsenceRequest {
     rejectReason?: string;
 }
 
+// 換班/替班申請（Phase 6.1）
+export type ShiftSwapStatus =
+    | 'awaiting-peer'
+    | 'awaiting-admin'
+    | 'approved'
+    | 'rejected-by-peer'
+    | 'rejected-by-admin'
+    | 'cancelled';
+
+export interface ShiftSwapRequest {
+    id: string;
+    fromEmpId: string;
+    fromName: string;
+    fromDate: string;
+    fromShiftIndex: number;
+    toEmpId: string;
+    toName: string;
+    toDate: string;
+    toShiftIndex: number;
+    reason: string;
+    status: ShiftSwapStatus;
+    createdAt: string;
+    peerResponseAt?: string;
+    peerRejectReason?: string;
+    adminResponseBy?: string;
+    adminResponseByName?: string;
+    adminResponseAt?: string;
+    adminRejectReason?: string;
+}
+
 // 通知
-export type NotificationType = 'leave-approved' | 'leave-rejected' | 'makeup-approved' | 'makeup-rejected' | 'schedule-changed' | 'clock-warning' | 'loa-approved' | 'loa-rejected' | 'loa-submitted' | 'system';
+export type NotificationType = 'leave-approved' | 'leave-rejected' | 'makeup-approved' | 'makeup-rejected' | 'schedule-changed' | 'clock-warning' | 'loa-approved' | 'loa-rejected' | 'loa-submitted' | 'shift-swap-requested' | 'shift-swap-peer-agreed' | 'shift-swap-peer-rejected' | 'shift-swap-approved' | 'shift-swap-rejected' | 'system';
 
 export interface Notification {
     id: string;

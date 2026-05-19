@@ -9,6 +9,13 @@
 ## [Unreleased] - 2026-05-20 — Phase 6 / Phase 8 補強
 
 ### 新增 (Added)
+- **6.1 換班 / 替班申請**
+  - 新增 `shiftSwapRequests` collection 資料契約與 `ShiftSwapRequest` 型別
+  - 新增 `shiftSwap.ts` 純函數：換班申請驗證與班次交換
+  - 新增 5 個 API actions：提交、對方確認、Admin 審核、取消、列表
+  - 員工後台新增「換班」頁，可發起申請、同意/拒絕待確認、取消自己發起的申請
+  - 管理者後台新增「換班審核」頁，Admin+ 可核准或駁回
+  - 狀態轉換寫入通知與 audit log，核准前再次檢查月結鎖定
 - **6.2 排班版本歷史（snapshot + 回溯）**
   - 新增 `scheduleVersions` collection 資料契約與 `ScheduleVersion` 型別
   - 新增 `scheduleVersion.ts` 純函數：建立月排班 snapshot、比對版本差異
@@ -29,7 +36,8 @@
   - 審核支援通知、audit log、重複審核防護與月結鎖定 423 防護
 
 ### 測試
-- Vitest 增至 **161 個測試**
+- Vitest 增至 **169 個測試**
+- 新增 `tests/shiftSwap.test.ts`：換班申請驗證與交換執行
 - 新增 `tests/monthlyReport.test.ts`：請假分布、打卡異常、員工工時排名、月結摘要與空陣列平均值
 - 新增 `tests/selfServiceRequests.test.ts`：留停申請日期與狀態驗證
 - 新增 `tests/scheduleVersion.test.ts`：排班版本 snapshot 與 diff

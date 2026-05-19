@@ -10,6 +10,7 @@ import {
 } from './utils/calculations';
 import { getMonthKey, isMonthLocked } from './utils/monthLock';
 import { validateLeaveOfAbsenceRequest } from './utils/selfServiceRequests';
+import { executeSwap, validateSwapRequest } from './utils/shiftSwap';
 import {
     aggregateClockAnomalies,
     aggregateLeaveDistribution,
@@ -27,7 +28,7 @@ import {
     findRecoveryCodeIndex,
 } from './utils/totp';
 import { randomBytes as randomBytesNode } from 'crypto';
-import type { StaffShift, StaffRole, MonthLock, MonthlyReportData, LeaveOfAbsenceRequest, ScheduleVersion } from '../../types';
+import type { StaffShift, StaffRole, MonthLock, MonthlyReportData, LeaveOfAbsenceRequest, ScheduleVersion, ShiftSwapRequest } from '../../types';
 import { UserRole, LeaveStatus, LeaveType } from '../../types';
 import type { ClockRecord, LeaveRequest, Employee, ScheduleEvent, SalaryDetail, TodayAttendanceComparison, PendingItem, SystemConfig, ClockMakeupRequest, Notification, NotificationType } from '../../types';
 
@@ -369,6 +370,23 @@ const getMonthlyScheduleMap = async (yearMonth: string): Promise<Map<string, any
     const map = new Map<string, any>();
     events.forEach(e => map.set(e.date, e));
     return map;
+};
+
+const getSwapScheduleContext = async (fromDate: string, toDate: string): Promise<{
+    schedule: Record<string, ScheduleEvent>;
+    locks: Record<string, MonthLock | null>;
+}> => {
+    const fromDay = await getDaySchedule(fromDate);
+    const toDay = fromDate === toDate ? fromDay : await getDaySchedule(toDate);
+    const fromMonth = getMonthKey(fromDate);
+    const toMonth = getMonthKey(toDate);
+    const locks: Record<string, MonthLock | null> = {};
+    if (fromMonth) locks[fromMonth] = await getMonthLock(fromMonth);
+    if (toMonth && toMonth !== fromMonth) locks[toMonth] = await getMonthLock(toMonth);
+    return {
+        schedule: { [fromDate]: fromDay, [toDate]: toDay },
+        locks,
+    };
 };
 
 // ==================== Handler 主體 ====================
@@ -1383,6 +1401,186 @@ export const handler: Handler = async (event) => {
                     `理由：${reason}（共 ${entries.length} 日）`,
                 );
                 return ok({ restoredDays: entries.length });
+            }
+
+            // ==================== 換班/替班申請（Phase 6.1）====================
+
+            case 'submit-shift-swap': {
+                const fromDate = data.fromDate as string;
+                const toDate = data.toDate as string;
+                const fromShiftIndex = Number(data.fromShiftIndex);
+                const toShiftIndex = Number(data.toShiftIndex);
+                const toEmpId = data.toEmpId as string;
+                const reason = ((data.reason as string) || '').trim();
+                if (!fromDate || !toDate || !toEmpId || Number.isNaN(fromShiftIndex) || Number.isNaN(toShiftIndex)) {
+                    return fail(400, '欄位不完整');
+                }
+                if (uid === toEmpId) return fail(400, '不能與自己換班');
+
+                const [fromLock, toLock, fromEmpSnap, toEmpSnap] = await Promise.all([
+                    assertMonthNotLocked(fromDate),
+                    assertMonthNotLocked(toDate),
+                    db.collection('employees').doc(uid).get(),
+                    db.collection('employees').doc(toEmpId).get(),
+                ]);
+                if (fromLock.locked) return fail(423, `${getMonthKey(fromDate)} 月結已鎖定，無法換班`);
+                if (toLock.locked) return fail(423, `${getMonthKey(toDate)} 月結已鎖定，無法換班`);
+                if (!fromEmpSnap.exists || !toEmpSnap.exists) return fail(404, '員工不存在');
+                const fromName = fromEmpSnap.data()!.name;
+                const toName = toEmpSnap.data()!.name;
+                const ctx = await getSwapScheduleContext(fromDate, toDate);
+                const validation = validateSwapRequest({
+                    fromEmpId: uid,
+                    fromDate,
+                    fromShiftIndex,
+                    toEmpId,
+                    toDate,
+                    toShiftIndex,
+                    reason,
+                }, ctx.schedule, ctx.locks);
+                if (!validation.valid) return fail(400, validation.error || '換班申請不合法');
+
+                const docRef = db.collection('shiftSwapRequests').doc();
+                const request: ShiftSwapRequest = {
+                    id: docRef.id,
+                    fromEmpId: uid,
+                    fromName,
+                    fromDate,
+                    fromShiftIndex,
+                    toEmpId,
+                    toName,
+                    toDate,
+                    toShiftIndex,
+                    reason,
+                    status: 'awaiting-peer',
+                    createdAt: new Date().toISOString(),
+                };
+                await docRef.set(request);
+                await writeNotification(toEmpId, 'shift-swap-requested', '新的換班確認', `${fromName} 想與你交換 ${fromDate} 與 ${toDate} 的班次`);
+                await writeAuditLog(uid, '提交換班申請', docRef.id, `${fromName} ${fromDate}[${fromShiftIndex}] ⇄ ${toName} ${toDate}[${toShiftIndex}]`);
+                return ok(request);
+            }
+
+            case 'peer-respond-shift-swap': {
+                const requestId = data.requestId as string;
+                const agree = data.agree === true;
+                const rejectReason = ((data.rejectReason as string) || '').trim();
+                if (!requestId) return fail(400, '缺少 requestId');
+                const ref = db.collection('shiftSwapRequests').doc(requestId);
+                const snap = await ref.get();
+                if (!snap.exists) return fail(404, '換班申請不存在');
+                const req = snap.data() as ShiftSwapRequest;
+                if (req.toEmpId !== uid) return fail(403, '僅對方可回覆此申請');
+                if (req.status !== 'awaiting-peer') return fail(400, '該申請目前不可回覆');
+
+                const now = new Date().toISOString();
+                if (agree) {
+                    const fromLock = await assertMonthNotLocked(req.fromDate);
+                    const toLock = await assertMonthNotLocked(req.toDate);
+                    if (fromLock.locked) return fail(423, `${getMonthKey(req.fromDate)} 月結已鎖定，無法換班`);
+                    if (toLock.locked) return fail(423, `${getMonthKey(req.toDate)} 月結已鎖定，無法換班`);
+                    await ref.update({ status: 'awaiting-admin', peerResponseAt: now });
+                    await writeNotification('ADMIN', 'shift-swap-peer-agreed', '換班待核可', `${req.toName} 已同意 ${req.fromName} 的換班申請`);
+                    await writeAuditLog(uid, '同意換班申請', requestId, `${req.fromName} ⇄ ${req.toName}`);
+                    return ok(true);
+                }
+
+                if (rejectReason.length < 2) return fail(400, '拒絕理由至少 2 字');
+                await ref.update({ status: 'rejected-by-peer', peerResponseAt: now, peerRejectReason: rejectReason });
+                await writeNotification(req.fromEmpId, 'shift-swap-peer-rejected', '換班申請被拒絕', `${req.toName} 已拒絕換班申請：${rejectReason}`);
+                await writeAuditLog(uid, '拒絕換班申請', requestId, `理由：${rejectReason}`);
+                return ok(true);
+            }
+
+            case 'admin-approve-shift-swap': {
+                if (!isAdmin) return fail(403, '僅管理者可審核換班');
+                const requestId = data.requestId as string;
+                const approve = data.approve === true;
+                const rejectReason = ((data.rejectReason as string) || '').trim();
+                if (!requestId) return fail(400, '缺少 requestId');
+                const ref = db.collection('shiftSwapRequests').doc(requestId);
+                const snap = await ref.get();
+                if (!snap.exists) return fail(404, '換班申請不存在');
+                const req = snap.data() as ShiftSwapRequest;
+                if (req.status !== 'awaiting-admin') return fail(400, '該申請目前不可審核');
+                const meSnap = await db.collection('employees').doc(uid).get();
+                const adminName = meSnap.exists ? meSnap.data()!.name : (data.approverName as string || uid);
+                const now = new Date().toISOString();
+
+                if (!approve) {
+                    if (rejectReason.length < 2) return fail(400, '駁回理由至少 2 字');
+                    await ref.update({
+                        status: 'rejected-by-admin',
+                        adminResponseBy: uid,
+                        adminResponseByName: adminName,
+                        adminResponseAt: now,
+                        adminRejectReason: rejectReason,
+                    });
+                    await Promise.all([
+                        writeNotification(req.fromEmpId, 'shift-swap-rejected', '換班申請未核可', `管理員駁回換班申請：${rejectReason}`),
+                        writeNotification(req.toEmpId, 'shift-swap-rejected', '換班申請未核可', `管理員駁回換班申請：${rejectReason}`),
+                        writeAuditLog(uid, '駁回換班申請', requestId, `理由：${rejectReason}`),
+                    ]);
+                    return ok(true);
+                }
+
+                const fromLock = await assertMonthNotLocked(req.fromDate);
+                const toLock = await assertMonthNotLocked(req.toDate);
+                if (fromLock.locked) return fail(423, `${getMonthKey(req.fromDate)} 月結已鎖定，無法換班`);
+                if (toLock.locked) return fail(423, `${getMonthKey(req.toDate)} 月結已鎖定，無法換班`);
+                const ctx = await getSwapScheduleContext(req.fromDate, req.toDate);
+                const validation = validateSwapRequest(req, ctx.schedule, ctx.locks);
+                if (!validation.valid) return fail(400, validation.error || '換班申請已不符合目前班表');
+                const swapped = executeSwap(ctx.schedule, req);
+                const batch = db.batch();
+                const writeDay = (event: ScheduleEvent) => {
+                    const { date: dateStr, dayOfWeek: _dw, ...scheduleData } = event;
+                    batch.set(db.collection('dailySchedule').doc(dateStr), scheduleData);
+                };
+                writeDay(swapped.fromDay);
+                if (req.toDate !== req.fromDate) writeDay(swapped.toDay);
+                batch.update(ref, {
+                    status: 'approved',
+                    adminResponseBy: uid,
+                    adminResponseByName: adminName,
+                    adminResponseAt: now,
+                });
+                await batch.commit();
+                await Promise.all([
+                    writeNotification(req.fromEmpId, 'shift-swap-approved', '換班申請已核准', `${req.fromDate} 與 ${req.toDate} 的換班已生效`),
+                    writeNotification(req.toEmpId, 'shift-swap-approved', '換班申請已核准', `${req.fromDate} 與 ${req.toDate} 的換班已生效`),
+                    writeAuditLog(uid, '核准換班申請', requestId, `${req.fromName} ${req.fromDate}[${req.fromShiftIndex}] ⇄ ${req.toName} ${req.toDate}[${req.toShiftIndex}]`),
+                ]);
+                return ok(true);
+            }
+
+            case 'cancel-shift-swap': {
+                const requestId = data.requestId as string;
+                if (!requestId) return fail(400, '缺少 requestId');
+                const ref = db.collection('shiftSwapRequests').doc(requestId);
+                const snap = await ref.get();
+                if (!snap.exists) return fail(404, '換班申請不存在');
+                const req = snap.data() as ShiftSwapRequest;
+                if (req.fromEmpId !== uid) return fail(403, '僅發起人可取消申請');
+                if (req.status !== 'awaiting-peer' && req.status !== 'awaiting-admin') return fail(400, '該申請目前不可取消');
+                await ref.update({ status: 'cancelled' });
+                await writeNotification(req.toEmpId, 'shift-swap-rejected', '換班申請已取消', `${req.fromName} 已取消換班申請`);
+                await writeAuditLog(uid, '取消換班申請', requestId, `${req.fromName} 取消換班`);
+                return ok(true);
+            }
+
+            case 'list-shift-swap-requests': {
+                const mode = (data.mode as string) || 'mine';
+                const snap = await db.collection('shiftSwapRequests').get();
+                let list = snap.docs.map(d => ({ id: d.id, ...d.data() } as ShiftSwapRequest));
+                if (mode === 'admin-pending' || mode === 'admin-all') {
+                    if (!isAdmin) return fail(403, '僅管理者可查看換班審核');
+                    if (mode === 'admin-pending') list = list.filter(r => r.status === 'awaiting-admin');
+                } else {
+                    list = list.filter(r => r.fromEmpId === uid || r.toEmpId === uid);
+                }
+                list.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+                return ok(list);
             }
 
             // ==================== 員工自助申請（Phase 8.5）====================

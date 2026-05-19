@@ -17,6 +17,7 @@ const SystemSettings       = lazy(() => import('../components/admin/SystemSettin
 const MakeupApprovalQueue  = lazy(() => import('../components/admin/MakeupApprovalQueue'));
 const OpenShiftManager     = lazy(() => import('../components/admin/OpenShiftManager'));
 const LeaveOfAbsenceApprovalQueue = lazy(() => import('../components/admin/LeaveOfAbsenceApprovalQueue'));
+const ShiftSwapApprovalQueue = lazy(() => import('../components/admin/ShiftSwapApprovalQueue'));
 const ClockIn              = lazy(() => import('../components/employee/ClockIn'));
 const LeaveRequestForm     = lazy(() => import('../components/employee/LeaveRequestForm'));
 const MyRecords            = lazy(() => import('../components/employee/MyRecords'));
@@ -56,7 +57,7 @@ const CompareIcon: React.FC<{ className?: string }> = ({ className }) => (
   </svg>
 );
 
-type AdminView = 'overview' | 'schedule' | 'attendance' | 'leave' | 'employees' | 'monthlyReport' | 'comparison' | 'salary' | 'auditLog' | 'systemSettings' | 'makeupApproval' | 'openShifts' | 'loaApproval' | 'myClock' | 'myLeave' | 'myRecords' | 'mySalary' | 'myMakeup' | 'myLeaveBalance' | 'myOpenShifts' | 'myLeaveOfAbsence';
+type AdminView = 'overview' | 'schedule' | 'attendance' | 'leave' | 'employees' | 'monthlyReport' | 'comparison' | 'salary' | 'auditLog' | 'systemSettings' | 'makeupApproval' | 'openShifts' | 'loaApproval' | 'shiftSwapApproval' | 'myClock' | 'myLeave' | 'myRecords' | 'mySalary' | 'myMakeup' | 'myLeaveBalance' | 'myOpenShifts' | 'myLeaveOfAbsence';
 
 const AdminDashboard: React.FC = () => {
   const { user, logout } = useAuth();
@@ -79,6 +80,7 @@ const AdminDashboard: React.FC = () => {
       case 'makeupApproval': return <MakeupApprovalQueue />;
       case 'openShifts': return <OpenShiftManager />;
       case 'loaApproval': return <LeaveOfAbsenceApprovalQueue />;
+      case 'shiftSwapApproval': return <ShiftSwapApprovalQueue />;
       case 'myClock': return <ClockIn />;
       case 'myLeave': return <LeaveRequestForm />;
       case 'myRecords': return <MyRecords />;
@@ -131,6 +133,7 @@ const AdminDashboard: React.FC = () => {
             <NavItem view="comparison" icon={<CompareIcon className="w-6 h-6" />} label="排班對照表" />
             <NavItem view="attendance" icon={<ListIcon className="w-6 h-6" />} label="出勤紀錄" />
             <NavItem view="leave" icon={<CheckSquareIcon className="w-6 h-6" />} label="請假審核" />
+            <NavItem view="shiftSwapApproval" icon={<CalendarIcon className="w-6 h-6" />} label="換班審核" />
             <NavItem view="loaApproval" icon={<CheckSquareIcon className="w-6 h-6" />} label="留停審核" />
             <NavItem view="makeupApproval" icon={<CheckSquareIcon className="w-6 h-6" />} label="補打卡審核" />
             <NavItem view="openShifts" icon={<CalendarIcon className="w-6 h-6" />} label="開放排班" />
