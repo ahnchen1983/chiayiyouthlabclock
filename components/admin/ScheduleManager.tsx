@@ -1,7 +1,20 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { apiGetMonthlySchedule, apiUpdateSchedule, apiGetAllEmployees, apiApplyTemplate, apiCheckScheduleConflicts, ScheduleConflict } from '../../services/googleAppsScriptAPI';
-import { ScheduleEvent, StaffShift, StaffRole, User } from '../../types';
+import {
+  apiCreateScheduleVersion,
+  apiGetMonthlySchedule,
+  apiGetScheduleVersion,
+  apiListScheduleVersions,
+  apiRestoreScheduleVersion,
+  apiUpdateSchedule,
+  apiGetAllEmployees,
+  apiApplyTemplate,
+  apiCheckScheduleConflicts,
+  ScheduleConflict,
+} from '../../services/googleAppsScriptAPI';
+import { ScheduleEvent, ScheduleVersion, StaffShift, StaffRole, User, UserRole } from '../../types';
 import { ChevronLeftIcon, ChevronRightIcon } from '../icons';
+import { useAuth } from '../../contexts/AuthContext';
+import { buildSnapshotFromSchedule, diffSnapshot } from '../../netlify/functions/utils/scheduleVersion';
 
 // ===== 時段視覺化 helpers =====
 const toMin = (hhmm: string): number => {
@@ -34,6 +47,7 @@ const ROLE_LABEL: Record<StaffRole, string> = {
 };
 
 const ScheduleManager: React.FC = () => {
+  const { user } = useAuth();
   const [currentDate, setCurrentDate] = useState(new Date());
   const [schedule, setSchedule] = useState<ScheduleEvent[]>([]);
   const [conflicts, setConflicts] = useState<ScheduleConflict[]>([]);
@@ -42,6 +56,8 @@ const ScheduleManager: React.FC = () => {
   const [selectedEvent, setSelectedEvent] = useState<ScheduleEvent | null>(null);
   const [employees, setEmployees] = useState<User[]>([]);
   const [applyingTemplate, setApplyingTemplate] = useState(false);
+  const [versionDrawerOpen, setVersionDrawerOpen] = useState(false);
+  const [versionBusy, setVersionBusy] = useState(false);
 
   const yearMonth = `${currentDate.getFullYear()}-${(currentDate.getMonth() + 1).toString().padStart(2, '0')}`;
 
@@ -105,6 +121,22 @@ const ScheduleManager: React.FC = () => {
       alert('套用模板失敗');
     }
     setApplyingTemplate(false);
+  };
+
+  const handleCreateVersion = async () => {
+    const noteInput = window.prompt(`${yearMonth} 排班版本備註（可留空）：`);
+    if (noteInput === null) return;
+    const note = noteInput.trim() || undefined;
+    setVersionBusy(true);
+    try {
+      await apiCreateScheduleVersion(yearMonth, note);
+      alert('已儲存排班版本');
+      if (versionDrawerOpen) setVersionDrawerOpen(false);
+    } catch (e: any) {
+      alert(e?.message || '儲存版本失敗');
+    } finally {
+      setVersionBusy(false);
+    }
   };
 
   const renderCalendar = () => {
@@ -174,15 +206,30 @@ const ScheduleManager: React.FC = () => {
 
   return (
     <div className="p-4 bg-white rounded-lg shadow-lg">
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-4">
         <h1 className="text-3xl font-bold text-gray-800">排班管理</h1>
-        <button
-          onClick={handleApplyTemplate}
-          disabled={applyingTemplate}
-          className="px-4 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50"
-        >
-          {applyingTemplate ? '套用中...' : '套用預設模板到本月'}
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={handleCreateVersion}
+            disabled={versionBusy}
+            className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+          >
+            {versionBusy ? '儲存中...' : '💾 儲存版本'}
+          </button>
+          <button
+            onClick={() => setVersionDrawerOpen(true)}
+            className="px-4 py-2 text-sm bg-gray-800 text-white rounded-lg hover:bg-gray-700"
+          >
+            📋 版本歷史
+          </button>
+          <button
+            onClick={handleApplyTemplate}
+            disabled={applyingTemplate}
+            className="px-4 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50"
+          >
+            {applyingTemplate ? '套用中...' : '套用預設模板到本月'}
+          </button>
+        </div>
       </div>
       <div className="flex items-center justify-between mb-4">
         <button onClick={() => changeMonth(-1)} className="p-2 rounded-full hover:bg-gray-200"><ChevronLeftIcon /></button>
@@ -215,9 +262,169 @@ const ScheduleManager: React.FC = () => {
       {isModalOpen && selectedEvent && (
         <EditScheduleModal event={selectedEvent} employees={employees} onClose={() => setIsModalOpen(false)} onSave={handleUpdate} />
       )}
+      {versionDrawerOpen && (
+        <ScheduleVersionDrawer
+          yearMonth={yearMonth}
+          currentSchedule={schedule}
+          isSuperAdmin={user?.role === UserRole.SuperAdmin}
+          onClose={() => setVersionDrawerOpen(false)}
+          onRestored={fetchSchedule}
+        />
+      )}
     </div>
   );
 };
+
+const ScheduleVersionDrawer: React.FC<{
+  yearMonth: string;
+  currentSchedule: ScheduleEvent[];
+  isSuperAdmin: boolean;
+  onClose: () => void;
+  onRestored: () => Promise<void>;
+}> = ({ yearMonth, currentSchedule, isSuperAdmin, onClose, onRestored }) => {
+  const [versions, setVersions] = useState<ScheduleVersion[]>([]);
+  const [selected, setSelected] = useState<ScheduleVersion | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+
+  const loadVersions = useCallback(async () => {
+    setLoading(true);
+    try {
+      const list = await apiListScheduleVersions(yearMonth);
+      setVersions(list);
+    } finally {
+      setLoading(false);
+    }
+  }, [yearMonth]);
+
+  useEffect(() => {
+    loadVersions();
+  }, [loadVersions]);
+
+  const handleSelect = async (versionId: string) => {
+    setBusy(true);
+    try {
+      setSelected(await apiGetScheduleVersion(versionId));
+    } catch (e: any) {
+      alert(e?.message || '讀取版本失敗');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleRestore = async (version: ScheduleVersion) => {
+    const reason = window.prompt(`回溯 ${version.yearMonth} 排班版本需要填寫理由（至少 5 字）：`);
+    if (reason === null) return;
+    if (reason.trim().length < 5) {
+      alert('回溯理由至少 5 字');
+      return;
+    }
+    if (!window.confirm(`確定要回溯到 ${version.createdAt.slice(0, 10)} 的版本？\n\n這會覆寫該月份 dailySchedule。`)) return;
+    setBusy(true);
+    try {
+      const result = await apiRestoreScheduleVersion(version.id, reason.trim());
+      await onRestored();
+      await loadVersions();
+      alert(`已回溯 ${result.restoredDays} 天排班`);
+    } catch (e: any) {
+      alert(e?.message || '回溯失敗');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const currentSnapshot = useMemo(() => buildSnapshotFromSchedule(currentSchedule), [currentSchedule]);
+  const diff = selected ? diffSnapshot(currentSnapshot, selected.snapshot) : null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end bg-black bg-opacity-40" onClick={onClose}>
+      <aside className="w-full max-w-3xl h-full bg-white shadow-2xl overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="sticky top-0 bg-white border-b p-5 flex items-center justify-between">
+          <div>
+            <h2 className="text-xl font-bold text-gray-800">版本歷史</h2>
+            <p className="text-sm text-gray-500">{yearMonth}</p>
+          </div>
+          <button onClick={onClose} className="px-3 py-1.5 rounded bg-gray-100 hover:bg-gray-200 text-gray-700">關閉</button>
+        </div>
+
+        <div className="p-5 grid grid-cols-1 lg:grid-cols-2 gap-5">
+          <section>
+            <h3 className="font-semibold text-gray-700 mb-3">版本清單</h3>
+            {loading ? (
+              <div className="py-10 text-center text-gray-400">載入中...</div>
+            ) : versions.length > 0 ? (
+              <div className="space-y-2">
+                {versions.map(version => (
+                  <button
+                    key={version.id}
+                    onClick={() => handleSelect(version.id)}
+                    className={`w-full text-left p-3 rounded-lg border transition-colors ${selected?.id === version.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'}`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-semibold text-gray-800">
+                        {version.auto === 'month-lock' ? '🔒 月結快照' : '💾 手動版本'}
+                      </span>
+                      <span className="text-xs text-gray-400">{version.createdAt.slice(0, 16).replace('T', ' ')}</span>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1">建立者：{version.createdByName}</p>
+                    {version.note && <p className="text-xs text-gray-600 mt-1">備註：{version.note}</p>}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="py-10 text-center text-gray-400 bg-gray-50 rounded-lg">本月尚無版本</div>
+            )}
+          </section>
+
+          <section>
+            <h3 className="font-semibold text-gray-700 mb-3">版本差異</h3>
+            {selected && diff ? (
+              <div className="space-y-4">
+                <div className="p-3 rounded-lg bg-gray-50 text-sm text-gray-600">
+                  <p>版本 ID：<span className="font-mono text-xs">{selected.id}</span></p>
+                  <p>快照日期數：{Object.keys(selected.snapshot || {}).length} 日</p>
+                </div>
+                <DiffList title="目前新增日期" dates={diff.added} tone="text-green-700 bg-green-50" />
+                <DiffList title="版本中有、目前缺少" dates={diff.removed} tone="text-red-700 bg-red-50" />
+                <DiffList title="內容不同日期" dates={diff.changed} tone="text-amber-700 bg-amber-50" />
+                {isSuperAdmin && (
+                  <button
+                    onClick={() => handleRestore(selected)}
+                    disabled={busy}
+                    className="w-full py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+                  >
+                    回溯到此版本
+                  </button>
+                )}
+                {!isSuperAdmin && (
+                  <p className="text-xs text-gray-500 bg-gray-50 p-3 rounded-lg">只有最高管理者可以回溯排班版本。</p>
+                )}
+              </div>
+            ) : (
+              <div className="py-10 text-center text-gray-400 bg-gray-50 rounded-lg">請選擇一個版本查看差異</div>
+            )}
+          </section>
+        </div>
+      </aside>
+    </div>
+  );
+};
+
+const DiffList: React.FC<{ title: string; dates: string[]; tone: string }> = ({ title, dates, tone }) => (
+  <div>
+    <div className="flex items-center justify-between mb-2">
+      <h4 className="text-sm font-semibold text-gray-700">{title}</h4>
+      <span className={`text-xs px-2 py-0.5 rounded-full ${tone}`}>{dates.length}</span>
+    </div>
+    {dates.length > 0 ? (
+      <div className="flex flex-wrap gap-1">
+        {dates.map(date => <span key={date} className="text-xs px-2 py-1 rounded bg-gray-100 text-gray-700">{date}</span>)}
+      </div>
+    ) : (
+      <p className="text-xs text-gray-400">無</p>
+    )}
+  </div>
+);
 
 // ==========================================================
 // EditScheduleModal — v2.0「班次列表」編輯器

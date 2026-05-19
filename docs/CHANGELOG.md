@@ -6,23 +6,33 @@
 
 ---
 
-## [Unreleased] - 2026-05-19 — Phase 8 HR 細節補強
+## [Unreleased] - 2026-05-20 — Phase 6 / Phase 8 補強
 
 ### 新增 (Added)
+- **6.2 排班版本歷史（snapshot + 回溯）**
+  - 新增 `scheduleVersions` collection 資料契約與 `ScheduleVersion` 型別
+  - 新增 `scheduleVersion.ts` 純函數：建立月排班 snapshot、比對版本差異
+  - 新增 4 個 API actions：建立、列表、檢視、回溯排班版本
+  - `lock-month` 會自動建立月結快照，並在 `MonthLock.snapshotVersionId` 記錄版本 ID
+  - `ScheduleManager` 新增「儲存版本」與「版本歷史」抽屜；回溯僅 SuperAdmin 可操作
 - **8.4 月結報表（管理員月度統計）**
   - 新增 `get-monthly-report` API action，Admin+ 可一次讀取月結摘要
   - 新增 `MonthlyReportData` 型別與 `monthlyReport.ts` 純聚合函數
   - 新增管理者後台「月結報表」頁面：摘要、請假分布、打卡異常、PT 時數狀況、員工工時排名
   - CSV 匯出含鎖定狀態、摘要、請假分布、打卡異常、PT 時數、工時排名
   - 複用既有 `calculateSalaryForEmployee` 與 Phase 6.3 月結鎖定資料
-- **8.5 員工自助申請流程工單**
-  - 新增 `docs/PHASE_8.5_EMPLOYEE_SELF_SERVICE.md`
-  - 明確拆分：特休沿用既有 `leaveRequests`；留停新增 `leaveOfAbsenceRequests`
-  - 規劃員工留停申請、Admin 審核、通知、audit log、月結鎖定防護與測試
+- **8.5 員工自助申請流程**
+  - 特休沿用既有 `leaveRequests`；留停新增 `leaveOfAbsenceRequests`
+  - 新增員工留停申請表單與 Admin 留停審核佇列
+  - 新增 4 個 LOA actions：提交、查本人、查全部、審核
+  - 核准留停會更新 employee 狀態與 `leaveOfAbsenceStart/End`；駁回不改 employee
+  - 審核支援通知、audit log、重複審核防護與月結鎖定 423 防護
 
 ### 測試
-- Vitest 增至 **145 個測試**，新增 `tests/monthlyReport.test.ts`
-- 覆蓋請假分布、打卡異常、員工工時排名、月結摘要與空陣列平均值
+- Vitest 增至 **161 個測試**
+- 新增 `tests/monthlyReport.test.ts`：請假分布、打卡異常、員工工時排名、月結摘要與空陣列平均值
+- 新增 `tests/selfServiceRequests.test.ts`：留停申請日期與狀態驗證
+- 新增 `tests/scheduleVersion.test.ts`：排班版本 snapshot 與 diff
 
 ---
 

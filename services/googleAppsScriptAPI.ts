@@ -7,6 +7,7 @@ import {
     SystemConfig, ClockMakeupRequest, Notification,
     LeaveBalance, OpenShift, MonthLock, LoginResult, TotpStatus,
     MonthlyReportData, LeaveOfAbsenceRequest,
+    ScheduleVersion,
 } from '../types';
 
 // ==================== API 呼叫 Helper ====================
@@ -326,6 +327,24 @@ export interface ScheduleConflict {
 
 export const apiCheckScheduleConflicts = async (yearMonth: string): Promise<ScheduleConflict[]> => {
     return callAPI('check-schedule-conflicts', { yearMonth });
+};
+
+// ==================== 排班版本歷史（Phase 6.2）====================
+
+export const apiCreateScheduleVersion = async (yearMonth: string, note?: string): Promise<ScheduleVersion> => {
+    return callAPI('create-schedule-version', { yearMonth, note });
+};
+
+export const apiListScheduleVersions = async (yearMonth: string): Promise<ScheduleVersion[]> => {
+    return callAPI('list-schedule-versions', { yearMonth });
+};
+
+export const apiGetScheduleVersion = async (versionId: string): Promise<ScheduleVersion> => {
+    return callAPI('get-schedule-version', { versionId });
+};
+
+export const apiRestoreScheduleVersion = async (versionId: string, reason: string): Promise<{ restoredDays: number }> => {
+    return callAPI('restore-schedule-version', { versionId, reason });
 };
 
 // ==================== 假別餘額（Phase 4.1）====================

@@ -337,6 +337,29 @@ export interface MonthLock {
     unlockedByName?: string;
     unlockedAt?: string;
     unlockReason?: string;      // 必填，解鎖理由
+    // Phase 6.2：鎖定當下自動建立的排班版本 ID
+    snapshotVersionId?: string;
+}
+
+// 排班版本歷史（Phase 6.2）
+export interface ScheduleVersionSnapshotEntry {
+    status: ScheduleEvent['status'];
+    openingHours?: string;
+    requiredHeadcount?: number;
+    shifts: StaffShift[];
+}
+
+export interface ScheduleVersion {
+    id: string;
+    yearMonth: string;
+    snapshot: {
+        [date: string]: ScheduleVersionSnapshotEntry;
+    };
+    auto: 'month-lock' | 'manual';
+    createdBy: string;
+    createdByName: string;
+    createdAt: string;
+    note?: string;
 }
 
 // 月結報表（Phase 8.4）

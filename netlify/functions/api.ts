@@ -16,6 +16,7 @@ import {
     buildSummary,
     rankEmployeesByHours,
 } from './utils/monthlyReport';
+import { buildSnapshotFromSchedule } from './utils/scheduleVersion';
 import { corsHeaders } from './utils/cors';
 import {
     generateSecret as totpGenerateSecret,
@@ -26,7 +27,7 @@ import {
     findRecoveryCodeIndex,
 } from './utils/totp';
 import { randomBytes as randomBytesNode } from 'crypto';
-import type { StaffShift, StaffRole, MonthLock, MonthlyReportData, LeaveOfAbsenceRequest } from '../../types';
+import type { StaffShift, StaffRole, MonthLock, MonthlyReportData, LeaveOfAbsenceRequest, ScheduleVersion } from '../../types';
 import { UserRole, LeaveStatus, LeaveType } from '../../types';
 import type { ClockRecord, LeaveRequest, Employee, ScheduleEvent, SalaryDetail, TodayAttendanceComparison, PendingItem, SystemConfig, ClockMakeupRequest, Notification, NotificationType } from '../../types';
 
@@ -91,6 +92,30 @@ const getMonthLock = async (yearMonth: string): Promise<MonthLock | null> => {
     const snap = await db.collection('monthLocks').doc(yearMonth).get();
     if (!snap.exists) return null;
     return snap.data() as MonthLock;
+};
+
+const createScheduleVersionInternal = async (
+    createdBy: string,
+    createdByName: string,
+    yearMonth: string,
+    auto: ScheduleVersion['auto'],
+    note?: string,
+): Promise<string> => {
+    const events = await getMonthlyDailySchedule(yearMonth);
+    const snapshot = buildSnapshotFromSchedule(events);
+    const docRef = db.collection('scheduleVersions').doc();
+    const version: ScheduleVersion = {
+        id: docRef.id,
+        yearMonth,
+        snapshot,
+        auto,
+        createdBy,
+        createdByName,
+        createdAt: new Date().toISOString(),
+        ...(note ? { note } : {}),
+    };
+    await docRef.set(version);
+    return docRef.id;
 };
 
 // 給 6 個 actions 共用：擋下「修改鎖定月份資料」的請求
@@ -1232,6 +1257,12 @@ export const handler: Handler = async (event) => {
                 }
                 const meSnap = await db.collection('employees').doc(uid).get();
                 const lockedByName = meSnap.exists ? meSnap.data()!.name : uid;
+                const snapshotVersionId = await createScheduleVersionInternal(
+                    uid,
+                    lockedByName,
+                    yearMonth,
+                    'month-lock',
+                );
                 const lock: MonthLock = {
                     yearMonth,
                     lockedBy: uid,
@@ -1239,6 +1270,7 @@ export const handler: Handler = async (event) => {
                     lockedAt: new Date().toISOString(),
                     totalAmount: Math.round(totalAmount),
                     employeeCount,
+                    snapshotVersionId,
                 };
                 await db.collection('monthLocks').doc(yearMonth).set(lock);
                 await writeAuditLog(uid, '鎖定月結', yearMonth, `總額 ${Math.round(totalAmount)} / ${employeeCount} 人`);
@@ -1279,6 +1311,78 @@ export const handler: Handler = async (event) => {
                 const list = snap.docs.map(d => d.data() as MonthLock);
                 list.sort((a, b) => b.yearMonth.localeCompare(a.yearMonth));
                 return ok(list);
+            }
+
+            // ==================== 排班版本歷史（Phase 6.2）====================
+
+            case 'create-schedule-version': {
+                if (!isAdmin) return fail(403, '僅管理者可建立排班版本');
+                const yearMonth = data.yearMonth as string;
+                const note = ((data.note as string | undefined) || '').trim() || undefined;
+                if (!/^\d{4}-\d{2}$/.test(yearMonth || '')) return fail(400, 'yearMonth 格式錯誤');
+
+                const meSnap = await db.collection('employees').doc(uid).get();
+                const createdByName = meSnap.exists ? meSnap.data()!.name : uid;
+                const versionId = await createScheduleVersionInternal(uid, createdByName, yearMonth, 'manual', note);
+                await writeAuditLog(uid, '建立排班版本', `${yearMonth}/${versionId}`, `manual${note ? ` 備註:${note}` : ''}`);
+                const snap = await db.collection('scheduleVersions').doc(versionId).get();
+                return ok(snap.data() as ScheduleVersion);
+            }
+
+            case 'list-schedule-versions': {
+                if (!isAdmin) return fail(403, '僅管理者可查詢版本歷史');
+                const yearMonth = data.yearMonth as string;
+                if (!/^\d{4}-\d{2}$/.test(yearMonth || '')) return fail(400, 'yearMonth 格式錯誤');
+                const snap = await db.collection('scheduleVersions')
+                    .where('yearMonth', '==', yearMonth)
+                    .get();
+                const list = snap.docs.map(d => d.data() as ScheduleVersion);
+                list.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+                return ok(list);
+            }
+
+            case 'get-schedule-version': {
+                if (!isAdmin) return fail(403, '僅管理者可查看排班版本');
+                const versionId = data.versionId as string;
+                if (!versionId) return fail(400, '缺少 versionId');
+                const snap = await db.collection('scheduleVersions').doc(versionId).get();
+                if (!snap.exists) return fail(404, '版本不存在');
+                return ok(snap.data() as ScheduleVersion);
+            }
+
+            case 'restore-schedule-version': {
+                if (!isSuperAdmin) return fail(403, '僅最高管理者可回溯排班版本');
+                const versionId = data.versionId as string;
+                const reason = ((data.reason as string) || '').trim();
+                if (!versionId) return fail(400, '缺少 versionId');
+                if (reason.length < 5) return fail(400, '回溯理由至少 5 字');
+
+                const verSnap = await db.collection('scheduleVersions').doc(versionId).get();
+                if (!verSnap.exists) return fail(404, '版本不存在');
+                const version = verSnap.data() as ScheduleVersion;
+                const lock = await getMonthLock(version.yearMonth);
+                if (lock && isMonthLocked(lock)) {
+                    return fail(423, `${version.yearMonth} 月結已鎖定，請先解鎖才能回溯`);
+                }
+
+                const batch = db.batch();
+                const entries = Object.entries(version.snapshot || {});
+                for (const [dateStr, entry] of entries) {
+                    batch.set(db.collection('dailySchedule').doc(dateStr), {
+                        status: entry.status,
+                        ...(entry.openingHours ? { openingHours: entry.openingHours } : {}),
+                        ...(entry.requiredHeadcount !== undefined ? { requiredHeadcount: entry.requiredHeadcount } : {}),
+                        shifts: entry.shifts || [],
+                    });
+                }
+                if (entries.length > 0) await batch.commit();
+                await writeAuditLog(
+                    uid,
+                    '回溯排班版本',
+                    `${version.yearMonth}/${versionId}`,
+                    `理由：${reason}（共 ${entries.length} 日）`,
+                );
+                return ok({ restoredDays: entries.length });
             }
 
             // ==================== 員工自助申請（Phase 8.5）====================
