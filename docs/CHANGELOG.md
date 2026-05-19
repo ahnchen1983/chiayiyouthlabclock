@@ -9,6 +9,10 @@
 ## [Unreleased] - 2026-05-20 — Phase 6 / Phase 8 補強
 
 ### 新增 (Added)
+- **7.2 Playwright e2e 工單**
+  - 新增 Phase 7.2 實作規格：Playwright harness、API route mock、e2e-only auth bypass
+  - 規劃 5 條瀏覽器 smoke specs：登入、打卡、請假、Admin 排班、換班
+  - 明確禁止修改 CI workflow，避免 PAT `workflow` scope 卡點
 - **6.4 員工偏好班次設定**
   - 新增 `staffPreferences` collection 資料契約與 `StaffPreference` 型別
   - 新增 `staffPreferences.ts` 純函數：偏好資料去重/排序/重疊驗證與日期命中判斷
