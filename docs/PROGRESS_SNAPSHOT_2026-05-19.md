@@ -15,12 +15,12 @@
 | **4** | 進階功能 | ✅ 完成 | 4/4 | v1.6 |
 | **5** | 排班模型重構（v2.0 核心） | ✅ 完成 | 7/7（5.7 取消） | v2.0 |
 | **6** | 排班協作 | ✅ 完成 | **4/4** | 6.1 / 6.2 / 6.3 / 6.4 全綠 |
-| **7** | 系統健全化（技術債） | 🟡 進行中 | **5/7** | 7.1 / 7.3 / 7.4 / 7.5 / 7.7 ✅ ／ 7.2 / 7.6 待 |
+| **7** | 系統健全化（技術債） | ✅ 完成 | **7/7** | 7.1 / 7.2 / 7.3 / 7.4 / 7.5 / 7.6 / 7.7 全綠 |
 | **8** | HR 細節補強 | ✅ 完成 | **5/5** | 8.1 / 8.2 / 8.3 / 8.4 / 8.5 全綠 |
 | **9** | 資安強化 | ✅ 完成 | **4/4** | 9.1 / 9.2 / 9.3 / 9.4 全綠 |
 
-**已完成：** Phase 1–6 + Phase 8 + Phase 9 + 部分 7（共 **44 個子項**）
-**剩餘規劃中：** 2 個子項（Phase 7×2）
+**已完成：** Phase 1–9（共 **46 個子項**）
+**剩餘規劃中：** 0 個子項
 **已列追蹤：** 9.3 First-Run audit triage 已完成，剩低風險依賴鏈升級追蹤
 
 ---
@@ -46,8 +46,9 @@
 
 | Metric | 起點（v2.0 收尾） | 目前 | 變化 |
 |--------|------------------|------|------|
-| Vitest 測試案例 | 67 | **181** | +114 |
-| 測試檔案數 | 1 | **13** | +12 |
+| Vitest 測試案例 | 67 | **190** | +123 |
+| 測試檔案數 | 1 | **14** | +13 |
+| Playwright e2e specs | 0 | **5** | +5 |
 | GitHub Actions CI | tsc + test + build | 加 npm audit gate | — |
 | TypeScript 錯誤 | 0 | 0 | — |
 | Bundle entry (raw) | 386 KB | 220 KB 左右 | -43% |
@@ -72,23 +73,25 @@
 | `tests/scheduleVersion.test.ts` | 6.2 排班版本快照 / 差異比對 |
 | `tests/shiftSwap.test.ts` | 6.1 換班申請驗證 / 執行交換 |
 | `tests/staffPreferences.test.ts` | 6.4 員工偏好去重 / 重疊偵測 / 日期命中 |
+| `tests/fcm.test.ts` | 7.6 FCM token 過濾 / payload 組裝 / fatal error 分類 |
+| `tests/e2e/*.spec.ts` | 7.2 Playwright：登入 / 打卡 / 請假 / Admin 排班 / 換班 |
 
 ---
 
-## 4. 已上工單但尚未實作（規劃中）
+## 4. Phase 完成狀態
 
-工單檔案都在 `docs/PHASE_*.md`，給後續 Codex 或自己接手。
+目前 Phase 1–9 已全數實作完成。
 
 ### Phase 6
 
 已完成：6.1 換班 / 6.2 版本歷史 / 6.3 月結鎖定 / 6.4 員工偏好班次設定。
 
-### Phase 7 剩 2 張
+### Phase 7
 
 | 編號 | 名稱 | 狀態 |
 |------|------|------|
-| 7.2 | Playwright e2e 測試 | 工單已撰寫，待實作 |
-| 7.6 | FCM Push 通知（取代 60s 輪詢） | 工單尚未撰寫 |
+| 7.2 | Playwright e2e 測試 | 已完成 |
+| 7.6 | FCM Push 通知（取代 60s 輪詢） | 已完成 |
 
 ### Phase 9 follow-up
 
@@ -125,6 +128,7 @@ A 批與 Phase 9 批的 § 4.3 / § 4.4 手動測試均需瀏覽器/實際操作
 | **9.1 Netlify Headers** | `netlify.toml` 推上去後自動生效，但需於 Netlify Dashboard 確認 |
 | **9.2 TOTP for SuperAdmin** | 第一次部署後 ADMIN 帳號需主動到「個人設定」啟用 2FA |
 | **7.5 Sentry DSN** | Netlify Dashboard > Environment variables 加 `VITE_SENTRY_DSN` |
+| **7.6 FCM VAPID Key** | Netlify Dashboard > Environment variables 加 `VITE_FCM_VAPID_KEY` |
 | **CI workflow.yml push 卡住** | 本機 PAT 缺 `workflow` scope，需更新 PAT 或改用 SSH remote |
 
 ---
@@ -134,12 +138,11 @@ A 批與 Phase 9 批的 § 4.3 / § 4.4 手動測試均需瀏覽器/實際操作
 ### 短線（半天內可結）
 
 - **CI 推送解卡**：更新 PAT 加 `workflow` scope，把累積的 `.github/workflows/ci.yml` 變更 push 上去
-- **7.2 Playwright e2e 實作**：工單已備，補登入 / 打卡 / 請假 / 排班 / 換班關鍵流程
+- **FCM 部署設定**：Netlify Dashboard 加 `VITE_FCM_VAPID_KEY`，再跑一次手動煙霧測試
 
-### 長線（需先寫工單）
+### 長線
 
-- 7.2 Playwright e2e
-- 7.6 FCM Push 通知
+- 規劃下一個 milestone（多店 / multi-tenant / 行動 app / 進階報表擇一）
 
 ---
 
@@ -164,10 +167,10 @@ A 批與 Phase 9 批的 § 4.3 / § 4.4 手動測試均需瀏覽器/實際操作
 | 維度 | 狀態 | 備註 |
 |------|------|------|
 | 功能完整度 | 🟢 良好 | 客戶第一輪 + 第二輪需求全處理 + v2.0 重構；Phase 8 全完成 |
-| 測試覆蓋 | 🟢 良好 | 181 個單元測試，純函數覆蓋紮實 |
+| 測試覆蓋 | 🟢 良好 | 190 個單元測試 + 5 條 Playwright e2e，純函數與主流程皆有覆蓋 |
 | 觀測性 | 🟡 中等 | Sentry 已接但需設 DSN；後端錯誤監控待補 |
 | 安全 | 🟢 良好 | Phase 9 全 4 張完成，含 TOTP / Rules / Headers |
 | CI/CD | 🟢 良好 | GitHub Actions typecheck + test + build + audit |
 | 文件 | 🟢 良好 | SDD / Roadmap / CHANGELOG / 14 張工單齊備 |
 | 部署 | 🟡 中等 | 多項待 push（PAT 卡住） + 需手動部署 Firestore Rules |
-| e2e 測試 | 🔴 缺 | 7.2 未實作，目前全靠手動煙霧測試 |
+| e2e 測試 | 🟢 良好 | 5 條 Playwright smoke specs 已建立 |

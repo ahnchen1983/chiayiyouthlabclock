@@ -240,6 +240,17 @@ export interface Notification {
     link?: string;
 }
 
+// FCM Web Push token（Phase 7.6）
+export interface FcmTokenDoc {
+    tokenId: string;
+    empId: string;
+    token: string;
+    userAgent?: string;
+    createdAt: string;
+    lastSeenAt: string;
+    failureCount?: number;
+}
+
 // 假別餘額（Phase 4.1）
 // Phase 8.1：特休跨年結轉快照（純資料；行為定義於 calculations.ts）
 export interface AnnualLeaveSnapshot {

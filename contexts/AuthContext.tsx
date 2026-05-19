@@ -6,6 +6,7 @@ import {
     apiVerifyTotpLogin, apiGetTotpStatus,
 } from '../services/googleAppsScriptAPI';
 import { applyUserToSentry } from '../services/sentryUser';
+import { disableFcm } from '../services/fcmClient';
 
 interface AuthContextType {
   user: User | null;
@@ -104,6 +105,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const logout = () => {
+    disableFcm().catch(() => {});
     setUser(null);
     setNeedsTotpSetup(false);
     sessionStorage.removeItem('user');

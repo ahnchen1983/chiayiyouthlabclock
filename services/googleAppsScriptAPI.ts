@@ -13,6 +13,7 @@ import {
 // ==================== API 呼叫 Helper ====================
 
 const API_URL = '/.netlify/functions/api';
+const isE2E = import.meta.env.VITE_E2E === 'true';
 
 const callAPI = async (action: string, data: Record<string, unknown> = {}): Promise<any> => {
     const idToken = auth.currentUser ? await auth.currentUser.getIdToken() : null;
@@ -58,7 +59,7 @@ export const apiLogin = async (username: string, password: string): Promise<Logi
         return { kind: 'requireTotp', totpToken: result.totpToken, expiresAt: result.expiresAt };
     }
     // kind === 'success'
-    await signInWithCustomToken(auth, result.customToken);
+    if (!isE2E) await signInWithCustomToken(auth, result.customToken);
     return { kind: 'success', user: result.user, customToken: result.customToken };
 };
 
@@ -82,12 +83,12 @@ export const apiVerifyTotpLogin = async (
     const result = await res.json();
     if (!result) return null;
     if (result.error) throw new Error(result.error);
-    await signInWithCustomToken(auth, result.customToken);
+    if (!isE2E) await signInWithCustomToken(auth, result.customToken);
     return { user: result.user, recoveryCodesRemaining: result.recoveryCodesRemaining };
 };
 
 export const apiLogout = async (): Promise<void> => {
-    await signOut(auth);
+    if (!isE2E) await signOut(auth);
 };
 
 // ==================== 打卡 ====================
@@ -314,6 +315,17 @@ export const apiMarkNotificationRead = async (notificationId: string): Promise<b
 
 export const apiMarkAllNotificationsRead = async (): Promise<number> => {
     return callAPI('mark-all-notifications-read');
+};
+
+export const apiRegisterFcmToken = async (
+    token: string,
+    userAgent?: string,
+): Promise<{ tokenId: string }> => {
+    return callAPI('register-fcm-token', { token, userAgent });
+};
+
+export const apiUnregisterFcmToken = async (token: string): Promise<boolean> => {
+    return callAPI('unregister-fcm-token', { token });
 };
 
 // ==================== 排班衝突偵測（Phase 3.5）====================

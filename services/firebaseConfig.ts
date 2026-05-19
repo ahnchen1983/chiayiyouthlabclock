@@ -14,3 +14,12 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 // Firestore 已移除：所有資料操作改走 Netlify Functions + Admin SDK
+
+export const firebaseMessagingConfig = firebaseConfig;
+
+export const getMessagingClient = async () => {
+    if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return null;
+    const { getMessaging, isSupported } = await import('firebase/messaging');
+    if (!(await isSupported())) return null;
+    return getMessaging(app);
+};

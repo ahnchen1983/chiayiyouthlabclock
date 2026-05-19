@@ -1,5 +1,6 @@
 import type { Handler } from '@netlify/functions';
-import { db, adminAuth } from './utils/firebaseAdmin';
+import { FieldValue } from 'firebase-admin/firestore';
+import { db, adminAuth, adminMessaging } from './utils/firebaseAdmin';
 import {
     hashPassword, verifyPassword, validatePasswordStrength,
     DEFAULT_SYSTEM_CONFIG, determineClockStatus,
@@ -11,6 +12,7 @@ import {
 import { getMonthKey, isMonthLocked } from './utils/monthLock';
 import { validateLeaveOfAbsenceRequest } from './utils/selfServiceRequests';
 import { validateStaffPreference } from './utils/staffPreferences';
+import { buildFcmPayload, filterActiveTokens, tokenIdFromToken, tokensToDelete } from './utils/fcm';
 import { executeSwap, validateSwapRequest } from './utils/shiftSwap';
 import {
     aggregateClockAnomalies,
@@ -29,7 +31,7 @@ import {
     findRecoveryCodeIndex,
 } from './utils/totp';
 import { randomBytes as randomBytesNode } from 'crypto';
-import type { StaffShift, StaffRole, MonthLock, MonthlyReportData, LeaveOfAbsenceRequest, ScheduleVersion, ShiftSwapRequest, StaffPreference } from '../../types';
+import type { StaffShift, StaffRole, MonthLock, MonthlyReportData, LeaveOfAbsenceRequest, ScheduleVersion, ShiftSwapRequest, StaffPreference, FcmTokenDoc } from '../../types';
 import { UserRole, LeaveStatus, LeaveType } from '../../types';
 import type { ClockRecord, LeaveRequest, Employee, ScheduleEvent, SalaryDetail, TodayAttendanceComparison, PendingItem, SystemConfig, ClockMakeupRequest, Notification, NotificationType } from '../../types';
 
@@ -138,7 +140,7 @@ const writeNotification = async (
     message: string,
     link?: string
 ) => {
-    await db.collection('notifications').add({
+    const ref = await db.collection('notifications').add({
         empId,
         type,
         title,
@@ -147,6 +149,46 @@ const writeNotification = async (
         createdAt: new Date().toISOString(),
         ...(link ? { link } : {}),
     });
+    pushToEmpFcmTokens(empId, { type, title, message, link, notificationId: ref.id }).catch(() => {});
+};
+
+const pushToEmpFcmTokens = async (
+    empId: string,
+    payload: { type: NotificationType; title: string; message: string; link?: string; notificationId: string },
+): Promise<void> => {
+    const snap = await db.collection('fcmTokens').where('empId', '==', empId).get();
+    if (snap.empty) return;
+    const allTokens = snap.docs.map(d => ({ ...(d.data() as FcmTokenDoc), tokenId: d.id }));
+    const activeTokens = filterActiveTokens(allTokens);
+    if (activeTokens.length === 0) return;
+
+    const fcmPayload = buildFcmPayload(payload);
+    const messaging = adminMessaging();
+    const results = await Promise.all(activeTokens.map(async tokenDoc => {
+        try {
+            await messaging.send({
+                token: tokenDoc.token,
+                ...fcmPayload,
+            });
+            await db.collection('fcmTokens').doc(tokenDoc.tokenId).update({
+                failureCount: 0,
+                lastSeenAt: new Date().toISOString(),
+            });
+            return { tokenId: tokenDoc.tokenId };
+        } catch (err: any) {
+            return { tokenId: tokenDoc.tokenId, error: { code: err?.code || 'unknown' } };
+        }
+    }));
+
+    const deleteIds = tokensToDelete(results);
+    await Promise.all(deleteIds.map(id => db.collection('fcmTokens').doc(id).delete()));
+
+    const deleteSet = new Set(deleteIds);
+    await Promise.all(results
+        .filter(result => result.error && !deleteSet.has(result.tokenId))
+        .map(result => db.collection('fcmTokens').doc(result.tokenId).update({
+            failureCount: FieldValue.increment(1),
+        })));
 };
 
 // ==================== 假別餘額 Helper（Phase 4.1）====================
@@ -1999,6 +2041,37 @@ export const handler: Handler = async (event) => {
                 snap.docs.forEach(d => batch.update(d.ref, { read: true }));
                 await batch.commit();
                 return ok(snap.size);
+            }
+
+            case 'register-fcm-token': {
+                const token = ((data.token as string) || '').trim();
+                if (!token || token.length < 30) return fail(400, 'token 無效');
+                const tokenId = await tokenIdFromToken(token);
+                const now = new Date().toISOString();
+                const existing = await db.collection('fcmTokens').doc(tokenId).get();
+                const doc: FcmTokenDoc = {
+                    tokenId,
+                    empId: uid,
+                    token,
+                    userAgent: (((data.userAgent as string) || '').slice(0, 200) || undefined),
+                    createdAt: existing.exists ? (existing.data() as FcmTokenDoc).createdAt : now,
+                    lastSeenAt: now,
+                    failureCount: 0,
+                };
+                await db.collection('fcmTokens').doc(tokenId).set(doc, { merge: true });
+                return ok({ tokenId });
+            }
+
+            case 'unregister-fcm-token': {
+                const token = ((data.token as string) || '').trim();
+                if (!token) return fail(400, 'token 必填');
+                const tokenId = await tokenIdFromToken(token);
+                const ref = db.collection('fcmTokens').doc(tokenId);
+                const snap = await ref.get();
+                if (snap.exists && (snap.data() as FcmTokenDoc).empId === uid) {
+                    await ref.delete();
+                }
+                return ok(true);
             }
 
             // ==================== 排班衝突檢查（Phase 3.5）====================

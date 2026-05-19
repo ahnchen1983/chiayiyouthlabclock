@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { apiGetNotifications, apiMarkNotificationRead, apiMarkAllNotificationsRead } from '../services/googleAppsScriptAPI';
+import { enableFcm, getFcmEnabled } from '../services/fcmClient';
 import { Notification } from '../types';
 
 const BellIcon: React.FC<{ className?: string }> = ({ className }) => (
@@ -11,7 +12,11 @@ const BellIcon: React.FC<{ className?: string }> = ({ className }) => (
 const NotificationBell: React.FC = () => {
     const [list, setList] = useState<Notification[]>([]);
     const [open, setOpen] = useState(false);
+    const [fcmEnabled, setFcmEnabled] = useState(getFcmEnabled());
+    const [fcmBusy, setFcmBusy] = useState(false);
+    const [toast, setToast] = useState('');
     const ref = useRef<HTMLDivElement>(null);
+    const fcmConfigured = Boolean(import.meta.env.VITE_FCM_VAPID_KEY);
 
     const load = async () => {
         try {
@@ -24,8 +29,19 @@ const NotificationBell: React.FC = () => {
 
     useEffect(() => {
         load();
-        const t = setInterval(load, 60000);
+        const t = setInterval(load, 180000);
         return () => clearInterval(t);
+    }, []);
+
+    useEffect(() => {
+        const handler = (event: Event) => {
+            const detail = (event as CustomEvent<{ title?: string; message?: string }>).detail;
+            setToast(detail?.title || '收到新通知');
+            load();
+            window.setTimeout(() => setToast(''), 4000);
+        };
+        window.addEventListener('fcm-foreground-message', handler);
+        return () => window.removeEventListener('fcm-foreground-message', handler);
     }, []);
 
     useEffect(() => {
@@ -50,8 +66,26 @@ const NotificationBell: React.FC = () => {
         }
     };
 
+    const handleEnableFcm = async () => {
+        setFcmBusy(true);
+        const result = await enableFcm();
+        setFcmBusy(false);
+        if ('error' in result) {
+            alert(result.error);
+            return;
+        }
+        setFcmEnabled(true);
+        setToast('即時通知已啟用');
+        window.setTimeout(() => setToast(''), 4000);
+    };
+
     return (
         <div className="relative" ref={ref}>
+            {toast && (
+                <div className="fixed right-4 top-16 z-50 rounded-lg bg-gray-900 px-4 py-2 text-sm text-white shadow-lg">
+                    {toast}
+                </div>
+            )}
             <button
                 onClick={() => setOpen(o => !o)}
                 className="relative p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-full"
@@ -73,6 +107,16 @@ const NotificationBell: React.FC = () => {
                             <button onClick={handleMarkAll} className="text-xs text-blue-600 hover:underline">全部標為已讀</button>
                         )}
                     </div>
+                    {!fcmEnabled && (
+                        <button
+                            onClick={handleEnableFcm}
+                            disabled={fcmBusy || !fcmConfigured}
+                            className="w-full border-b bg-blue-50 py-2 text-xs text-blue-700 hover:bg-blue-100 disabled:bg-gray-50 disabled:text-gray-400"
+                            title={fcmConfigured ? '啟用即時通知' : '系統未設定 FCM VAPID key'}
+                        >
+                            {fcmBusy ? '啟用中...' : fcmConfigured ? '🔔 啟用即時通知' : '🔔 即時通知未設定'}
+                        </button>
+                    )}
                     {list.length === 0 ? (
                         <p className="p-6 text-center text-sm text-gray-500">沒有通知</p>
                     ) : (

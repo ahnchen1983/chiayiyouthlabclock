@@ -6,13 +6,22 @@
 
 ---
 
-## [Unreleased] - 2026-05-20 — Phase 6 / Phase 8 補強
+## [Unreleased] - 2026-05-20 — Phase 6 / Phase 7 / Phase 8 補強
 
 ### 新增 (Added)
-- **7.2 Playwright e2e 工單**
-  - 新增 Phase 7.2 實作規格：Playwright harness、API route mock、e2e-only auth bypass
-  - 規劃 5 條瀏覽器 smoke specs：登入、打卡、請假、Admin 排班、換班
-  - 明確禁止修改 CI workflow，避免 PAT `workflow` scope 卡點
+- **7.2 Playwright e2e**
+  - 新增 Playwright harness 與 `npm run test:e2e` / UI / headed scripts
+  - 新增 `VITE_E2E=true` auth bypass，只在 e2e 模式跳過 Firebase signIn/signOut
+  - 以 route mock 隔離 Netlify Functions API，不碰真 Firebase / Firestore
+  - 新增 5 條瀏覽器 smoke specs：登入、打卡、請假、Admin 排班、換班
+  - 未修改 CI workflow，避免 PAT `workflow` scope 卡點
+- **7.6 FCM Web Push 通知**
+  - 新增 `fcmTokens` collection 資料契約與 `FcmTokenDoc` 型別
+  - 新增 `fcm.ts` 純函數：tokenId 雜湊、active token 過濾、payload 組裝、fatal error 分類
+  - 新增 `register-fcm-token` / `unregister-fcm-token` actions
+  - `writeNotification` 寫入通知後 fire-and-forget 推 FCM，失敗不影響原流程
+  - 新增 `public/firebase-messaging-sw.js` 背景通知與前景 `CustomEvent` refresh
+  - `NotificationBell` 輪詢 60s → 180s fallback，並新增「啟用即時通知」
 - **6.4 員工偏好班次設定**
   - 新增 `staffPreferences` collection 資料契約與 `StaffPreference` 型別
   - 新增 `staffPreferences.ts` 純函數：偏好資料去重/排序/重疊驗證與日期命中判斷
@@ -46,7 +55,9 @@
   - 審核支援通知、audit log、重複審核防護與月結鎖定 423 防護
 
 ### 測試
-- Vitest 增至 **181 個測試**
+- Vitest 增至 **190 個測試**
+- Playwright e2e 新增 **5 條 specs**
+- 新增 `tests/fcm.test.ts`：FCM token 過濾、payload 組裝、fatal error 分類
 - 新增 `tests/staffPreferences.test.ts`：員工偏好去重、上限、重疊偵測與日期命中
 - 新增 `tests/shiftSwap.test.ts`：換班申請驗證與交換執行
 - 新增 `tests/monthlyReport.test.ts`：請假分布、打卡異常、員工工時排名、月結摘要與空陣列平均值

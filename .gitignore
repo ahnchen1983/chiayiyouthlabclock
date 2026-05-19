@@ -7,3 +7,7 @@ dist/
 
 # Phase 9.3 — npm audit 報告（本機產出，不入 repo）
 audit-report.json
+
+# Phase 7.2 — Playwright local artifacts
+playwright-report/
+test-results/
