@@ -8,6 +8,7 @@ import {
     computeCoverageGaps,
 } from './utils/calculations';
 import { getMonthKey, isMonthLocked } from './utils/monthLock';
+import { corsHeaders } from './utils/cors';
 import type { StaffShift, StaffRole, MonthLock } from '../../types';
 import { UserRole, LeaveStatus, LeaveType, EmployeeStatus } from '../../types';
 import type { ClockRecord, LeaveRequest, Employee, ScheduleEvent, SalaryDetail, TodayAttendanceComparison, PendingItem, SystemConfig, ClockMakeupRequest, Notification, NotificationType } from '../../types';
@@ -148,15 +149,26 @@ const getLeaveBalanceForEmployee = async (empId: string): Promise<any[]> => {
 
 // ==================== 回應 Helper ====================
 
+// Phase 9.1：module-level event ref，讓 ok()/fail() 自動帶上對應的 CORS headers
+// 而不必修改 116 個既有呼叫點。Netlify Functions 每次 invocation 都會在
+// handler 開頭重新指派此值，無 race condition 風險。
+let _currentRequestOrigin: string | undefined;
+
+const responseHeaders = (extra: Record<string, string> = {}) => ({
+    'Content-Type': 'application/json',
+    ...corsHeaders(_currentRequestOrigin),
+    ...extra,
+});
+
 const ok = (data: unknown) => ({
     statusCode: 200,
-    headers: { 'Content-Type': 'application/json' },
+    headers: responseHeaders(),
     body: JSON.stringify(data),
 });
 
 const fail = (status: number, message: string) => ({
     statusCode: status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: responseHeaders(),
     body: JSON.stringify({ error: message }),
 });
 
@@ -284,7 +296,23 @@ const getMonthlyScheduleMap = async (yearMonth: string): Promise<Map<string, any
 // ==================== Handler 主體 ====================
 
 export const handler: Handler = async (event) => {
-    if (event.httpMethod === 'OPTIONS') return { statusCode: 204, body: '' };
+    // Phase 9.1：記錄當次請求 origin，讓所有 ok()/fail() 自動帶 CORS
+    _currentRequestOrigin = (event.headers.origin || event.headers.Origin) as string | undefined;
+
+    // CORS Preflight
+    if (event.httpMethod === 'OPTIONS') {
+        return { statusCode: 204, headers: corsHeaders(_currentRequestOrigin), body: '' };
+    }
+
+    // CSP violation report（走 Content-Type 判斷，與 action 機制隔離）
+    const contentType = (event.headers['content-type'] || event.headers['Content-Type'] || '') as string;
+    if (event.httpMethod === 'POST' && contentType.includes('application/csp-report')) {
+        try {
+            console.warn('[CSP Report]', event.body);
+        } catch { /* swallow */ }
+        return { statusCode: 204, headers: corsHeaders(_currentRequestOrigin), body: '' };
+    }
+
     if (event.httpMethod !== 'POST') return fail(405, 'Method Not Allowed');
 
     let body: any;

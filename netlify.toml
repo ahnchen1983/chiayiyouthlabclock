@@ -16,3 +16,17 @@
   from = "/*"
   to = "/index.html"
   status = 200
+
+# ==================== Phase 9.1 安全 Headers ====================
+# CSP 採 Report-Only 兩週觀察（D9-2 (b)），確認無誤後切換為 enforce。
+# CSP violation 走 POST /.netlify/functions/api，由 Content-Type 攔截處理。
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Strict-Transport-Security = "max-age=31536000; includeSubDomains; preload"
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "geolocation=(self), camera=(), microphone=(), payment=()"
+    Content-Security-Policy-Report-Only = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://*.googleusercontent.com; connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firestore.googleapis.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io; font-src 'self' data:; frame-ancestors 'none'; report-uri /.netlify/functions/api"

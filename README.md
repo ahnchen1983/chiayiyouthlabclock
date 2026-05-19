@@ -35,6 +35,20 @@
    VITE_SENTRY_DSN=https://<public_key>@<org>.ingest.sentry.io/<project_id>
    ```
 
+### Netlify 環境變數 — `ALLOWED_ORIGINS`（Phase 9.1）
+
+CORS 白名單。逗號分隔，未設則 fallback 為：
+- `https://chiayiyouthlabclock.netlify.app`
+- `http://localhost:5173`
+- `http://localhost:8888`
+
+自訂 domain 需在 Netlify 設定：
+```
+ALLOWED_ORIGINS=https://chiayiyouthlabclock.netlify.app,https://clock.example.org
+```
+
+Phase 9.1 同步加入 6 個安全 headers（HSTS、X-CTO、XFO、Referrer、Permissions、CSP-Report-Only）。CSP 採 Report-Only 兩週觀察期，觀察結束後切換為 enforce。
+
 ### Sentry 錯誤監控（選用）
 
 Production 部署到 Netlify 時，於 Netlify Dashboard > Site settings > Environment variables 設定：
