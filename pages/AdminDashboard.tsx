@@ -24,6 +24,7 @@ const MyRecords            = lazy(() => import('../components/employee/MyRecords
 const MySalary             = lazy(() => import('../components/employee/MySalary'));
 const ClockMakeupForm      = lazy(() => import('../components/employee/ClockMakeupForm'));
 const MyLeaveBalance       = lazy(() => import('../components/employee/MyLeaveBalance'));
+const MyPreferences        = lazy(() => import('../components/employee/MyPreferences'));
 const OpenShiftPicker      = lazy(() => import('../components/employee/OpenShiftPicker'));
 const LeaveOfAbsenceRequestForm = lazy(() => import('../components/employee/LeaveOfAbsenceRequestForm'));
 
@@ -57,7 +58,7 @@ const CompareIcon: React.FC<{ className?: string }> = ({ className }) => (
   </svg>
 );
 
-type AdminView = 'overview' | 'schedule' | 'attendance' | 'leave' | 'employees' | 'monthlyReport' | 'comparison' | 'salary' | 'auditLog' | 'systemSettings' | 'makeupApproval' | 'openShifts' | 'loaApproval' | 'shiftSwapApproval' | 'myClock' | 'myLeave' | 'myRecords' | 'mySalary' | 'myMakeup' | 'myLeaveBalance' | 'myOpenShifts' | 'myLeaveOfAbsence';
+type AdminView = 'overview' | 'schedule' | 'attendance' | 'leave' | 'employees' | 'monthlyReport' | 'comparison' | 'salary' | 'auditLog' | 'systemSettings' | 'makeupApproval' | 'openShifts' | 'loaApproval' | 'shiftSwapApproval' | 'myClock' | 'myLeave' | 'myRecords' | 'mySalary' | 'myMakeup' | 'myLeaveBalance' | 'myPreferences' | 'myOpenShifts' | 'myLeaveOfAbsence';
 
 const AdminDashboard: React.FC = () => {
   const { user, logout } = useAuth();
@@ -88,6 +89,7 @@ const AdminDashboard: React.FC = () => {
       case 'myMakeup': return <ClockMakeupForm />;
       case 'myLeaveOfAbsence': return <LeaveOfAbsenceRequestForm />;
       case 'myLeaveBalance': return <MyLeaveBalance />;
+      case 'myPreferences': return <MyPreferences />;
       case 'myOpenShifts': return <OpenShiftPicker />;
       default: return <AdminOverview />;
     }
@@ -158,6 +160,7 @@ const AdminDashboard: React.FC = () => {
               <NavItem view="myLeaveOfAbsence" icon={<SendIcon className="w-6 h-6" />} label="留停申請" />
               <NavItem view="myMakeup" icon={<SendIcon className="w-6 h-6" />} label="補打卡申請" />
               <NavItem view="myLeaveBalance" icon={<CheckSquareIcon className="w-6 h-6" />} label="假別餘額" />
+              <NavItem view="myPreferences" icon={<CalendarIcon className="w-6 h-6" />} label="偏好設定" />
               <NavItem view="myOpenShifts" icon={<CalendarIcon className="w-6 h-6" />} label="認領班次" />
               <NavItem view="mySalary" icon={<DollarIcon className="w-6 h-6" />} label="我的薪資" />
             </ul>

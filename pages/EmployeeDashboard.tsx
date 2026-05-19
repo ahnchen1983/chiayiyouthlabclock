@@ -11,6 +11,7 @@ const LeaveRequestForm     = lazy(() => import('../components/employee/LeaveRequ
 const MySalary             = lazy(() => import('../components/employee/MySalary'));
 const ClockMakeupForm      = lazy(() => import('../components/employee/ClockMakeupForm'));
 const MyLeaveBalance       = lazy(() => import('../components/employee/MyLeaveBalance'));
+const MyPreferences        = lazy(() => import('../components/employee/MyPreferences'));
 const OpenShiftPicker      = lazy(() => import('../components/employee/OpenShiftPicker'));
 const LeaveOfAbsenceRequestForm = lazy(() => import('../components/employee/LeaveOfAbsenceRequestForm'));
 const ShiftSwapPage        = lazy(() => import('../components/employee/ShiftSwapPage'));
@@ -38,7 +39,7 @@ const KeyIcon: React.FC<{ className?: string }> = ({ className }) => (
   </svg>
 );
 
-type View = 'clock' | 'schedule' | 'records' | 'leave' | 'fullSchedule' | 'salary' | 'makeup' | 'leaveBalance' | 'openShifts' | 'leaveOfAbsence' | 'shiftSwap';
+type View = 'clock' | 'schedule' | 'records' | 'leave' | 'fullSchedule' | 'salary' | 'makeup' | 'leaveBalance' | 'preferences' | 'openShifts' | 'leaveOfAbsence' | 'shiftSwap';
 
 const EmployeeDashboard: React.FC = () => {
   const { user, logout } = useAuth();
@@ -63,6 +64,8 @@ const EmployeeDashboard: React.FC = () => {
         return <ClockMakeupForm />;
       case 'leaveBalance':
         return <MyLeaveBalance />;
+      case 'preferences':
+        return <MyPreferences />;
       case 'openShifts':
         return <OpenShiftPicker />;
       case 'leaveOfAbsence':
@@ -136,6 +139,7 @@ const EmployeeDashboard: React.FC = () => {
         <NavItem view="leave" icon={<SendIcon className="w-6 h-6" />} label="請假申請" />
         <NavItem view="leaveOfAbsence" icon={<SendIcon className="w-6 h-6" />} label="留停申請" />
         <NavItem view="leaveBalance" icon={<ListIcon className="w-6 h-6" />} label="假別餘額" />
+        <NavItem view="preferences" icon={<CalendarIcon className="w-6 h-6" />} label="偏好設定" />
         <NavItem view="makeup" icon={<SendIcon className="w-6 h-6" />} label="補打卡" />
         <NavItem view="salary" icon={<DollarIcon className="w-6 h-6" />} label="薪資明細" />
       </nav>

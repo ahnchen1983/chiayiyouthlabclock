@@ -7,14 +7,16 @@ import {
   apiRestoreScheduleVersion,
   apiUpdateSchedule,
   apiGetAllEmployees,
+  apiGetAllStaffPreferences,
   apiApplyTemplate,
   apiCheckScheduleConflicts,
   ScheduleConflict,
 } from '../../services/googleAppsScriptAPI';
-import { ScheduleEvent, ScheduleVersion, StaffShift, StaffRole, User, UserRole } from '../../types';
+import { ScheduleEvent, ScheduleVersion, StaffPreference, StaffShift, StaffRole, User, UserRole } from '../../types';
 import { ChevronLeftIcon, ChevronRightIcon } from '../icons';
 import { useAuth } from '../../contexts/AuthContext';
 import { buildSnapshotFromSchedule, diffSnapshot } from '../../netlify/functions/utils/scheduleVersion';
+import { matchPreferenceForDate } from '../../netlify/functions/utils/staffPreferences';
 
 // ===== 時段視覺化 helpers =====
 const toMin = (hhmm: string): number => {
@@ -55,6 +57,7 @@ const ScheduleManager: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<ScheduleEvent | null>(null);
   const [employees, setEmployees] = useState<User[]>([]);
+  const [staffPreferences, setStaffPreferences] = useState<Map<string, StaffPreference>>(new Map());
   const [applyingTemplate, setApplyingTemplate] = useState(false);
   const [versionDrawerOpen, setVersionDrawerOpen] = useState(false);
   const [versionBusy, setVersionBusy] = useState(false);
@@ -84,6 +87,13 @@ const ScheduleManager: React.FC = () => {
   useEffect(() => {
     fetchSchedule();
     apiGetAllEmployees().then(setEmployees);
+    apiGetAllStaffPreferences()
+      .then(list => {
+        const next = new Map<string, StaffPreference>();
+        list.forEach(pref => next.set(pref.empId, pref));
+        setStaffPreferences(next);
+      })
+      .catch(() => setStaffPreferences(new Map()));
   }, [fetchSchedule]);
 
   const changeMonth = (offset: number) => {
@@ -260,7 +270,13 @@ const ScheduleManager: React.FC = () => {
       </div>
       {loading ? <div className="text-center py-10">載入中...</div> : <div className="grid grid-cols-7 border-l">{renderCalendar()}</div>}
       {isModalOpen && selectedEvent && (
-        <EditScheduleModal event={selectedEvent} employees={employees} onClose={() => setIsModalOpen(false)} onSave={handleUpdate} />
+        <EditScheduleModal
+          event={selectedEvent}
+          employees={employees}
+          staffPreferences={staffPreferences}
+          onClose={() => setIsModalOpen(false)}
+          onSave={handleUpdate}
+        />
       )}
       {versionDrawerOpen && (
         <ScheduleVersionDrawer
@@ -433,9 +449,10 @@ const DiffList: React.FC<{ title: string; dates: string[]; tone: string }> = ({ 
 const EditScheduleModal: React.FC<{
   event: ScheduleEvent;
   employees: User[];
+  staffPreferences: Map<string, StaffPreference>;
   onClose: () => void;
   onSave: (event: ScheduleEvent) => void;
-}> = ({ event, employees, onClose, onSave }) => {
+}> = ({ event, employees, staffPreferences, onClose, onSave }) => {
   const [editedEvent, setEditedEvent] = useState<ScheduleEvent>({
     ...event,
     shifts: event.shifts || [],
@@ -613,6 +630,7 @@ const EditScheduleModal: React.FC<{
                   {editedEvent.shifts.map((s, idx) => {
                     const empCountInShifts = shiftCountByEmp[s.empId || `n:${s.name}`] || 0;
                     const over = empCountInShifts > 2;
+                    const prefMatch = matchPreferenceForDate(staffPreferences.get(s.empId), editedEvent.date);
                     return (
                       <div key={idx} className={`flex flex-wrap items-center gap-2 p-2 rounded border ${over ? 'border-red-400 bg-red-50' : 'border-gray-200 bg-gray-50'}`}>
                         <select
@@ -625,6 +643,12 @@ const EditScheduleModal: React.FC<{
                             <option key={e.id} value={e.id}>{e.name}（{e.position}）</option>
                           ))}
                         </select>
+                        {prefMatch === 'blocked' && (
+                          <span className="text-xs font-semibold text-red-600" title="此員工偏好不上這天或這個星期">⚠️ 偏好不上班</span>
+                        )}
+                        {prefMatch === 'preferred' && (
+                          <span className="text-xs font-semibold text-green-700" title="此員工偏好上這天">💚 偏好上班</span>
+                        )}
                         <select
                           value={s.role}
                           onChange={e => updateShift(idx, { role: e.target.value as StaffRole })}

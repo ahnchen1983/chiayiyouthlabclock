@@ -9,6 +9,12 @@
 ## [Unreleased] - 2026-05-20 — Phase 6 / Phase 8 補強
 
 ### 新增 (Added)
+- **6.4 員工偏好班次設定**
+  - 新增 `staffPreferences` collection 資料契約與 `StaffPreference` 型別
+  - 新增 `staffPreferences.ts` 純函數：偏好資料去重/排序/重疊驗證與日期命中判斷
+  - 新增 3 個 API actions：查本人、更新本人、Admin 查全部
+  - 員工後台與 Admin「我的功能」新增「偏好設定」頁
+  - `ScheduleManager` 編輯班次時顯示「偏好不上班 / 偏好上班」提醒，維持僅警示不阻擋
 - **6.1 換班 / 替班申請**
   - 新增 `shiftSwapRequests` collection 資料契約與 `ShiftSwapRequest` 型別
   - 新增 `shiftSwap.ts` 純函數：換班申請驗證與班次交換
@@ -36,7 +42,8 @@
   - 審核支援通知、audit log、重複審核防護與月結鎖定 423 防護
 
 ### 測試
-- Vitest 增至 **169 個測試**
+- Vitest 增至 **181 個測試**
+- 新增 `tests/staffPreferences.test.ts`：員工偏好去重、上限、重疊偵測與日期命中
 - 新增 `tests/shiftSwap.test.ts`：換班申請驗證與交換執行
 - 新增 `tests/monthlyReport.test.ts`：請假分布、打卡異常、員工工時排名、月結摘要與空陣列平均值
 - 新增 `tests/selfServiceRequests.test.ts`：留停申請日期與狀態驗證

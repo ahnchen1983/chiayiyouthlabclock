@@ -216,6 +216,16 @@ export interface ShiftSwapRequest {
     adminRejectReason?: string;
 }
 
+// 員工偏好班次設定（Phase 6.4）
+export interface StaffPreference {
+    empId: string;
+    blockedWeekdays: number[];     // 0=日, 1=一, ... 6=六
+    blockedDates: string[];        // YYYY-MM-DD
+    preferredDates: string[];      // YYYY-MM-DD
+    note?: string;
+    updatedAt?: string;
+}
+
 // 通知
 export type NotificationType = 'leave-approved' | 'leave-rejected' | 'makeup-approved' | 'makeup-rejected' | 'schedule-changed' | 'clock-warning' | 'loa-approved' | 'loa-rejected' | 'loa-submitted' | 'shift-swap-requested' | 'shift-swap-peer-agreed' | 'shift-swap-peer-rejected' | 'shift-swap-approved' | 'shift-swap-rejected' | 'system';
 

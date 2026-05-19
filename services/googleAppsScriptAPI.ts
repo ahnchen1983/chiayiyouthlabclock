@@ -7,7 +7,7 @@ import {
     SystemConfig, ClockMakeupRequest, Notification,
     LeaveBalance, OpenShift, MonthLock, LoginResult, TotpStatus,
     MonthlyReportData, LeaveOfAbsenceRequest,
-    ScheduleVersion, ShiftSwapRequest,
+    ScheduleVersion, ShiftSwapRequest, StaffPreference,
 } from '../types';
 
 // ==================== API 呼叫 Helper ====================
@@ -432,6 +432,22 @@ export const apiGetMonthLock = async (yearMonth: string): Promise<MonthLock | nu
 
 export const apiListMonthLocks = async (): Promise<MonthLock[]> => {
     return callAPI('list-month-locks');
+};
+
+// ==================== 員工偏好班次設定（Phase 6.4）====================
+
+export const apiGetMyStaffPreference = async (): Promise<StaffPreference> => {
+    return callAPI('get-my-staff-preference');
+};
+
+export const apiUpdateMyStaffPreference = async (
+    preference: Partial<StaffPreference>,
+): Promise<StaffPreference> => {
+    return callAPI('update-my-staff-preference', { preference });
+};
+
+export const apiGetAllStaffPreferences = async (): Promise<StaffPreference[]> => {
+    return callAPI('get-all-staff-preferences');
 };
 
 // ==================== TOTP 2FA（Phase 9.2）====================

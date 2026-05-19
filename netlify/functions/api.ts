@@ -10,6 +10,7 @@ import {
 } from './utils/calculations';
 import { getMonthKey, isMonthLocked } from './utils/monthLock';
 import { validateLeaveOfAbsenceRequest } from './utils/selfServiceRequests';
+import { validateStaffPreference } from './utils/staffPreferences';
 import { executeSwap, validateSwapRequest } from './utils/shiftSwap';
 import {
     aggregateClockAnomalies,
@@ -28,7 +29,7 @@ import {
     findRecoveryCodeIndex,
 } from './utils/totp';
 import { randomBytes as randomBytesNode } from 'crypto';
-import type { StaffShift, StaffRole, MonthLock, MonthlyReportData, LeaveOfAbsenceRequest, ScheduleVersion, ShiftSwapRequest } from '../../types';
+import type { StaffShift, StaffRole, MonthLock, MonthlyReportData, LeaveOfAbsenceRequest, ScheduleVersion, ShiftSwapRequest, StaffPreference } from '../../types';
 import { UserRole, LeaveStatus, LeaveType } from '../../types';
 import type { ClockRecord, LeaveRequest, Employee, ScheduleEvent, SalaryDetail, TodayAttendanceComparison, PendingItem, SystemConfig, ClockMakeupRequest, Notification, NotificationType } from '../../types';
 
@@ -1328,6 +1329,42 @@ export const handler: Handler = async (event) => {
                 const snap = await db.collection('monthLocks').get();
                 const list = snap.docs.map(d => d.data() as MonthLock);
                 list.sort((a, b) => b.yearMonth.localeCompare(a.yearMonth));
+                return ok(list);
+            }
+
+            // ==================== 員工偏好班次設定（Phase 6.4）====================
+
+            case 'get-my-staff-preference': {
+                const snap = await db.collection('staffPreferences').doc(uid).get();
+                if (!snap.exists) {
+                    return ok({
+                        empId: uid,
+                        blockedWeekdays: [],
+                        blockedDates: [],
+                        preferredDates: [],
+                    } as StaffPreference);
+                }
+                return ok({ empId: uid, ...snap.data() } as StaffPreference);
+            }
+
+            case 'update-my-staff-preference': {
+                const validation = validateStaffPreference((data.preference || {}) as Partial<StaffPreference>);
+                if (validation.ok === false) return fail(400, validation.error);
+
+                const doc: StaffPreference = {
+                    empId: uid,
+                    ...validation.value,
+                    updatedAt: new Date().toISOString(),
+                };
+                await db.collection('staffPreferences').doc(uid).set(doc);
+                return ok(doc);
+            }
+
+            case 'get-all-staff-preferences': {
+                if (!isAdmin) return fail(403, '僅管理者可查看員工偏好');
+                const snap = await db.collection('staffPreferences').get();
+                const list = snap.docs.map(d => ({ empId: d.id, ...d.data() } as StaffPreference));
+                list.sort((a, b) => a.empId.localeCompare(b.empId));
                 return ok(list);
             }
 
