@@ -76,3 +76,24 @@ Production 部署到 Netlify 時，於 Netlify Dashboard > Site settings > Envir
 本系統部署於 Netlify，推送至 `main` 分支即自動部署。
 
 Firebase 環境變數需在 Netlify Dashboard > Site settings > Environment variables 中設定。
+
+## 資安回報
+
+如發現本系統有資安漏洞，請依 [SECURITY.md](./SECURITY.md) 所述方式回報至 `ahnchen@yuncidigital.com`，**請勿在 GitHub Issue 公開回報細節**。
+
+我們承諾 48 小時內回覆，依嚴重度於 7–30 天內部署修補。
+
+## 自動化資安檢查
+
+| 機制 | 觸發 | 行為 |
+|------|------|------|
+| GitHub Actions `npm audit` | PR / push to main | high / critical CVE 阻擋 merge |
+| Dependabot（npm） | 每週一 09:00 Asia/Taipei | 自動 PR minor/patch 升級 |
+| Dependabot（github-actions） | 每週一 09:00 Asia/Taipei | 監視 CI actions 版本 |
+
+本機可手動執行：
+
+```bash
+npm run audit:prod    # 與 CI 同步的 production-only 掃描（high+ 失敗）
+npm run audit:report  # 產出全量 JSON 報告（不入 git）
+```

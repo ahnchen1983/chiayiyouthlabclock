@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "audit:prod": "npm audit --audit-level=high --omit=dev",
+    "audit:report": "npm audit --json > audit-report.json"
   },
   "dependencies": {
     "@sentry/react": "^10.53.1",
