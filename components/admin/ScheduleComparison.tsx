@@ -22,6 +22,8 @@ const AttendanceStatusBadge: React.FC<{ status: string }> = ({ status }) => {
         '正常': 'bg-green-100 text-green-800',
         '遲到': 'bg-yellow-100 text-yellow-800',
         '早退': 'bg-orange-100 text-orange-800',
+        '遲到+早退': 'bg-red-100 text-red-800',
+        '異常': 'bg-red-100 text-red-800',
         '缺勤': 'bg-red-100 text-red-800',
         '休假': 'bg-blue-100 text-blue-800',
         '-': 'bg-gray-100 text-gray-400',
@@ -46,7 +48,7 @@ const DayCard: React.FC<DayCardProps> = ({ data, isSelected, onClick }) => {
     const isDutyDay = data.status === '休館(值班)';
     const scheduledCount = data.employees.filter(e => e.scheduled).length;
     const attendedCount = data.employees.filter(e => e.scheduled && e.clockInTime).length;
-    const hasIssue = data.employees.some(e => e.attendanceStatus === '缺勤' || e.attendanceStatus === '遲到');
+    const hasIssue = data.employees.some(e => ['缺勤', '遲到', '早退', '遲到+早退', '異常'].includes(e.attendanceStatus));
 
     return (
         <button
@@ -72,7 +74,7 @@ const DayCard: React.FC<DayCardProps> = ({ data, isSelected, onClick }) => {
             ) : (
                 <div className="mt-1">
                     <p className="text-xs text-gray-500">
-                        出勤: <span className={attendedCount === scheduledCount ? 'text-green-600' : 'text-red-600'}>
+                        {isDutyDay ? '值班' : '出勤'}: <span className={attendedCount === scheduledCount ? 'text-green-600' : 'text-red-600'}>
                             {attendedCount}/{scheduledCount}
                         </span>
                     </p>
@@ -93,8 +95,8 @@ const ScheduleComparison: React.FC = () => {
             setLoading(true);
             const result = await apiGetScheduleAttendanceComparison(month);
             setData(result);
-            // 選擇第一個營運日
-            const firstOperatingDay = result.find(d => d.status === '營運');
+            // 選擇第一個需要出勤比對的日期（含休館值班）
+            const firstOperatingDay = result.find(d => d.status === '營運' || d.status === '休館(值班)');
             setSelectedDate(firstOperatingDay?.date || null);
             setLoading(false);
         };
@@ -114,17 +116,20 @@ const ScheduleComparison: React.FC = () => {
     };
 
     const selectedDayData = data.find(d => d.date === selectedDate);
+    const isComparableDay = (status: ScheduleAttendanceComparison['status']) => status === '營運' || status === '休館(值班)';
+    const hasAttendanceIssue = (day: ScheduleAttendanceComparison) =>
+        day.employees.some(e => e.scheduled && ['缺勤', '遲到', '早退', '遲到+早退', '異常'].includes(e.attendanceStatus));
 
     // 統計
     const stats = {
-        totalDays: data.filter(d => d.status === '營運').length,
+        totalDays: data.filter(d => isComparableDay(d.status)).length,
         normalDays: data.filter(d =>
-            d.status === '營運' &&
-            !d.employees.some(e => e.scheduled && (e.attendanceStatus === '缺勤' || e.attendanceStatus === '遲到'))
+            isComparableDay(d.status) &&
+            !hasAttendanceIssue(d)
         ).length,
         issueDays: data.filter(d =>
-            d.status === '營運' &&
-            d.employees.some(e => e.scheduled && (e.attendanceStatus === '缺勤' || e.attendanceStatus === '遲到'))
+            isComparableDay(d.status) &&
+            hasAttendanceIssue(d)
         ).length,
     };
 
@@ -259,7 +264,7 @@ const ScheduleComparison: React.FC = () => {
                                                 {selectedDayData.status === '休館' ? '休館日' : selectedDayData.status === '休館(值班)' ? '休館(值班)' : `營運時間`}
                                             </p>
                                         </div>
-                                        {selectedDayData.status === '營運' && (
+                                        {isComparableDay(selectedDayData.status) && (
                                             <div className="text-right">
                                                 <p className="text-sm text-gray-500">出勤率</p>
                                                 <p className="text-xl font-bold text-purple-600">
@@ -275,7 +280,7 @@ const ScheduleComparison: React.FC = () => {
                                     </div>
                                 </div>
 
-                                {selectedDayData.status === '營運' ? (
+                                {isComparableDay(selectedDayData.status) ? (
                                     <div className="overflow-x-auto">
                                         <table className="min-w-full">
                                             <thead className="bg-gray-100">

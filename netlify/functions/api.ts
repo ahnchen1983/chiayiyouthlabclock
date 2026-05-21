@@ -6,7 +6,7 @@ import {
     DEFAULT_SYSTEM_CONFIG, determineClockStatus,
     computeAnnualLeaveDays, computeLeaveBalanceWithCarryover,
     calculateSalaryForEmployee,
-    normalizeScheduleDoc, getEmployeeShiftsForDay, isEmployeeScheduledForDay,
+    normalizeScheduleDoc, getEmployeeShiftsForDay, isEmployeeScheduledForDay, shiftHours,
     computeCoverageGaps,
 } from './utils/calculations';
 import { getMonthKey, isMonthLocked } from './utils/monthLock';
@@ -405,6 +405,118 @@ const getEmployeeShiftRangeStr = (event: ScheduleEvent, empId: string, empName: 
     return `${sortedFrom[0]}-${sortedTo[sortedTo.length - 1]}`;
 };
 
+const getEmployeeScheduledHours = (event: ScheduleEvent, empId: string, empName: string): number => {
+    return Math.round(getEmployeeShiftsForDay(event, empId, empName).reduce((sum, s) => sum + shiftHours(s), 0) * 10) / 10;
+};
+
+const getApprovedLeaveHoursOnDate = (leaveRequests: LeaveRequest[], empId: string, date: string): number => {
+    return leaveRequests
+        .filter(lr => lr.empId === empId && lr.status === LeaveStatus.Approved && lr.startDate.slice(0, 10) <= date && lr.endDate.slice(0, 10) >= date)
+        .reduce((sum, lr) => sum + (lr.hours || 0), 0);
+};
+
+const toMinutes = (hhmm: string | null | undefined): number | null => {
+    if (!hhmm || !hhmm.includes(':')) return null;
+    const [h, m] = hhmm.split(':').map(Number);
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
+    return h * 60 + m;
+};
+
+const getTimeMinutesFromDateTime = (value: string, fallback: number): number => {
+    if (!value.includes('T')) return fallback;
+    return toMinutes(value.split('T')[1]?.slice(0, 5)) ?? fallback;
+};
+
+const getApprovedLeaveWindowsOnDate = (
+    leaveRequests: LeaveRequest[],
+    empId: string,
+    date: string,
+): { start: number; end: number; minutes: number }[] => {
+    return leaveRequests
+        .filter(lr => lr.empId === empId && lr.status === LeaveStatus.Approved && lr.startDate.slice(0, 10) <= date && lr.endDate.slice(0, 10) >= date)
+        .map(lr => {
+            const startsToday = lr.startDate.slice(0, 10) === date;
+            const endsToday = lr.endDate.slice(0, 10) === date;
+            const start = startsToday ? getTimeMinutesFromDateTime(lr.startDate, 0) : 0;
+            const end = endsToday ? getTimeMinutesFromDateTime(lr.endDate, 24 * 60) : 24 * 60;
+            return { start, end, minutes: Math.round((lr.hours || 0) * 60) };
+        });
+};
+
+const isFullShiftLeave = (leaveHours: number, scheduledHours: number): boolean => {
+    return scheduledHours > 0 && leaveHours >= scheduledHours;
+};
+
+const adjustClockStatusForPartialLeave = (
+    status: '正常' | '遲到' | '早退' | '遲到+早退',
+    shiftRange: string | undefined,
+    clockInTime: string | null,
+    clockOutTime: string | null,
+    leaveWindows: { start: number; end: number; minutes: number }[],
+    graceMinutes: number,
+): '正常' | '遲到' | '早退' | '遲到+早退' => {
+    if (status === '正常' || !shiftRange || !shiftRange.includes('-') || leaveWindows.length === 0) return status;
+    const [shiftStartStr, shiftEndStr] = shiftRange.split('-');
+    const shiftStart = toMinutes(shiftStartStr);
+    const shiftEnd = toMinutes(shiftEndStr);
+    const clockIn = toMinutes(clockInTime);
+    const clockOut = toMinutes(clockOutTime);
+    if (shiftStart == null || shiftEnd == null) return status;
+
+    const leaveMinutes = leaveWindows.reduce((sum, w) => sum + w.minutes, 0);
+    const lateMinutes = clockIn == null ? 0 : Math.max(0, clockIn - (shiftStart + graceMinutes));
+    const earlyMinutes = clockOut == null ? 0 : Math.max(0, shiftEnd - clockOut);
+    const leaveCoversLate = lateMinutes > 0 && (
+        leaveWindows.some(w => w.start <= shiftStart && w.end >= clockIn!) ||
+        leaveMinutes >= lateMinutes
+    );
+    const leaveCoversEarly = earlyMinutes > 0 && (
+        leaveWindows.some(w => w.start <= clockOut! && w.end >= shiftEnd) ||
+        leaveMinutes >= earlyMinutes
+    );
+
+    const isLate = (status === '遲到' || status === '遲到+早退') && !leaveCoversLate;
+    const isEarly = (status === '早退' || status === '遲到+早退') && !leaveCoversEarly;
+    if (isLate && isEarly) return '遲到+早退';
+    if (isLate) return '遲到';
+    if (isEarly) return '早退';
+    return '正常';
+};
+
+const computeComparisonAttendanceStatus = (
+    record: ClockRecord | undefined,
+    shiftRange: string | undefined,
+    isScheduled: boolean,
+    leaveHours: number,
+    leaveWindows: { start: number; end: number; minutes: number }[],
+    scheduledHours: number,
+    graceMinutes: number,
+): '正常' | '遲到' | '早退' | '遲到+早退' | '異常' | '缺勤' | '休假' | '-' => {
+    if (!isScheduled) return '-';
+    if (!record) return isFullShiftLeave(leaveHours, scheduledHours) ? '休假' : '缺勤';
+    if (!record.clockInTime || !record.clockOutTime) return '異常';
+    const status = determineClockStatus(shiftRange, record.clockInTime, record.clockOutTime, graceMinutes);
+    return adjustClockStatusForPartialLeave(status, shiftRange, record.clockInTime, record.clockOutTime, leaveWindows, graceMinutes);
+};
+
+const computeTodayAttendanceStatus = (
+    record: ClockRecord | undefined,
+    shiftRange: string | undefined,
+    isScheduled: boolean,
+    leaveHours: number,
+    leaveWindows: { start: number; end: number; minutes: number }[],
+    scheduledHours: number,
+    graceMinutes: number,
+): TodayAttendanceComparison['status'] => {
+    if (!isScheduled) return leaveHours > 0 ? '休假' : '未排班';
+    if (!record) return isFullShiftLeave(leaveHours, scheduledHours) ? '休假' : '未到';
+    if (!record.clockInTime && record.clockOutTime) return '異常';
+    if (!record.clockInTime) return isFullShiftLeave(leaveHours, scheduledHours) ? '休假' : '未到';
+    const status = determineClockStatus(shiftRange, record.clockInTime, record.clockOutTime || null, graceMinutes);
+    const adjustedStatus = adjustClockStatusForPartialLeave(status, shiftRange, record.clockInTime, record.clockOutTime || null, leaveWindows, graceMinutes);
+    return adjustedStatus === '正常' ? '已到' : adjustedStatus;
+};
+
 /**
  * 取得指定月份的逐日班表（以 Map 回傳，供薪資等計算用）
  */
@@ -709,39 +821,63 @@ export const handler: Handler = async (event) => {
                 const today = new Date().toISOString().slice(0, 10);
                 const snap = await db.collection('clockRecords')
                     .where('empId', '==', uid).where('date', '==', today).limit(1).get();
-                if (snap.empty) return ok(false);
-                const docSnap = snap.docs[0];
-                if (docSnap.data().clockOutTime) return ok(true);
                 const now = new Date();
                 const clockOutTime = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Taipei' });
-                const [inH, inM] = docSnap.data().clockInTime.split(':').map(Number);
-                const [outH, outM] = clockOutTime.split(':').map(Number);
-                const workHours = Math.round(((outH * 60 + outM) - (inH * 60 + inM)) / 60 * 10) / 10;
-                // 早退判定：用該員工自己的 shift 範圍
                 const [todayDaySchedule, sysConfig, empSnapForClockOut] = await Promise.all([
                     getDaySchedule(today),
                     getSystemConfig(),
                     db.collection('employees').doc(uid).get(),
                 ]);
-                const empName = empSnapForClockOut.exists ? empSnapForClockOut.data()!.name : '';
+                const empName = empSnapForClockOut.exists ? empSnapForClockOut.data()!.name : data.name || '';
                 const myShiftRange = getEmployeeShiftRangeStr(todayDaySchedule, uid, empName);
+                if (snap.empty) {
+                    await db.collection('clockRecords').add({
+                        empId: uid,
+                        name: empName,
+                        date: today,
+                        clockInTime: null,
+                        clockOutTime,
+                        verificationMethod: 'IP',
+                        verificationData: event.headers['x-forwarded-for']?.split(',')[0]?.trim()
+                            || event.headers['client-ip']
+                            || 'unknown',
+                        workHours: null,
+                        status: '異常',
+                        source: 'normal',
+                        note: '缺少上班打卡',
+                    });
+                    return ok(true);
+                }
+                const docSnap = snap.docs[0];
+                const existingClock = docSnap.data() as ClockRecord;
+                if (existingClock.clockOutTime) return ok(true);
+                const hasClockIn = !!existingClock.clockInTime;
+                const workHours = hasClockIn ? (() => {
+                    const [inH, inM] = existingClock.clockInTime!.split(':').map(Number);
+                    const [outH, outM] = clockOutTime.split(':').map(Number);
+                    return Math.round(((outH * 60 + outM) - (inH * 60 + inM)) / 60 * 10) / 10;
+                })() : null;
+                // 早退判定：用該員工自己的 shift 範圍；缺上班卡則保留異常。
                 const status = determineClockStatus(
                     myShiftRange,
-                    docSnap.data().clockInTime,
+                    existingClock.clockInTime,
                     clockOutTime,
                     sysConfig.lateGraceMinutes
                 );
                 // Phase 6.3：月結後下班打卡不擋，但 merge 警示 note
-                const recDate = docSnap.data().date;
+                const recDate = existingClock.date;
                 const lockChk = await assertMonthNotLocked(recDate);
-                const existingNote = docSnap.data().note || '';
+                const existingNote = existingClock.note || '';
                 const lockedNote = lockChk.locked
                     ? `[警示] 月結後下班打卡（${getMonthKey(recDate)} 已鎖定）`
                     : '';
-                const mergedNote = (existingNote + ' ' + lockedNote).trim();
+                const missingInNote = hasClockIn ? '' : '缺少上班打卡';
+                const mergedNote = [existingNote, lockedNote, missingInNote].filter(Boolean).join(' ').trim();
                 await docSnap.ref.update({
-                    clockOutTime, workHours, status,
-                    ...(lockedNote ? { note: mergedNote } : {}),
+                    clockOutTime,
+                    workHours,
+                    status: hasClockIn ? status : '異常',
+                    ...(mergedNote ? { note: mergedNote } : {}),
                 });
                 return ok(true);
             }
@@ -1049,11 +1185,12 @@ export const handler: Handler = async (event) => {
                 const today = new Date().toISOString().slice(0, 10);
                 const yearMonth = today.slice(0, 7);
 
-                const [todaySchedule, empSnap, clockSnap, leaveSnap] = await Promise.all([
+                const [todaySchedule, empSnap, clockSnap, leaveSnap, sysConfig] = await Promise.all([
                     getDaySchedule(today),
                     db.collection('employees').get(),
                     db.collection('clockRecords').get(),
                     db.collection('leaveRequests').get(),
+                    getSystemConfig(),
                 ]);
                 const employees = empSnap.docs.map(d => d.data());
                 const allRecords = clockSnap.docs.map(d => ({ id: d.id, ...d.data() } as ClockRecord));
@@ -1070,18 +1207,11 @@ export const handler: Handler = async (event) => {
                     const myShifts = getEmployeeShiftsForDay(todaySchedule, user.id, user.name);
                     const isScheduled = myShifts.length > 0;
                     const myShiftRange = getEmployeeShiftRangeStr(todaySchedule, user.id, user.name);
+                    const scheduledHours = getEmployeeScheduledHours(todaySchedule, user.id, user.name);
                     const record = todayRecords.find(r => r.empId === user.id);
-                    const leaveToday = leaveRequests.find(
-                        lr => lr.empId === user.id && lr.status === LeaveStatus.Approved &&
-                            lr.startDate.slice(0, 10) <= today && lr.endDate.slice(0, 10) >= today
-                    );
-                    let status: TodayAttendanceComparison['status'] = '未排班';
-                    if (leaveToday) status = '休假';
-                    else if (isScheduled) {
-                        status = record?.clockInTime
-                            ? (record.status === '遲到' ? '遲到' : record.status === '早退' ? '早退' : '已到')
-                            : '未到';
-                    }
+                    const leaveHours = getApprovedLeaveHoursOnDate(leaveRequests, user.id, today);
+                    const leaveWindows = getApprovedLeaveWindowsOnDate(leaveRequests, user.id, today);
+                    const status = computeTodayAttendanceStatus(record, myShiftRange, isScheduled, leaveHours, leaveWindows, scheduledHours, sysConfig.lateGraceMinutes);
                     return {
                         empId: user.id, name: user.name, position: user.position,
                         scheduledShift: isScheduled ? (myShiftRange || null) : null,
@@ -1124,24 +1254,34 @@ export const handler: Handler = async (event) => {
             }
 
             case 'get-all-part-time-hours': {
-                const [empSnap, clockSnap] = await Promise.all([
+                const [empSnap, clockSnap, scheduleEvents, sysConfig] = await Promise.all([
                     db.collection('employees').get(),
                     db.collection('clockRecords').get(),
+                    getMonthlyDailySchedule(data.yearMonth),
+                    getSystemConfig(),
                 ]);
                 const partTimers = empSnap.docs.map(d => d.data()).filter(u => u.position === '兼職人員');
                 const monthRecords = clockSnap.docs.map(d => d.data() as ClockRecord).filter(r => r.date.startsWith(data.yearMonth));
                 return ok(partTimers.map(pt => {
                     const workedHours = Math.round(monthRecords.filter(r => r.empId === pt.id).reduce((s, r) => s + (r.workHours || 0), 0) * 10) / 10;
-                    return { empId: pt.id, name: pt.name, month: data.yearMonth, scheduledHours: workedHours, workedHours, remainingHours: Math.round((80 - workedHours) * 10) / 10, status: 80 - workedHours <= 10 ? '接近上限' : '正常' };
+                    const scheduledHours = Math.round(scheduleEvents.reduce((sum, event) => {
+                        if (event.status === '休館') return sum;
+                        return sum + getEmployeeScheduledHours(event, pt.id, pt.name);
+                    }, 0) * 10) / 10;
+                    const limit = sysConfig.ptMonthlyHourLimit || DEFAULT_SYSTEM_CONFIG.ptMonthlyHourLimit;
+                    const remainingHours = Math.round((limit - scheduledHours) * 10) / 10;
+                    const status = scheduledHours >= (sysConfig.ptWarningThreshold || DEFAULT_SYSTEM_CONFIG.ptWarningThreshold) ? '接近上限' : '正常';
+                    return { empId: pt.id, name: pt.name, month: data.yearMonth, scheduledHours, workedHours, remainingHours, status };
                 }));
             }
 
             case 'get-schedule-attendance-comparison': {
-                const [scheduleEvents, empSnap, clockSnap, leaveSnap] = await Promise.all([
+                const [scheduleEvents, empSnap, clockSnap, leaveSnap, sysConfig] = await Promise.all([
                     getMonthlyDailySchedule(data.yearMonth),
                     db.collection('employees').get(),
                     db.collection('clockRecords').get(),
                     db.collection('leaveRequests').get(),
+                    getSystemConfig(),
                 ]);
                 const employees = empSnap.docs.map(d => d.data());
                 const monthRecords = clockSnap.docs.map(d => ({ id: d.id, ...d.data() } as ClockRecord)).filter(r => r.date.startsWith(data.yearMonth));
@@ -1151,12 +1291,12 @@ export const handler: Handler = async (event) => {
                     const empList = employees.map(user => {
                         const myShiftRange = getEmployeeShiftRangeStr(event, user.id, user.name);
                         const isScheduled = !!myShiftRange;
+                        const scheduledHours = getEmployeeScheduledHours(event, user.id, user.name);
                         const record = dayRecords.find(r => r.empId === user.id);
-                        const leaveOnDay = leaveRequests.find(lr => lr.empId === user.id && lr.status === LeaveStatus.Approved && lr.startDate.slice(0, 10) <= event.date && lr.endDate.slice(0, 10) >= event.date);
-                        let attendanceStatus: string = '-';
+                        const leaveHours = getApprovedLeaveHoursOnDate(leaveRequests, user.id, event.date);
+                        const leaveWindows = getApprovedLeaveWindowsOnDate(leaveRequests, user.id, event.date);
+                        let attendanceStatus = computeComparisonAttendanceStatus(record, myShiftRange, isScheduled, leaveHours, leaveWindows, scheduledHours, sysConfig.lateGraceMinutes);
                         if (event.status === '休館') attendanceStatus = '-';
-                        else if (leaveOnDay) attendanceStatus = '休假';
-                        else if (isScheduled) attendanceStatus = record ? record.status : '缺勤';
                         return { empId: user.id, name: user.name, position: user.position, scheduled: isScheduled, scheduledShift: myShiftRange || null, clockInTime: record?.clockInTime || null, clockOutTime: record?.clockOutTime || null, workHours: record?.workHours || null, attendanceStatus };
                     });
                     return { date: event.date, dayOfWeek: event.dayOfWeek, status: event.status, employees: empList };

@@ -297,7 +297,7 @@ export interface TodayAttendanceComparison {
     scheduledShift: string | null;  // 排班時段 e.g. "08:30-17:30"
     clockInTime: string | null;
     clockOutTime: string | null;
-    status: '已到' | '未到' | '遲到' | '早退' | '休假' | '未排班';
+    status: '已到' | '未到' | '遲到' | '早退' | '遲到+早退' | '異常' | '休假' | '未排班';
 }
 
 // 待處理事項

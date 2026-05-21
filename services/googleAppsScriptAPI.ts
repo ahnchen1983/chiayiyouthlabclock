@@ -222,7 +222,7 @@ export interface ScheduleAttendanceComparison {
         clockInTime: string | null;
         clockOutTime: string | null;
         workHours: number | null;
-        attendanceStatus: '正常' | '遲到' | '早退' | '缺勤' | '休假' | '-';
+        attendanceStatus: '正常' | '遲到' | '早退' | '遲到+早退' | '異常' | '缺勤' | '休假' | '-';
     }[];
 }
 

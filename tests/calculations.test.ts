@@ -104,6 +104,12 @@ describe('determineClockStatus', () => {
         expect(determineClockStatus('08:30-17:30', '08:40', '17:30', 5)).toBe('遲到');
         expect(determineClockStatus('08:30-17:30', '08:40', '17:30', 15)).toBe('正常');
     });
+
+    it('排班對照表依員工個別班段判斷，不吃場館營運時間', () => {
+        expect(determineClockStatus('12:00-16:00', '12:03', '16:01', grace)).toBe('正常');
+        expect(determineClockStatus('16:00-20:00', '15:53', '20:07', grace)).toBe('正常');
+        expect(determineClockStatus('10:00-19:00', '09:57', '19:20', grace)).toBe('正常');
+    });
 });
 
 // =============================================================

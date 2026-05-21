@@ -31,6 +31,8 @@ const AttendanceStatusBadge: React.FC<{ status: TodayAttendanceComparison['statu
         '未到': 'bg-red-100 text-red-800',
         '遲到': 'bg-yellow-100 text-yellow-800',
         '早退': 'bg-orange-100 text-orange-800',
+        '遲到+早退': 'bg-red-100 text-red-800',
+        '異常': 'bg-red-100 text-red-800',
         '休假': 'bg-blue-100 text-blue-800',
         '未排班': 'bg-gray-100 text-gray-500',
     };
