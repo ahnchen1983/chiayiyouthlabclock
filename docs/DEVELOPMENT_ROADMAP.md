@@ -1,8 +1,8 @@
 # 開發階段規劃 (Development Roadmap)
 
 > **建立日期：** 2026-04-08
-> **最後更新：** 2026-05-20
-> **對應 SDD 版本：** v1.6
+> **最後更新：** 2026-05-25
+> **對應 SDD 版本：** v2.1（現況核對版）
 > **狀態追蹤：** 以 checkbox 標記完成項目
 
 ## 進度總覽
@@ -17,8 +17,10 @@
 | **Phase 6 排班協作** | ✅ 完成 (2026-05-20) | 4/4 |
 | **Phase 7 系統健全化（技術債）** | ✅ 完成 (2026-05-20) | 7/7 |
 | **Phase 8 HR 細節補強** | ✅ 完成 | 5/5 |
+| **Phase 9 資安強化** | ✅/⏭️ 完成/停用 (2026-05-25) | 3/3 active + 9.2 停用 |
 
 > **v2.0 規劃：** 詳見 [SDD_v2_PROPOSAL.md](./SDD_v2_PROPOSAL.md)。Phase 5 為 v2.0 核心（資料模型重構），Phase 6~8 為延伸。
+> **2026-05-25 現況核對：** 最新功能/流程盤點請以 [CURRENT_FUNCTIONALITY_AUDIT_2026-05-25.md](./CURRENT_FUNCTIONALITY_AUDIT_2026-05-25.md) 為準。TOTP 已依產品決策移除；Sentry / FCM 程式保留但部署不啟用。
 
 ## v1.4 Roadmap 重整說明
 
@@ -431,8 +433,8 @@ Phase 3: 功能完善         <───────────┘
 | 7.2 | Playwright e2e（登入→打卡→請假→審核） | [x] 完成 (2026-05-20)：5 條 specs（登入 / 打卡 / 請假 / Admin 排班 / 換班） |
 | 7.3 | Code splitting — dashboard view lazy load + vendor chunk 拆分 | [x] 完成 (2026-04-10)：27 view chunks + react-vendor + firebase-vendor；entry 503KB→217KB raw（gzip 127→67KB），無 chunk-size 警告 |
 | 7.4 | GitHub Actions CI（typecheck + test + build） | [x] 完成 (2026-04-10) |
-| 7.5 | 錯誤監控整合（Sentry 或自架） | [x] 完成 (2026-05-18) |
-| 7.6 | FCM Push 通知取代 60s 輪詢 | [x] 完成 (2026-05-20)：Web Push token 管理 + service worker + 180s fallback polling |
+| 7.5 | 錯誤監控整合（Sentry 或自架） | [x] 程式完成 (2026-05-18)；2026-05-25 部署決策：暫不設定 `VITE_SENTRY_DSN` |
+| 7.6 | FCM Push 通知取代 60s 輪詢 | [x] 程式完成 (2026-05-20)：Web Push token 管理 + service worker + 180s fallback polling；2026-05-25 部署決策：暫不設定 `VITE_FCM_VAPID_KEY` |
 | 7.7 | CSV 匯出個資脫敏（A5） | [x] 完成 (2026-05-18)：csvMasking.ts 純函數 + 16 個 Vitest + 雙按鈕（脫敏 / 完整+確認） + 警語列 + AttendanceLog 補上「驗證資料」欄使 maskIP/maskGPS 實質生效 |
 
 ---
@@ -448,6 +450,19 @@ Phase 3: 功能完善         <───────────┘
 | 8.3 | 出勤紀錄 PDF 列印 | [x] |
 | 8.4 | 月結報表（管理員月度統計） | [x] |
 | 8.5 | 員工自助申請流程（特休、留停） | [x] |
+
+---
+
+## Phase 9：資安強化
+
+> **目標：** 補齊部署前的安全邊界與操作檢查。2026-05-25 現況核對後，保留已啟用且符合使用情境的項目；移除不適用的 TOTP 流程。
+
+| 編號 | 項目 | 狀態 |
+|------|------|------|
+| 9.1 | Netlify 安全 Headers + CORS allowlist | [x] 完成並推送；需以部署環境 header 檢查確認 |
+| 9.2 | TOTP 2FA | [ ] ⏭️ 停用/移除：使用者決策為登入流程保持單階段密碼，不再要求 SuperAdmin 設定 2FA |
+| 9.3 | Dependency Audit + CI gate | [x] 完成；CI 已改用 Node 24，PAT workflow scope 已解卡 |
+| 9.4 | Firestore Rules client-side deny all | [x] 完成並已部署；Rules 測試通過 |
 
 ---
 
@@ -470,6 +485,8 @@ Phase 3: 功能完善         <───────────┘
 | `scheduleVersions` | 排班版本快照 | Phase 6.2 新增 |
 | `monthLocks` | 月結鎖定狀態 | Phase 6.3 新增 |
 | `staffPreferences` | 員工偏好班次 | Phase 6.4 新增 |
+| `leaveOfAbsenceRequests` | 留停申請 | Phase 8.5 新增 |
+| `fcmTokens` | Web Push token（目前部署未啟用 VAPID） | Phase 7.6 新增 |
 
 ---
 

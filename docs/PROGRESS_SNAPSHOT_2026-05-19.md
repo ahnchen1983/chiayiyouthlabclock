@@ -1,164 +1,152 @@
-# 進度收整快照 — 2026-05-19
+# 進度收整快照 — 2026-05-19（2026-05-25 現況補正）
 
-> **用途：** 在 Phase 9 資安強化批 4 張收尾後，整理目前累計進度與待辦清單。
-> 不取代 SDD / Roadmap / CHANGELOG，只是「截至今日的一頁式對外摘要」。
+> **用途：** 將原 2026-05-19 進度快照修正到目前 repo / 部署決策的實際狀態。
+> 最新功能與流程核對請優先讀 [CURRENT_FUNCTIONALITY_AUDIT_2026-05-25.md](./CURRENT_FUNCTIONALITY_AUDIT_2026-05-25.md)。
 
 ---
 
 ## 1. 進度總覽
 
-| Phase | 名稱 | 狀態 | 子項 | 對應 commit / 文件 |
-|-------|------|------|------|--------------------|
-| **1** | 基礎修正 | ✅ 完成 | 5/5 | v1.1 |
-| **2** | 權限與安全（第一輪） | ✅ 完成 | 4/4 | v1.2 |
-| **3** | 功能完善（客戶第一輪 6 項） | ✅ 完成 | 6/6 | v1.5 |
-| **4** | 進階功能 | ✅ 完成 | 4/4 | v1.6 |
-| **5** | 排班模型重構（v2.0 核心） | ✅ 完成 | 7/7（5.7 取消） | v2.0 |
-| **6** | 排班協作 | ✅ 完成 | **4/4** | 6.1 / 6.2 / 6.3 / 6.4 全綠 |
-| **7** | 系統健全化（技術債） | ✅ 完成 | **7/7** | 7.1 / 7.2 / 7.3 / 7.4 / 7.5 / 7.6 / 7.7 全綠 |
-| **8** | HR 細節補強 | ✅ 完成 | **5/5** | 8.1 / 8.2 / 8.3 / 8.4 / 8.5 全綠 |
-| **9** | 資安強化 | ✅ 完成 | **4/4** | 9.1 / 9.2 / 9.3 / 9.4 全綠 |
+| Phase | 名稱 | 狀態 | 子項 |
+|-------|------|------|------|
+| **1** | 基礎修正 | ✅ 完成 | 5/5 |
+| **2** | 權限與安全（第一輪） | ✅ 完成 | 4/4 |
+| **3** | 功能完善（客戶第一輪） | ✅ 完成 | 6/6 |
+| **4** | 進階功能 | ✅ 完成 | 4/4 |
+| **5** | 排班模型重構（v2.0 核心） | ✅ 完成 | 7/7（5.7 取消） |
+| **6** | 排班協作 | ✅ 完成 | 4/4 |
+| **7** | 系統健全化（技術債） | ✅ 完成 | 7/7 |
+| **8** | HR 細節補強 | ✅ 完成 | 5/5 |
+| **9** | 資安強化 | ✅/⏭️ 完成/停用 | 3/3 active + 9.2 TOTP 停用 |
 
-**已完成：** Phase 1–9（共 **46 個子項**）
-**剩餘規劃中：** 0 個子項
-**已列追蹤：** 9.3 First-Run audit triage 已完成，剩低風險依賴鏈升級追蹤
+**目前結論：** Phase 1–8 啟用功能已完成；Phase 9 啟用項目已完成。TOTP 已依產品決策移除，不再列為待辦。
 
 ---
 
-## 2. Phase 9 資安強化批完成內容（2026-05-18 ~ 19）
+## 2. 2026-05-25 補正重點
 
-| # | Phase | Commit | 重點 |
-|---|-------|--------|------|
-| 1 | **9.1 Netlify 安全 Headers + CORS** | `c630014` | CSP / HSTS / X-Frame-Options / Referrer-Policy / Permissions-Policy + Functions CORS allowlist |
-| 2 | **9.3 Dependency Audit + CI gate** | `ba31dd0` | Dependabot 設定 + SECURITY.md + npm audit 進 CI workflow（high/critical fail，moderate/low warn） |
-| 3 | **9.4 Firestore Rules** | `a015550` | 全 collection client-side **deny all**；所有讀寫只能走 Netlify Functions（後端帶 service account） |
-| 4 | **9.2 TOTP 2FA** | `623e724` | 完整 TOTP 流程：QR 設定、6 碼驗證、10 組 recovery codes 雜湊儲存、SuperAdmin 強制啟用、reset by SuperAdmin |
-
-**安全性紅線守住：**
-- ✅ TOTP secret / recoveryCodes 明文絕不進 console / Sentry / auditLog
-- ✅ SuperAdmin 不可 disable 自己（後端 403 守門）
-- ✅ Firestore rules 無 `if request.auth != null` 例外，純後端代寫
-- ✅ Sentry user payload 僅 `id + role`，不含姓名 / email / phone
+| 項目 | 修正後狀態 |
+|------|------------|
+| **TOTP** | ⏭️ 已移除登入流程、型別、元件、測試與依賴；SuperAdmin 回到單階段密碼登入 |
+| **Sentry** | 程式保留，但部署決策為暫不設定 `VITE_SENTRY_DSN`；未啟用不影響系統使用 |
+| **FCM Push** | 程式保留，但部署決策為暫不設定 `VITE_FCM_VAPID_KEY`；站內通知與 fallback polling 仍可用 |
+| **Firestore Rules** | ✅ 已部署 client-side deny all；Netlify Functions 使用 service account 代寫 |
+| **CI / Pages** | ✅ PAT workflow scope 已解卡；CI 改 Node 24；GitHub Pages 用 `.nojekyll` 避免 Jekyll build 誤跑 |
+| **Admin 密碼** | ✅ 已依需求重設為 `admin1234`；請登入後改成正式強密碼 |
 
 ---
 
 ## 3. 測試與品質指標
 
-| Metric | 起點（v2.0 收尾） | 目前 | 變化 |
-|--------|------------------|------|------|
-| Vitest 測試案例 | 67 | **190** | +123 |
-| 測試檔案數 | 1 | **14** | +13 |
-| Playwright e2e specs | 0 | **5** | +5 |
-| GitHub Actions CI | tsc + test + build | 加 npm audit gate | — |
-| TypeScript 錯誤 | 0 | 0 | — |
-| Bundle entry (raw) | 386 KB | 220 KB 左右 | -43% |
-| Bundle entry (gzip) | 103 KB | 67 KB 左右 | -35% |
-| Vendor 拆分 | 1 chunk | 3（react / firebase / app） | +2 |
-| 已知 npm vulnerabilities | 未掃 | **8 low** | First-Run 已 triage，無 high / critical |
+| Metric | 目前 |
+|--------|------|
+| TypeScript | ✅ 0 錯誤 |
+| Vitest | ✅ **174 tests** |
+| Playwright e2e | ✅ **5 specs** |
+| Firestore Rules tests | ✅ **7 tests** |
+| Production build | ✅ pass |
+| Bundle entry | 約 233 KB raw / 71.65 KB gzip |
+| GitHub Actions CI | ✅ typecheck + test + build + audit |
+| 已知 npm vulnerabilities | 8 moderate（無 high / critical；CI gate 不阻擋） |
 
-### 測試檔案盤點
+### 目前測試檔案盤點
 
 | 檔案 | 涵蓋功能 |
 |------|---------|
-| `tests/calculations.test.ts` | 密碼 / 遲到判定 / 特休 / 假別餘額 / 薪資 / 排班 normalize / 兩頭班 / 覆蓋率 / **LOA 凍結** |
+| `tests/calculations.test.ts` | 密碼 / 遲到判定 / 特休 / 假別餘額 / 薪資 / 排班 normalize / 兩頭班 / 覆蓋率 / LOA 凍結 |
 | `tests/csvMasking.test.ts` | 姓名 / empId / IP / GPS 脫敏 |
-| `tests/monthLock.test.ts` | 月結鎖定邊界（鎖定月最後一天 / 解鎖 / 跨月） |
-| `tests/sentry.test.ts` | applyUserToSentry + scrubPasswordFields + ErrorBoundary 上報 |
-| `tests/attendancePrint.test.ts` | 列印 HTML 純函數 + XSS escape |
-| `tests/cors.test.ts` | 9.1 CORS allowlist |
-| `tests/firestore-rules.test.ts` | 9.4 規則 deny all |
-| `tests/totp.test.ts` | 9.2 TOTP code 生成 / 驗證 / recovery codes |
-| `tests/monthlyReport.test.ts` | 8.4 月結報表：請假分布 / 打卡異常 / 工時排名 / 摘要 |
-| `tests/selfServiceRequests.test.ts` | 8.5 留停自助申請驗證 / 狀態判斷 |
-| `tests/scheduleVersion.test.ts` | 6.2 排班版本快照 / 差異比對 |
-| `tests/shiftSwap.test.ts` | 6.1 換班申請驗證 / 執行交換 |
-| `tests/staffPreferences.test.ts` | 6.4 員工偏好去重 / 重疊偵測 / 日期命中 |
-| `tests/fcm.test.ts` | 7.6 FCM token 過濾 / payload 組裝 / fatal error 分類 |
-| `tests/e2e/*.spec.ts` | 7.2 Playwright：登入 / 打卡 / 請假 / Admin 排班 / 換班 |
+| `tests/monthLock.test.ts` | 月結鎖定邊界 |
+| `tests/sentry.test.ts` | Sentry helper 與 payload scrub（部署未啟用 DSN） |
+| `tests/attendancePrint.test.ts` | 出勤列印 HTML 與 XSS escape |
+| `tests/cors.test.ts` | CORS allowlist |
+| `tests/firestore-rules.test.ts` | Firestore Rules deny all |
+| `tests/monthlyReport.test.ts` | 月結報表 |
+| `tests/selfServiceRequests.test.ts` | 留停自助申請 |
+| `tests/scheduleVersion.test.ts` | 排班版本快照 / 差異比對 |
+| `tests/shiftSwap.test.ts` | 換班申請驗證 / 執行交換 |
+| `tests/staffPreferences.test.ts` | 員工偏好去重 / 重疊偵測 / 日期命中 |
+| `tests/fcm.test.ts` | FCM token 過濾 / payload 組裝 / fatal error 分類 |
+| `tests/e2e/*.spec.ts` | Playwright：登入 / 打卡 / 請假 / Admin 排班 / 換班 |
 
 ---
 
-## 4. Phase 完成狀態
+## 4. 目前啟用功能地圖
 
-目前 Phase 1–9 已全數實作完成。
+### 員工端
 
-### Phase 6
+- 打卡 / 下班打卡
+- 我的班表 / 總班表
+- 開放班次認領
+- 換班 / 替班申請
+- 打卡紀錄
+- 請假申請與假別餘額
+- 留停申請
+- 偏好設定
+- 補打卡申請
+- 薪資明細與薪資條列印
+- 站內通知
 
-已完成：6.1 換班 / 6.2 版本歷史 / 6.3 月結鎖定 / 6.4 員工偏好班次設定。
+### Admin / SuperAdmin 端
 
-### Phase 7
-
-| 編號 | 名稱 | 狀態 |
-|------|------|------|
-| 7.2 | Playwright e2e 測試 | 已完成 |
-| 7.6 | FCM Push 通知（取代 60s 輪詢） | 已完成 |
-
-### Phase 9 follow-up
-
-- 9.3 **First-Run npm audit triage 已完成** — `npm audit --omit=dev` 回報 8 個 low severity vulnerabilities，來源集中於 `firebase-admin` 的 Google Cloud 依賴鏈：
-  1. 目前無 high / critical CVE，不會觸發 CI 阻擋條件
-  2. `npm audit fix --force` 會降到 `firebase-admin@10.3.0`，屬破壞性變更，不建議直接執行
-  3. 已於 `SECURITY.md` 加 acknowledged risk，後續等上游 patch / minor 版本再評估升級
-
----
-
-## 5. 待用戶本機驗收的手動煙霧測試
-
-A 批與 Phase 9 批的 § 4.3 / § 4.4 手動測試均需瀏覽器/實際操作，沙箱跑不了：
-
-| Phase | 測試重點 | 對應文件 |
-|-------|---------|---------|
-| 6.3 | 結算鎖定 + 4 個 modify action 應跳 423 | `PHASE_6.3_MONTH_LOCK.md` § 4.3 |
-| 7.5 | Sentry production 上報需設 `VITE_SENTRY_DSN` 才驗得到 | `PHASE_7.5_SENTRY.md` § 4.3 |
-| 8.2 | 留停期間餘額凍結要看員工 dashboard | `PHASE_8.2_LEAVE_OF_ABSENCE.md` § 4.4 |
-| 8.3 | A4 切頁 / `<script>` 標籤 escape 驗證 | `PHASE_8.3_ATTENDANCE_PDF.md` § 4.3 |
-| 9.1 | curl response header 檢查 / 跨域請求測試 | `PHASE_9.1_SECURITY_HEADERS.md` § 4.3 |
-| 9.2 | 完整 TOTP 註冊 → 驗證 → recovery → reset 流程 | `PHASE_9.2_TOTP_2FA.md` § 4.3 |
-| 9.4 | Firestore Console 直接讀寫應被擋 | `PHASE_9.4_FIRESTORE_RULES.md` § 4.3 |
-
-整合性煙霧測試清單也在 `docs/A_BATCH_SMOKE_TEST.md`。
+- 總覽儀表板
+- 排班管理（逐日、多人時段、兩頭班、休館值班、偏好提示、版本歷史）
+- 排班對照表 / 出勤紀錄
+- 請假審核 / 換班審核 / 留停審核 / 補打卡審核
+- 開放排班
+- 員工管理
+- 月結報表
+- SuperAdmin：薪資計算、系統日誌、系統設定
 
 ---
 
-## 6. 部署待辦（人工執行）
+## 5. 核心流程核對
 
-| 項目 | 動作 |
+| 流程 | 現況 |
 |------|------|
-| **9.4 Firestore Rules 部署** | `firebase deploy --only firestore:rules`（rules 已寫好在 repo，但要人工部署到 Firebase） |
-| **9.1 Netlify Headers** | `netlify.toml` 推上去後自動生效，但需於 Netlify Dashboard 確認 |
-| **9.2 TOTP for SuperAdmin** | 第一次部署後 ADMIN 帳號需主動到「個人設定」啟用 2FA |
-| **7.5 Sentry DSN** | Netlify Dashboard > Environment variables 加 `VITE_SENTRY_DSN` |
-| **7.6 FCM VAPID Key** | Netlify Dashboard > Environment variables 加 `VITE_FCM_VAPID_KEY` |
-| **CI workflow.yml push 卡住** | 本機 PAT 缺 `workflow` scope，需更新 PAT 或改用 SSH remote |
+| 登入 | 單階段密碼登入；密碼雜湊、防暴力破解仍保留 |
+| 打卡狀態 | 依員工個別排班時間判斷遲到/早退，不用場館營運時間 |
+| 忘記上班卡 | 可透過補打卡申請補救，不讓當日完全卡死 |
+| 排班與請假勾稽 | 出勤對照表會納入排班、打卡、請假資料；仍建議以真實資料做一次手動煙霧測試 |
+| 休館值班 | `休館(值班)` 可排班，且應在排班/出勤對照與薪資中反映 |
+| 兼職時數 | 薪資、月結報表、排班檢查均以排班/出勤資料計算；需本機實測確認實際資料 |
+| 月結鎖定 | 鎖定月份會阻擋排班/打卡/審核等 retroactive 修改 |
+| 通知 | 站內通知啟用；Web Push 暫不部署 |
+
+---
+
+## 6. 部署現況
+
+| 項目 | 狀態 |
+|------|------|
+| Netlify 安全 headers | ✅ 已推送，部署後需以實際 response header 抽查 |
+| Firestore Rules | ✅ 已部署，Rules 測試通過 |
+| GitHub Actions | ✅ Node 24 workflow 已推送且 CI 綠燈 |
+| GitHub Pages | ✅ `.nojekyll` 已推送，避免 Jekyll 處理 Vite build |
+| Sentry DSN | ⏭️ 不設定 |
+| FCM VAPID Key | ⏭️ 不設定 |
+| TOTP | ⏭️ 已移除 |
 
 ---
 
 ## 7. 建議下一步
 
-### 短線（半天內可結）
-
-- **CI 推送解卡**：更新 PAT 加 `workflow` scope，把累積的 `.github/workflows/ci.yml` 變更 push 上去
-- **FCM 部署設定**：Netlify Dashboard 加 `VITE_FCM_VAPID_KEY`，再跑一次手動煙霧測試
-
-### 長線
-
-- 規劃下一個 milestone（多店 / multi-tenant / 行動 app / 進階報表擇一）
+1. 用真實管理者/員工資料跑一次手動煙霧測試，重點放在「排班對照表、請假勾稽、休館值班、兼職時數、忘記打卡補救」。
+2. 登入 `ADMIN / admin1234` 後立即改正式強密碼。
+3. 若後續確定需要即時手機推播，再回頭啟用 FCM；若需要錯誤追蹤，再回頭設定 Sentry DSN。
 
 ---
 
-## 8. 文件入口一覽
+## 8. 文件入口
 
 | 文件 | 角色 |
 |------|------|
-| `SDD.md` (v2.0) | 系統設計權威來源 |
-| `SDD_v2_PROPOSAL.md` | v2.0 起源與決策紀錄（Phase 5 已實作完成註記） |
-| `DEVELOPMENT_ROADMAP.md` | Phase 1–9 全部規劃 + 進度標記 |
-| `CHANGELOG.md` | 完整版本變更紀錄（v1.0 ~ v2.0） |
-| `VERIFICATION_MANUAL.md` | 100+ 個手動驗證測試案例 |
-| `EXECUTION_PLAN.md` | B 批 12 張票執行計畫 + 客戶決策表 |
-| `A_BATCH_SMOKE_TEST.md` | A 批工單整合性手動測試清單 |
-| `PROGRESS_SNAPSHOT_2026-05-19.md` | **本檔** — 一頁式進度摘要 |
-| `PHASE_*.md` | 14 張工單檔（已實作 / 待實作） |
+| `SDD.md` | 系統設計文件；頂部已標註 v2.1 現況核對 |
+| `CURRENT_FUNCTIONALITY_AUDIT_2026-05-25.md` | **最新功能/流程現況權威摘要** |
+| `DEVELOPMENT_ROADMAP.md` | Phase 1–9 規劃與完成狀態 |
+| `CHANGELOG.md` | 版本變更紀錄 |
+| `DEPLOYMENT_CHECKLIST.md` | 部署檢查清單；TOTP/Sentry/FCM 已按目前決策調整 |
+| `VERIFICATION_MANUAL.md` | 手動驗證案例 |
+| `A_BATCH_SMOKE_TEST.md` | 整合性煙霧測試清單 |
 
 ---
 
@@ -166,11 +154,10 @@ A 批與 Phase 9 批的 § 4.3 / § 4.4 手動測試均需瀏覽器/實際操作
 
 | 維度 | 狀態 | 備註 |
 |------|------|------|
-| 功能完整度 | 🟢 良好 | 客戶第一輪 + 第二輪需求全處理 + v2.0 重構；Phase 8 全完成 |
-| 測試覆蓋 | 🟢 良好 | 190 個單元測試 + 5 條 Playwright e2e，純函數與主流程皆有覆蓋 |
-| 觀測性 | 🟡 中等 | Sentry 已接但需設 DSN；後端錯誤監控待補 |
-| 安全 | 🟢 良好 | Phase 9 全 4 張完成，含 TOTP / Rules / Headers |
-| CI/CD | 🟢 良好 | GitHub Actions typecheck + test + build + audit |
-| 文件 | 🟢 良好 | SDD / Roadmap / CHANGELOG / 14 張工單齊備 |
-| 部署 | 🟡 中等 | 多項待 push（PAT 卡住） + 需手動部署 Firestore Rules |
-| e2e 測試 | 🟢 良好 | 5 條 Playwright smoke specs 已建立 |
+| 功能完整度 | 🟢 良好 | Phase 1–8 啟用功能完成 |
+| 測試覆蓋 | 🟢 良好 | 174 Vitest + 5 Playwright + 7 Firestore Rules tests |
+| 觀測性 | 🟡 中等 | Sentry 程式保留但部署不啟用 |
+| 安全 | 🟢 良好 | Headers / CORS / Rules / 密碼雜湊 / 鎖定 / audit log；TOTP 已停用 |
+| CI/CD | 🟢 良好 | CI、Pages、PAT workflow scope 均已處理 |
+| 文件 | 🟢 良好 | SDD / Roadmap / Snapshot 已補正 |
+| 部署 | 🟢 良好 | 目前沒有必填的 Sentry/FCM/TOTP 部署卡點 |

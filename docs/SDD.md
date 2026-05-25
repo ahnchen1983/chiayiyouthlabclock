@@ -1,15 +1,18 @@
 # 嘉義青年實驗室打卡系統 — 軟體設計文件 (SDD)
 
-> **版本：** v2.0
+> **版本：** v2.1（現況核對版）
 > **建立日期：** 2026-04-08
-> **最後更新：** 2026-04-10
-> **對應程式版本：** Phase 5 全部完成（v2.0 核心 — 排班模型重構）
-> **開發進度：** Phase 1 ✅ · Phase 2 ✅ · Phase 3 ✅ · Phase 4 ✅ · Phase 5 ✅ · Phase 6/7/8 規劃中
+> **最後更新：** 2026-05-25
+> **對應程式版本：** Phase 1–8 完成；Phase 9 啟用項目完成；TOTP 已依產品決策停用
+> **開發進度：** Phase 1 ✅ · Phase 2 ✅ · Phase 3 ✅ · Phase 4 ✅ · Phase 5 ✅ · Phase 6 ✅ · Phase 7 ✅ · Phase 8 ✅ · Phase 9 ✅/⏭️（9.2 TOTP 停用）
 >
 > **相關文件：**
+> - [CURRENT_FUNCTIONALITY_AUDIT_2026-05-25.md](./CURRENT_FUNCTIONALITY_AUDIT_2026-05-25.md) — **目前功能與流程核對報告（最新實況）**
 > - [DEVELOPMENT_ROADMAP.md](./DEVELOPMENT_ROADMAP.md) — 開發階段規劃
 > - [CHANGELOG.md](./CHANGELOG.md) — 完整變更紀錄
 > - [VERIFICATION_MANUAL.md](./VERIFICATION_MANUAL.md) — 系統驗證手冊
+
+> **閱讀提醒：** 本 SDD 主體保留歷史設計脈絡，部分段落仍描述早期 v1/v2 演進細節；若與 2026-05-25 之後的程式實作不同，以 `CURRENT_FUNCTIONALITY_AUDIT_2026-05-25.md`、`types.ts`、`netlify/functions/api.ts` 和測試結果為準。
 
 ---
 

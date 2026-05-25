@@ -6,7 +6,31 @@
 
 ---
 
-## [Unreleased] - 2026-05-20 — Phase 6 / Phase 7 / Phase 8 補強
+## [Unreleased] - 2026-05-25 — 現況核對與部署決策
+
+### 變更 (Changed)
+- SDD 更新為 v2.1 現況核對版，新增 `docs/CURRENT_FUNCTIONALITY_AUDIT_2026-05-25.md` 作為目前功能與流程的最新摘要。
+- Phase 9 狀態補正為「啟用項目完成 + TOTP 停用」：
+  - 9.1 安全 headers / CORS：保留。
+  - 9.3 dependency audit / CI gate：保留，CI 已改用 Node 24。
+  - 9.4 Firestore Rules：保留並已部署。
+  - 9.2 TOTP：依產品決策移除，不再作為登入或部署待辦。
+- Sentry 與 FCM Web Push 程式保留，但目前部署不設定 `VITE_SENTRY_DSN` / `VITE_FCM_VAPID_KEY`。
+
+### 移除 (Removed)
+- 移除 TOTP 登入流程、設定頁入口、型別、測試與相關依賴，SuperAdmin 回到單階段密碼登入。
+
+### 修正 (Fixed)
+- GitHub Pages 新增 `.nojekyll`，避免 Pages 以 Jekyll 處理 Vite build。
+- GitHub Actions workflow 改用 Node 24，避免 Node 20 deprecation warning。
+- 排班出勤對照與打卡狀態修正為依「員工個別排班時間」判斷遲到/早退，不以場館營運時間作為依據。
+
+### 測試
+- 目前驗證基準：174 個 Vitest、5 條 Playwright e2e、7 個 Firestore Rules tests。
+
+---
+
+## [2026-05-20] — Phase 6 / Phase 7 / Phase 8 補強
 
 ### 新增 (Added)
 - **7.2 Playwright e2e**
@@ -55,7 +79,7 @@
   - 審核支援通知、audit log、重複審核防護與月結鎖定 423 防護
 
 ### 測試
-- Vitest 增至 **190 個測試**
+- Vitest 當時增至 **190 個測試**；2026-05-25 移除 TOTP 後目前有效基準為 174 個測試
 - Playwright e2e 新增 **5 條 specs**
 - 新增 `tests/fcm.test.ts`：FCM token 過濾、payload 組裝、fatal error 分類
 - 新增 `tests/staffPreferences.test.ts`：員工偏好去重、上限、重疊偵測與日期命中
