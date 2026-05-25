@@ -13,6 +13,11 @@
   node_bundler = "esbuild"
 
 [[redirects]]
+  from = "/assets/*"
+  to = "/asset-not-found.js"
+  status = 404
+
+[[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200

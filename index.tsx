@@ -25,6 +25,29 @@ if (SENTRY_DSN) {
     });
 }
 
+const isDynamicImportFailure = (error: unknown): boolean => {
+    const message = error instanceof Error ? error.message : String(error ?? '');
+    return /Failed to fetch dynamically imported module|Importing a module script failed|ChunkLoadError/i.test(message);
+};
+
+const currentEntrySrc = (): string => {
+    const entry = document.querySelector<HTMLScriptElement>('script[type="module"][src*="/assets/index-"]');
+    return entry?.src ?? 'unknown-entry';
+};
+
+const reloadOnceForFreshChunks = (error: unknown): void => {
+    if (!isDynamicImportFailure(error)) return;
+
+    const key = `chunk-reload-attempted:${currentEntrySrc()}`;
+    if (sessionStorage.getItem(key) === '1') return;
+
+    sessionStorage.setItem(key, '1');
+    window.location.reload();
+};
+
+window.addEventListener('error', (event) => reloadOnceForFreshChunks(event.error ?? event.message));
+window.addEventListener('unhandledrejection', (event) => reloadOnceForFreshChunks(event.reason));
+
 const rootElement = document.getElementById('root');
 if (!rootElement) {
   throw new Error("Could not find root element to mount to");
