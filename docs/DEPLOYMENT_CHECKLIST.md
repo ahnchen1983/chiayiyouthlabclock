@@ -17,8 +17,8 @@
 | 1 | Firestore Rules 部署 | 15 分 | **高**（如錯會擋掉所有 API） | Firebase CLI 已裝 |
 | 2 | Sentry 整合 | 20 分 | 低 | Sentry 帳號 |
 | 3 | FCM Web Push 整合 | 30 分 | 中（service worker 在不同瀏覽器行為不同） | Firebase Console 存取權 |
-| 4 | TOTP 強制啟用（SuperAdmin） | 10 分 | **高**（沒存好 recovery codes 會鎖死自己） | 1 完成、要有 Authenticator app |
-| 5 | 手動煙霧測試 | 60–90 分 | 低 | 1–4 都完成 |
+| 4 | TOTP | — | — | **已停用**（2026-05-25 產品決策） |
+| 5 | 手動煙霧測試 | 60–90 分 | 低 | 1 完成；2/3 視是否啟用 |
 
 ---
 
@@ -311,94 +311,26 @@ git push origin main
 
 ---
 
-## 4️⃣ TOTP 強制啟用（SuperAdmin）
+## 4️⃣ TOTP（已停用）
 
-### 為什麼重要
+### 狀態
 
-Phase 9.2 已實作 TOTP 2FA，但 ADMIN 帳號預設**未啟用**。沒啟用 = 帳密外洩就完蛋。
+TOTP 2FA 已於 2026-05-25 依現場維運需求停用。系統目前採「帳號 + 密碼」登入，並保留：
 
-### 🚨 重要警告：先做這 3 件事再點啟用
+- 密碼 scrypt 雜湊
+- 登入失敗鎖定
+- SuperAdmin 權限控管
+- Firestore client-side deny-all rules
 
-1. **準備 Authenticator app**：手機裝 Google Authenticator / Microsoft Authenticator / Authy 其中一個
-2. **準備好存放 recovery codes 的安全位置**：1Password / Bitwarden / 印出來鎖抽屜
-3. **不要在公司唯一一台筆電上做**：手機弄丟 + recovery codes 沒存 = 永久鎖死，需要去 Firebase Console 手動改 Firestore `totpSecrets/ADMIN` 文件才能救
+### 部署注意
 
-### 步驟
+不需要啟用 Authenticator app，也不需要保存 recovery codes。舊 Firestore `totpSecrets/*` 文件即使存在，也不會再被登入流程讀取。
 
-#### 4.1 登入並進入設定
+### 驗收
 
-1. 開 production URL
-2. 用 `ADMIN` 帳號登入（預設密碼 `admin1234`，如果還沒改強烈建議先改！）
-3. 進入「個人設定」或「修改密碼」相關頁面
-4. 找到 **「啟用兩階段驗證 (2FA)」** 區塊
-
-#### 4.2 設定流程
-
-1. 點 **啟用 2FA**
-2. 系統顯示 QR Code
-3. 用 Authenticator app 掃描 QR Code（會自動加入「嘉義青年實驗室」帳號）
-4. App 會開始每 30 秒產生一組 6 位數驗證碼
-5. 在系統頁面輸入當下 6 位數
-6. 提交後顯示 **10 組 recovery codes**（每組約 8 位數）
-7. **這是唯一一次顯示**！立刻：
-   - 複製到 1Password / Bitwarden
-   - 或截圖存到加密硬碟
-   - 或印出來鎖進保險箱
-8. 確認儲存後再點「我已妥善保存」
-
-#### 4.3 驗證流程可用
-
-1. **登出** ADMIN
-2. **重新登入**：輸入帳密
-3. 系統應跳出「請輸入 2FA 驗證碼」畫面
-4. 開 Authenticator app 看當下 6 位數，輸入
-5. 應成功登入
-
-#### 4.4 測試 recovery code
-
-1. 再登出
-2. 重新登入到 2FA 畫面
-3. 點 **「使用 recovery code」**
-4. 輸入剛剛存的 10 組之中**任一組**
-5. 應成功登入
-6. **該組 recovery code 用完即廢**（系統會自動移除）
-
-### ✅ 驗收
-
-- [ ] Authenticator app 顯示「嘉義青年實驗室 (ADMIN)」
-- [ ] 登出再登入需要 2FA 才能進
-- [ ] 10 組 recovery codes 已存到安全位置
-- [ ] 用一組 recovery code 成功登入過（驗證真的能用）
-- [ ] Firebase Console > Firestore > `totpSecrets/ADMIN` 文件存在且 `enabled: true`
-
-### 🚨 救急流程：手機掉了 + recovery codes 也沒存
-
-唯一解法（破壞性）：
-
-```
-1. 找一台已登入的其他 SuperAdmin 帳號（如有）
-2. 進「員工管理」找 ADMIN → 點「重設 2FA」
-3. 該功能會清掉 totpSecrets/ADMIN 文件，2FA 變回未啟用
-4. ADMIN 帳號可用密碼直接登入，再重做 4.1 流程
-```
-
-如果**只有一個** SuperAdmin 帳號被鎖：
-1. Firebase Console > Firestore > 找 `totpSecrets/ADMIN`
-2. **刪除整份文件**
-3. 回系統用密碼登入
-4. 重做 2FA 啟用流程
-
----
-
-## 5️⃣ 手動煙霧測試（7 個 Phase）
-
-### 為什麼重要
-
-單元測試（190 個）+ e2e（5 個）覆蓋了純函數與主流程，但下列項目**必須瀏覽器手動跑**：
-
-- 需要實際 OAuth / 第三方服務的（Sentry 上報、FCM 推播）
-- 需要 multi-user 同步觀察的（換班雙方確認）
-- A4 列印 / PDF 切頁這類視覺驗證
+- [ ] `ADMIN` 使用帳號密碼可直接登入
+- [ ] 登入後不再跳出 TOTP / 2FA 設定視窗
+- [ ] 登出後再次登入仍不需要 6 位數驗證碼
 
 ### 完整清單
 
@@ -408,7 +340,6 @@ Phase 9.2 已實作 TOTP 2FA，但 ADMIN 帳號預設**未啟用**。沒啟用 =
 |---|-------|------|------|---------|
 | 1 | **9.1** Headers | curl 檢查 response header | `PHASE_9.1_SECURITY_HEADERS.md` § 4.3 | 10 分 |
 | 2 | **9.4** Firestore Rules | Console Rules Playground | `PHASE_9.4_FIRESTORE_RULES.md` § 4.3 | 10 分 |
-| 3 | **9.2** TOTP | 註冊 → 登入 → recovery → reset | `PHASE_9.2_TOTP_2FA.md` § 4.3 | 15 分 |
 | 4 | **6.3** 月結鎖定 | 鎖定後 4 個 modify action 應跳 423 | `PHASE_6.3_MONTH_LOCK.md` § 4.3 | 20 分 |
 | 5 | **8.2** 留停凍結 | 員工 dashboard 看餘額是否正確凍結 | `PHASE_8.2_LEAVE_OF_ABSENCE.md` § 4.4 | 15 分 |
 | 6 | **8.3** 出勤 PDF | A4 切頁 + `<script>` escape | `PHASE_8.3_ATTENDANCE_PDF.md` § 4.3 | 15 分 |
@@ -442,9 +373,9 @@ Phase 9.2 已實作 TOTP 2FA，但 ADMIN 帳號預設**未啟用**。沒啟用 =
 
 - ✅ Phase 1–9 全 46 個子項實作完成
 - ✅ Firestore Rules 已部署（防 client 繞過）
-- ✅ Sentry 正在收集 production 錯誤
-- ✅ FCM 正在即時推播通知（取代輪詢）
-- ✅ SuperAdmin 帳號有 2FA 保護
+- ⏭️ Sentry 未啟用（可日後視需求補）
+- ⏭️ FCM 未啟用（站內通知仍可用）
+- ⏭️ TOTP 已停用（改採帳密 + 失敗鎖定 + 權限控管）
 - ✅ CI 守門（typecheck + 190 tests + 5 e2e + npm audit）
 - ✅ 文件齊備（SDD / Roadmap / CHANGELOG / 14 張工單 / 本檔）
 
@@ -457,7 +388,7 @@ Phase 9.2 已實作 TOTP 2FA，但 ADMIN 帳號預設**未啟用**。沒啟用 =
 | 每週 | 看 Sentry Issues 有沒有新錯誤；看 GitHub Dependabot PRs |
 | 每月 | 月底前 SuperAdmin 跑「結算並鎖定」（Phase 6.3）|
 | 每季 | 跑 `npm audit --omit=dev` 看新 CVE；考慮升 firebase major version |
-| 每半年 | 重生 TOTP recovery codes（如有用掉）；review Firebase Console 內 `fcmTokens` 數量是否合理 |
+| 每半年 | review Firebase Console 內 `fcmTokens` 數量是否合理（若 FCM 有啟用） |
 | 年度 | 系統健康度全面 review；規劃下一階段（v3.0 多店 / mobile app / 進階報表 etc.） |
 
 ---
@@ -468,6 +399,5 @@ Phase 9.2 已實作 TOTP 2FA，但 ADMIN 帳號預設**未啟用**。沒啟用 =
 |------|------|
 | Netlify build 掛 | Netlify Dashboard 點上一個成功的 deploy → **Publish deploy** |
 | Firestore Rules 部署完登入掛了 | 回上面 § 1 「失敗回滾」 |
-| ADMIN 帳號被 2FA 鎖死 | 回上面 § 4「救急流程」 |
 | Sentry 配額用爆 | 升 Sentry plan，或暫時拉低 `tracesSampleRate` 到 0.01 |
 | FCM 推播全部失敗 | 暫時忽略（Firestore 通知還在），下次 deploy 再修；輪詢 fallback 會接手 |

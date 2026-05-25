@@ -5,11 +5,10 @@ import LoginPage from './pages/LoginPage';
 import EmployeeDashboard from './pages/EmployeeDashboard';
 import AdminDashboard from './pages/AdminDashboard';
 import ErrorBoundary from './components/ErrorBoundary';
-import TotpSetupModal from './components/TotpSetupModal';
 import { UserRole } from './types';
 
 const AppContent: React.FC = () => {
-  const { user, loading, needsTotpSetup, setNeedsTotpSetup } = useAuth();
+  const { user, loading } = useAuth();
 
   if (loading) {
     return (
@@ -21,17 +20,6 @@ const AppContent: React.FC = () => {
 
   if (!user) {
     return <LoginPage />;
-  }
-
-  // Phase 9.2：SuperAdmin 強制守門 — 必須先啟用 2FA 才能進 dashboard
-  if (user.role === UserRole.SuperAdmin && needsTotpSetup) {
-    return (
-      <TotpSetupModal
-        forced
-        onClose={() => setNeedsTotpSetup(false)}
-        onCompleted={() => setNeedsTotpSetup(false)}
-      />
-    );
   }
 
   if (user.role === UserRole.SuperAdmin || user.role === UserRole.Admin) {

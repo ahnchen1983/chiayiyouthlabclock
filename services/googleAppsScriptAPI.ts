@@ -5,7 +5,7 @@ import {
     LeaveRequest, LeaveStatus, PartTimeHourInfo,
     Employee, TodayAttendanceComparison, DashboardStats, SalaryDetail,
     SystemConfig, ClockMakeupRequest, Notification,
-    LeaveBalance, OpenShift, MonthLock, LoginResult, TotpStatus,
+    LeaveBalance, OpenShift, MonthLock, LoginResult,
     MonthlyReportData, LeaveOfAbsenceRequest,
     ScheduleVersion, ShiftSwapRequest, StaffPreference,
 } from '../types';
@@ -39,11 +39,6 @@ export const apiInitializeDatabase = async (): Promise<void> => {
     await callAPI('initialize-database');
 };
 
-/**
- * Phase 9.2：兩階段登入
- * - 無 2FA：直接 signInWithCustomToken + 回 'success'
- * - 有 2FA：不登入，回 'requireTotp' + totpToken，由前端進入 stage 2
- */
 export const apiLogin = async (username: string, password: string): Promise<LoginResult> => {
     const res = await fetch(API_URL, {
         method: 'POST',
@@ -55,36 +50,8 @@ export const apiLogin = async (username: string, password: string): Promise<Logi
     if (!result) return { kind: 'fail' };
     if (result.error) throw new Error(result.error);
 
-    if (result.kind === 'requireTotp') {
-        return { kind: 'requireTotp', totpToken: result.totpToken, expiresAt: result.expiresAt };
-    }
-    // kind === 'success'
     if (!isE2E) await signInWithCustomToken(auth, result.customToken);
     return { kind: 'success', user: result.user, customToken: result.customToken };
-};
-
-/**
- * Phase 9.2 stage 2：消費 totpToken + 驗證 6 位數碼或 recovery code
- */
-export const apiVerifyTotpLogin = async (
-    totpToken: string,
-    code: string,
-    useRecovery: boolean = false,
-): Promise<{ user: User; recoveryCodesRemaining: number } | null> => {
-    const res = await fetch(API_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'verify-totp-login', totpToken, code, useRecovery }),
-    });
-    if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || `2FA 驗證失敗 ${res.status}`);
-    }
-    const result = await res.json();
-    if (!result) return null;
-    if (result.error) throw new Error(result.error);
-    if (!isE2E) await signInWithCustomToken(auth, result.customToken);
-    return { user: result.user, recoveryCodesRemaining: result.recoveryCodesRemaining };
 };
 
 export const apiLogout = async (): Promise<void> => {
@@ -460,28 +427,6 @@ export const apiUpdateMyStaffPreference = async (
 
 export const apiGetAllStaffPreferences = async (): Promise<StaffPreference[]> => {
     return callAPI('get-all-staff-preferences');
-};
-
-// ==================== TOTP 2FA（Phase 9.2）====================
-
-export const apiGetTotpStatus = async (): Promise<TotpStatus> => {
-    return callAPI('get-totp-status');
-};
-
-export const apiSetupTotp = async (): Promise<{ secret: string; otpauthUrl: string }> => {
-    return callAPI('setup-totp');
-};
-
-export const apiVerifyTotpSetup = async (code: string): Promise<{ recoveryCodes: string[] }> => {
-    return callAPI('verify-totp-setup', { code });
-};
-
-export const apiDisableTotp = async (code: string): Promise<boolean> => {
-    return callAPI('disable-totp', { code });
-};
-
-export const apiRegenerateRecoveryCodes = async (code: string): Promise<{ recoveryCodes: string[] }> => {
-    return callAPI('regenerate-recovery-codes', { code });
 };
 
 // ==================== 員工自助申請 — 留停（Phase 8.5）====================

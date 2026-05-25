@@ -44,8 +44,6 @@ export const mockApi = async (page: Page, options: ApiMockOptions = {}) => {
         return route.fulfill({ json: true });
       case 'login':
         return route.fulfill({ json: { kind: 'success', user: loginUser, customToken: 'e2e-token' } });
-      case 'get-totp-status':
-        return route.fulfill({ json: { enabled: true } });
       case 'get-today-clock-status':
         return route.fulfill({ json: clockStatus });
       case 'clock-in':
