@@ -97,7 +97,7 @@ const SalaryDetailModal: React.FC<{ salary: SalaryDetail; onClose: () => void }>
                                 <span className="font-semibold text-red-600">-{formatCurrency(salary.healthInsurance)}</span>
                             </div>
                             <div className="flex justify-between py-2 border-b border-gray-100">
-                                <span className="text-gray-600">勞退自提 (6%)</span>
+                                <span className="text-gray-600">勞退自提</span>
                                 <span className="font-semibold text-red-600">-{formatCurrency(salary.laborPensionSelf)}</span>
                             </div>
                             {salary.leaveDeduction > 0 && (
@@ -125,7 +125,7 @@ const SalaryDetailModal: React.FC<{ salary: SalaryDetail; onClose: () => void }>
                         <ul className="list-disc list-inside space-y-0.5">
                             <li>勞保費率: 員工自付 20%（費率約 11.5%，自付比例約 2.3%）</li>
                             <li>健保費率: 員工自付 30%（費率約 5.17%，自付比例約 2.11%）</li>
-                            <li>勞退自提: 依勞工退休金條例，員工可自願提繳 0~6%</li>
+                            <li>勞退自提: 依系統設定計算，預設不自提；員工可自願提繳 0~6%</li>
                             <li>加班費: 前 2 小時按 1.34 倍、第 3 小時起按 1.67 倍計算</li>
                             <li>事假扣全薪、病假扣半薪、特休不扣薪</li>
                         </ul>

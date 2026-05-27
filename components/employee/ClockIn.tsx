@@ -168,13 +168,23 @@ const ClockIn: React.FC = () => {
                 </div>
 
                 <div className="grid grid-cols-2 gap-4 mt-4">
-                    <button onClick={handleClockIn} disabled={!!clockStatus.clockInTime || isProcessing} className="w-full py-3 text-lg font-bold text-white rounded-lg bg-brand-green-dark hover:bg-brand-green-light disabled:bg-gray-400 transition-colors">
+                    <button onClick={handleClockIn} disabled={!!clockStatus.clockInTime || !!clockStatus.clockOutTime || isProcessing} className="w-full py-3 text-lg font-bold text-white rounded-lg bg-brand-green-dark hover:bg-brand-green-light disabled:bg-gray-400 transition-colors">
                         上班打卡
                     </button>
-                    <button onClick={handleClockOut} disabled={!clockStatus.clockInTime || !!clockStatus.clockOutTime || isProcessing} className="w-full py-3 text-lg font-bold text-white bg-status-error hover:bg-red-700 disabled:bg-gray-400 transition-colors">
+                    <button onClick={handleClockOut} disabled={!!clockStatus.clockOutTime || isProcessing} className="w-full py-3 text-lg font-bold text-white bg-status-error hover:bg-red-700 disabled:bg-gray-400 transition-colors">
                         下班打卡
                     </button>
                 </div>
+                {!clockStatus.clockInTime && !clockStatus.clockOutTime && (
+                    <p className="mt-3 text-xs text-center text-gray-500">
+                        若忘記上班打卡，仍可先打下班卡；系統會標記異常，之後再補上班卡即可。
+                    </p>
+                )}
+                {!clockStatus.clockInTime && !!clockStatus.clockOutTime && (
+                    <p className="mt-3 text-xs text-center text-status-warn">
+                        今日缺少上班打卡，請送出補打卡申請補上班時間。
+                    </p>
+                )}
             </div>
         </div>
     );

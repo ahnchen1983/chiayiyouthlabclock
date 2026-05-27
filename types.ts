@@ -140,7 +140,7 @@ export interface Employee {
 export interface SystemConfig {
     laborInsuranceRate: number;     // 勞保費率（員工負擔）e.g. 0.023
     healthInsuranceRate: number;    // 健保費率（員工負擔）e.g. 0.0211
-    laborPensionRate: number;       // 勞退自提率（員工自願）e.g. 0.06
+    laborPensionRate: number;       // 勞退自提率（員工自願）e.g. 0 或 0.06
     overtimeMultiplier: number;     // 加班倍率 e.g. 1.34
     ptMonthlyHourLimit: number;     // 兼職月時數上限 e.g. 80
     ptWarningThreshold: number;     // 兼職時數警示閾值 e.g. 70

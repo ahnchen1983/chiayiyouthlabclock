@@ -6,6 +6,7 @@ import {
     DEFAULT_SYSTEM_CONFIG, determineClockStatus,
     computeAnnualLeaveDays, computeLeaveBalanceWithCarryover,
     calculateSalaryForEmployee,
+    computePayableClockHours, deriveClockRecordDisplayStatus,
     normalizeScheduleDoc, getEmployeeShiftsForDay, isEmployeeScheduledForDay, shiftHours,
     computeCoverageGaps,
 } from './utils/calculations';
@@ -400,6 +401,16 @@ const getEmployeeScheduledHours = (event: ScheduleEvent, empId: string, empName:
     return Math.round(getEmployeeShiftsForDay(event, empId, empName).reduce((sum, s) => sum + shiftHours(s), 0) * 10) / 10;
 };
 
+const getPayableClockHoursForRecord = (
+    record: Pick<ClockRecord, 'clockInTime' | 'clockOutTime'>,
+    event: ScheduleEvent | undefined,
+    empId: string,
+    empName: string
+): number => {
+    const shifts = event ? getEmployeeShiftsForDay(event, empId, empName) : [];
+    return computePayableClockHours(record.clockInTime, record.clockOutTime, shifts);
+};
+
 const getApprovedLeaveHoursOnDate = (leaveRequests: LeaveRequest[], empId: string, date: string): number => {
     return leaveRequests
         .filter(lr => lr.empId === empId && lr.status === LeaveStatus.Approved && lr.startDate.slice(0, 10) <= date && lr.endDate.slice(0, 10) >= date)
@@ -757,11 +768,9 @@ export const handler: Handler = async (event) => {
                 const existingClock = docSnap.data() as ClockRecord;
                 if (existingClock.clockOutTime) return ok(true);
                 const hasClockIn = !!existingClock.clockInTime;
-                const workHours = hasClockIn ? (() => {
-                    const [inH, inM] = existingClock.clockInTime!.split(':').map(Number);
-                    const [outH, outM] = clockOutTime.split(':').map(Number);
-                    return Math.round(((outH * 60 + outM) - (inH * 60 + inM)) / 60 * 10) / 10;
-                })() : null;
+                const workHours = hasClockIn
+                    ? getPayableClockHoursForRecord({ clockInTime: existingClock.clockInTime, clockOutTime }, todayDaySchedule, uid, empName)
+                    : null;
                 // 早退判定：用該員工自己的 shift 範圍；缺上班卡則保留異常。
                 const status = determineClockStatus(
                     myShiftRange,
@@ -805,7 +814,8 @@ export const handler: Handler = async (event) => {
                 const snap = await db.collection('clockRecords').where('empId', '==', uid).get();
                 const records = snap.docs
                     .map(d => ({ id: d.id, ...d.data() } as ClockRecord))
-                    .filter(r => r.date.startsWith(data.yearMonth));
+                    .filter(r => r.date.startsWith(data.yearMonth))
+                    .map(r => ({ ...r, status: deriveClockRecordDisplayStatus(r) }));
                 return ok(records);
             }
 
@@ -813,7 +823,8 @@ export const handler: Handler = async (event) => {
                 const snap = await db.collection('clockRecords').get();
                 const records = snap.docs
                     .map(d => ({ id: d.id, ...d.data() } as ClockRecord))
-                    .filter(r => r.date.startsWith(data.yearMonth));
+                    .filter(r => r.date.startsWith(data.yearMonth))
+                    .map(r => ({ ...r, status: deriveClockRecordDisplayStatus(r) }));
                 return ok(records);
             }
 
@@ -1090,8 +1101,9 @@ export const handler: Handler = async (event) => {
                 const today = new Date().toISOString().slice(0, 10);
                 const yearMonth = today.slice(0, 7);
 
-                const [todaySchedule, empSnap, clockSnap, leaveSnap, sysConfig] = await Promise.all([
+                const [todaySchedule, scheduleEvents, empSnap, clockSnap, leaveSnap, sysConfig] = await Promise.all([
                     getDaySchedule(today),
+                    getMonthlyDailySchedule(yearMonth),
                     db.collection('employees').get(),
                     db.collection('clockRecords').get(),
                     db.collection('leaveRequests').get(),
@@ -1136,12 +1148,17 @@ export const handler: Handler = async (event) => {
                     });
                 });
                 for (const pt of employees.filter(u => u.position === '兼職人員')) {
-                    const ptHours = monthRecords.filter(r => r.empId === pt.id).reduce((s, r) => s + (r.workHours || 0), 0);
-                    if (80 - ptHours <= 10) {
+                    const limit = sysConfig.ptMonthlyHourLimit || DEFAULT_SYSTEM_CONFIG.ptMonthlyHourLimit;
+                    const ptHours = monthRecords.filter(r => r.empId === pt.id).reduce((s, r) => {
+                        const event = scheduleEvents.find(e => e.date === r.date);
+                        const payableHours = getPayableClockHoursForRecord(r, event, pt.id, pt.name);
+                        return s + (payableHours || r.workHours || 0);
+                    }, 0);
+                    if (limit - ptHours <= 10) {
                         pendingItems.push({
                             id: `WARN-${pt.id}`, type: '時數警示',
                             title: `${pt.name} 時數接近上限`,
-                            description: `本月已工作 ${ptHours.toFixed(1)} 小時，剩餘 ${(80 - ptHours).toFixed(1)} 小時`,
+                            description: `本月已工作 ${ptHours.toFixed(1)} 小時，剩餘 ${(limit - ptHours).toFixed(1)} 小時`,
                             date: today, priority: 'medium',
                         });
                     }
@@ -1150,7 +1167,12 @@ export const handler: Handler = async (event) => {
                 return ok({
                     todayClockedIn: todayRecords.length,
                     todayScheduled: scheduledStaffCount,
-                    monthlyTotalHours: Math.round(monthRecords.reduce((s, r) => s + (r.workHours || 0), 0) * 10) / 10,
+                    monthlyTotalHours: Math.round(monthRecords.reduce((s, r) => {
+                        const emp = employees.find(e => e.id === r.empId);
+                        const event = scheduleEvents.find(e => e.date === r.date);
+                        const payableHours = emp ? getPayableClockHoursForRecord(r, event, emp.id, emp.name) : 0;
+                        return s + (payableHours || r.workHours || 0);
+                    }, 0) * 10) / 10,
                     pendingLeaves: leaveRequests.filter(r => r.status === LeaveStatus.Pending).length,
                     hourWarnings: pendingItems.filter(p => p.type === '時數警示').length,
                     todayAttendance,
@@ -1168,7 +1190,11 @@ export const handler: Handler = async (event) => {
                 const partTimers = empSnap.docs.map(d => d.data()).filter(u => u.position === '兼職人員');
                 const monthRecords = clockSnap.docs.map(d => d.data() as ClockRecord).filter(r => r.date.startsWith(data.yearMonth));
                 return ok(partTimers.map(pt => {
-                    const workedHours = Math.round(monthRecords.filter(r => r.empId === pt.id).reduce((s, r) => s + (r.workHours || 0), 0) * 10) / 10;
+                    const workedHours = Math.round(monthRecords.filter(r => r.empId === pt.id).reduce((s, r) => {
+                        const event = scheduleEvents.find(e => e.date === r.date);
+                        const payableHours = getPayableClockHoursForRecord(r, event, pt.id, pt.name);
+                        return s + (payableHours || r.workHours || 0);
+                    }, 0) * 10) / 10;
                     const scheduledHours = Math.round(scheduleEvents.reduce((sum, event) => {
                         if (event.status === '休館') return sum;
                         return sum + getEmployeeScheduledHours(event, pt.id, pt.name);
@@ -1276,7 +1302,11 @@ export const handler: Handler = async (event) => {
                         const monthHours = Math.round(
                             monthClockRecords
                                 .filter(r => r.empId === pt.id)
-                                .reduce((sum, r) => sum + (r.workHours || 0), 0) * 10
+                                .reduce((sum, r) => {
+                                    const event = scheduleEvents.find(e => e.date === r.date);
+                                    const payableHours = getPayableClockHoursForRecord(r, event, pt.id, pt.name);
+                                    return sum + (payableHours || r.workHours || 0);
+                                }, 0) * 10
                         ) / 10;
                         const usagePercent = limit > 0 ? Math.round((monthHours / limit) * 1000) / 10 : 0;
                         return {
@@ -1848,9 +1878,12 @@ export const handler: Handler = async (event) => {
                 const ci = updates.clockInTime ?? orig.clockInTime;
                 const co = updates.clockOutTime ?? orig.clockOutTime;
                 if (ci && co) {
-                    const [ih, im] = ci.split(':').map(Number);
-                    const [oh, om] = co.split(':').map(Number);
-                    updates.workHours = Math.round(((oh * 60 + om) - (ih * 60 + im)) / 60 * 10) / 10;
+                    const [daySchedule, empSnapForRecord] = await Promise.all([
+                        getDaySchedule(orig.date),
+                        db.collection('employees').doc(orig.empId).get(),
+                    ]);
+                    const empName = empSnapForRecord.exists ? empSnapForRecord.data()!.name : orig.name;
+                    updates.workHours = getPayableClockHoursForRecord({ clockInTime: ci, clockOutTime: co }, daySchedule, orig.empId, empName);
                 }
                 await ref.update(updates);
                 await writeAuditLog(uid, '修改打卡', data.recordId, `${orig.name} ${orig.date} ${JSON.stringify({ clockInTime: updates.clockInTime, clockOutTime: updates.clockOutTime, status: updates.status })}`);
@@ -1934,9 +1967,8 @@ export const handler: Handler = async (event) => {
                             note: `補打卡：${req.reason}`,
                         };
                         if (ci && co) {
-                            const [ih, im] = ci.split(':').map(Number);
-                            const [oh, om] = co.split(':').map(Number);
-                            recDoc.workHours = Math.round(((oh * 60 + om) - (ih * 60 + im)) / 60 * 10) / 10;
+                            const daySchedule = await getDaySchedule(req.date);
+                            recDoc.workHours = getPayableClockHoursForRecord({ clockInTime: ci, clockOutTime: co }, daySchedule, req.empId, req.name);
                         }
                         await db.collection('clockRecords').add(recDoc);
                     } else {
@@ -1948,9 +1980,8 @@ export const handler: Handler = async (event) => {
                         const finalCi = u.clockInTime ?? orig.clockInTime;
                         const finalCo = u.clockOutTime ?? orig.clockOutTime;
                         if (finalCi && finalCo) {
-                            const [ih, im] = finalCi.split(':').map(Number);
-                            const [oh, om] = finalCo.split(':').map(Number);
-                            u.workHours = Math.round(((oh * 60 + om) - (ih * 60 + im)) / 60 * 10) / 10;
+                            const daySchedule = await getDaySchedule(req.date);
+                            u.workHours = getPayableClockHoursForRecord({ clockInTime: finalCi, clockOutTime: finalCo }, daySchedule, req.empId, req.name);
                         }
                         await docSnap.ref.update(u);
                     }
@@ -2094,6 +2125,17 @@ export const handler: Handler = async (event) => {
                 };
                 const ref = await db.collection('openShifts').add(doc);
                 await writeAuditLog(uid, '建立開放排班', ref.id, `${data.date} ${data.shiftTime} 需 ${data.requiredCount} 人`);
+                const ptSnap = await db.collection('employees').where('position', '==', '兼職人員').get();
+                await Promise.all(ptSnap.docs
+                    .map(d => d.data() as Employee)
+                    .filter(emp => emp.status === '在職')
+                    .map(emp => writeNotification(
+                        emp.id,
+                        'schedule-changed',
+                        '新的開放班次',
+                        `${data.date} ${data.shiftTime} 開放認領`
+                    ))
+                );
                 return ok({ id: ref.id, ...doc });
             }
 

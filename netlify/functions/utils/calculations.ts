@@ -39,7 +39,7 @@ export const validatePasswordStrength = (password: string): string | null => {
 export const DEFAULT_SYSTEM_CONFIG: SystemConfig = {
     laborInsuranceRate: 0.023,
     healthInsuranceRate: 0.0211,
-    laborPensionRate: 0.06,
+    laborPensionRate: 0,
     overtimeMultiplier: 1.34,
     ptMonthlyHourLimit: 80,
     ptWarningThreshold: 70,
@@ -74,6 +74,13 @@ export const determineClockStatus = (
     if (isLate) return '遲到';
     if (isEarly) return '早退';
     return '正常';
+};
+
+export const deriveClockRecordDisplayStatus = (
+    record: Pick<ClockRecord, 'clockInTime' | 'clockOutTime' | 'status'>
+): ClockRecord['status'] => {
+    if (!record.clockInTime || !record.clockOutTime) return '異常';
+    return record.status;
 };
 
 // ==================== 留停期間（Phase 8.2）====================
@@ -283,6 +290,48 @@ export const shiftHours = (s: { from: string; to: string }): number => {
     return Math.max(0, (th * 60 + tm - fh * 60 - fm) / 60);
 };
 
+const minutesFromHHMM = (hhmm: string | null | undefined): number | null => {
+    if (!hhmm || !hhmm.includes(':')) return null;
+    const [h, m] = hhmm.split(':').map(Number);
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
+    return h * 60 + m;
+};
+
+export const rawClockHours = (clockInTime: string | null | undefined, clockOutTime: string | null | undefined): number => {
+    const clockIn = minutesFromHHMM(clockInTime);
+    const clockOut = minutesFromHHMM(clockOutTime);
+    if (clockIn == null || clockOut == null || clockOut <= clockIn) return 0;
+    return Math.round(((clockOut - clockIn) / 60) * 10) / 10;
+};
+
+/**
+ * 計薪工時以排班區間為上限：
+ * - 早於表定上班的簽到，不把提早時間算進工時
+ * - 晚於表定下班的簽退，不把延後時間算進工時
+ * - 遲到 / 早退仍以實際打卡時間計算
+ * - 無排班資料時回退為原始打卡時數，避免舊資料無法計薪
+ */
+export const computePayableClockHours = (
+    clockInTime: string | null | undefined,
+    clockOutTime: string | null | undefined,
+    shifts: Pick<StaffShift, 'from' | 'to'>[] = []
+): number => {
+    const clockIn = minutesFromHHMM(clockInTime);
+    const clockOut = minutesFromHHMM(clockOutTime);
+    if (clockIn == null || clockOut == null || clockOut <= clockIn) return 0;
+    if (!shifts.length) return rawClockHours(clockInTime, clockOutTime);
+
+    const totalMinutes = shifts.reduce((sum, s) => {
+        const shiftStart = minutesFromHHMM(s.from);
+        const shiftEnd = minutesFromHHMM(s.to);
+        if (shiftStart == null || shiftEnd == null || shiftEnd <= shiftStart) return sum;
+        const payableStart = Math.max(clockIn, shiftStart);
+        const payableEnd = Math.min(clockOut, shiftEnd);
+        return sum + Math.max(0, payableEnd - payableStart);
+    }, 0);
+    return Math.round((totalMinutes / 60) * 10) / 10;
+};
+
 /**
  * 員工該日是否被排班（任何角色、任何時段）
  */
@@ -401,9 +450,15 @@ export const calculateSalaryForEmployee = (
         }
     }
 
+    const scheduleByDate = new Map(scheduleEvents.map(event => [event.date, event]));
     const empRecords = clockRecords.filter(r => r.empId === emp.id && r.date.startsWith(yearMonth));
     const totalWorkHours = empRecords.length > 0
-        ? empRecords.reduce((sum, r) => sum + (r.workHours || 0), 0)
+        ? empRecords.reduce((sum, r) => {
+            const event = scheduleByDate.get(r.date);
+            const shifts = event ? getEmployeeShiftsForDay(event, emp.id, emp.name) : [];
+            const payableHours = computePayableClockHours(r.clockInTime, r.clockOutTime, shifts);
+            return sum + (payableHours || r.workHours || 0);
+        }, 0)
         : scheduledHours;
 
     const empLeaves = leaveRequests.filter(

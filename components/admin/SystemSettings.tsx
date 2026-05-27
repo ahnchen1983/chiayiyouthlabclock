@@ -5,7 +5,7 @@ import { SystemConfig } from '../../types';
 const defaultConfig: SystemConfig = {
     laborInsuranceRate: 0.023,
     healthInsuranceRate: 0.0211,
-    laborPensionRate: 0.06,
+    laborPensionRate: 0,
     overtimeMultiplier: 1.34,
     ptMonthlyHourLimit: 80,
     ptWarningThreshold: 70,
@@ -76,7 +76,7 @@ const SystemSettings: React.FC = () => {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <Field label="勞保費率（員工負擔）" k="laborInsuranceRate" suffix="(0.023 = 2.3%)" />
                 <Field label="健保費率（員工負擔）" k="healthInsuranceRate" suffix="(0.0211 = 2.11%)" />
-                <Field label="勞退自提率" k="laborPensionRate" suffix="(0.06 = 6%)" />
+                <Field label="勞退自提率" k="laborPensionRate" suffix="(0 = 不自提；0.06 = 6%)" />
                 <Field label="加班倍率" k="overtimeMultiplier" step="0.01" suffix="(1.34 = 134%)" />
                 <Field label="兼職月時數上限" k="ptMonthlyHourLimit" step="1" suffix="小時" />
                 <Field label="兼職時數警示閾值" k="ptWarningThreshold" step="1" suffix="小時" hint="超過此時數即顯示警示" />

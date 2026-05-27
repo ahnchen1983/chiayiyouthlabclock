@@ -172,7 +172,7 @@ const MySalary: React.FC = () => {
                             <div className="flex justify-between items-center">
                                 <div>
                                     <p className="text-gray-700">勞退自提</p>
-                                    <p className="text-xs text-gray-400">自願提繳 6%</p>
+                                    <p className="text-xs text-gray-400">依系統設定</p>
                                 </div>
                                 <span className="font-semibold text-red-600">-{formatCurrency(salary.laborPensionSelf)}</span>
                             </div>
@@ -198,7 +198,7 @@ const MySalary: React.FC = () => {
                         <ul className="list-disc list-inside space-y-1">
                             <li>勞保費率約 11.5%，勞工自付 20%（約 2.3%）</li>
                             <li>健保費率約 5.17%，被保險人自付 30%（約 2.11%）</li>
-                            <li>勞退自提 0~6%，此處以 6% 計算</li>
+                            <li>勞退自提 0~6%，依系統設定計算；預設不自提</li>
                             <li>加班費: 前 2 小時 × 1.34 倍，第 3 小時起 × 1.67 倍</li>
                             <li>事假不給薪、病假半薪、特休照給薪</li>
                         </ul>

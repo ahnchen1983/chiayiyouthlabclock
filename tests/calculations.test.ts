@@ -13,6 +13,8 @@ import {
     computeCoverageSlots,
     computeCoverageGaps,
     computeLeaveBalanceWithCarryover,
+    computePayableClockHours,
+    deriveClockRecordDisplayStatus,
     DEFAULT_SYSTEM_CONFIG,
 } from '../netlify/functions/utils/calculations';
 import { LeaveStatus, LeaveType } from '../types';
@@ -98,6 +100,12 @@ describe('determineClockStatus', () => {
 
     it('未打下班卡（clockOut=null）不算早退', () => {
         expect(determineClockStatus('08:30-17:30', '08:30', null, grace)).toBe('正常');
+    });
+
+    it('出勤紀錄顯示狀態：缺上班或下班卡一律顯示異常', () => {
+        expect(deriveClockRecordDisplayStatus({ clockInTime: '08:30', clockOutTime: null, status: '正常' })).toBe('異常');
+        expect(deriveClockRecordDisplayStatus({ clockInTime: null, clockOutTime: '17:30', status: '正常' })).toBe('異常');
+        expect(deriveClockRecordDisplayStatus({ clockInTime: '08:30', clockOutTime: '17:30', status: '正常' })).toBe('正常');
     });
 
     it('寬限分鐘可調', () => {
@@ -275,10 +283,10 @@ describe('calculateSalaryForEmployee', () => {
         expect(result.baseSalary).toBe(30000);
         expect(result.overtimePay).toBe(0);
         expect(result.grossSalary).toBe(30000);
-        // 勞保 2.3% + 健保 2.11% + 勞退 6% = 10.41% of 30000 ~ 3123
+        // 勞保 2.3% + 健保 2.11%；勞退自提預設不扣
         expect(result.laborInsurance).toBe(Math.round(30000 * 0.023));
         expect(result.healthInsurance).toBe(Math.round(30000 * 0.0211));
-        expect(result.laborPensionSelf).toBe(Math.round(30000 * 0.06));
+        expect(result.laborPensionSelf).toBe(0);
         expect(result.netSalary).toBe(result.grossSalary - result.totalDeductions);
     });
 
@@ -330,6 +338,26 @@ describe('calculateSalaryForEmployee', () => {
         expect(result.laborInsurance).toBe(Math.round(30000 * 0.05));
     });
 
+    it('勞退自提可由系統設定開啟為 6%', () => {
+        const customConfig = { ...DEFAULT_SYSTEM_CONFIG, laborPensionRate: 0.06 };
+        const result = calculateSalaryForEmployee(fullTimeEmp, '2026-04', [], [], [], customConfig);
+        expect(result.laborPensionSelf).toBe(Math.round(30000 * 0.06));
+    });
+
+    it('PT 計薪工時會扣掉表定前後的無效溢出時間', () => {
+        const clockRecords: ClockRecord[] = [
+            { id: 'C1', empId: 'EMP002', name: '小李', date: '2026-04-01', clockInTime: '08:40', clockOutTime: '17:20', verificationMethod: 'IP', verificationData: '1', workHours: 8.7, status: '正常' },
+        ];
+        const schedule: ScheduleEvent[] = [
+            { date: '2026-04-01', dayOfWeek: '三', status: '營運', shifts: [
+                { empId: 'EMP002', name: '小李', role: 'partTime', from: '09:00', to: '17:00' }
+            ] },
+        ];
+        const result = calculateSalaryForEmployee(partTimeEmp, '2026-04', schedule, clockRecords, []);
+        expect(result.totalWorkHours).toBe(8);
+        expect(result.baseSalary).toBe(8 * 200);
+    });
+
     it('休館日不計入工作日', () => {
         const schedule: ScheduleEvent[] = [
             { date: '2026-04-01', dayOfWeek: '三', status: '休館', shifts: [] },
@@ -348,6 +376,31 @@ describe('calculateSalaryForEmployee', () => {
         const result = calculateSalaryForEmployee(fullTimeEmp, '2026-04', schedule, [], []);
         expect(result.totalWorkDays).toBe(1);
         // scheduledHours = 4.5 + 3 = 7.5（但 fullTime 是月薪所以工時只影響加班計算）
+    });
+});
+
+describe('computePayableClockHours', () => {
+    it('無排班資料時回退原始打卡時數', () => {
+        expect(computePayableClockHours('09:00', '13:00', [])).toBe(4);
+    });
+
+    it('提早 20 分鐘上班與晚 20 分鐘下班不計入工時', () => {
+        expect(computePayableClockHours('08:40', '17:20', [
+            { from: '09:00', to: '17:00' },
+        ])).toBe(8);
+    });
+
+    it('遲到與早退仍依實際打卡時間扣除', () => {
+        expect(computePayableClockHours('09:10', '16:50', [
+            { from: '09:00', to: '17:00' },
+        ])).toBe(7.7);
+    });
+
+    it('兩頭班分段計算 overlap', () => {
+        expect(computePayableClockHours('08:40', '17:20', [
+            { from: '09:00', to: '12:00' },
+            { from: '13:00', to: '17:00' },
+        ])).toBe(7);
     });
 });
 
