@@ -344,6 +344,12 @@ describe('calculateSalaryForEmployee', () => {
         expect(result.laborPensionSelf).toBe(Math.round(30000 * 0.06));
     });
 
+    it('員工個人勞退自提率優先於系統設定', () => {
+        const customConfig = { ...DEFAULT_SYSTEM_CONFIG, laborPensionRate: 0 };
+        const result = calculateSalaryForEmployee({ ...fullTimeEmp, laborPensionRate: 0.03 }, '2026-04', [], [], [], customConfig);
+        expect(result.laborPensionSelf).toBe(Math.round(30000 * 0.03));
+    });
+
     it('PT 計薪工時會扣掉表定前後的無效溢出時間', () => {
         const clockRecords: ClockRecord[] = [
             { id: 'C1', empId: 'EMP002', name: '小李', date: '2026-04-01', clockInTime: '08:40', clockOutTime: '17:20', verificationMethod: 'IP', verificationData: '1', workHours: 8.7, status: '正常' },

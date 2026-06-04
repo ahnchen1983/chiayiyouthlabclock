@@ -486,9 +486,12 @@ export const calculateSalaryForEmployee = (
         else if (lr.leaveType === LeaveType.Sick) leaveDeduction += Math.round(lr.hours * hourlyWage * 0.5);
     });
 
+    const laborPensionRate = Number.isFinite(Number(emp.laborPensionRate))
+        ? Math.max(0, Math.min(0.06, Number(emp.laborPensionRate)))
+        : config.laborPensionRate;
     const laborInsurance = Math.round(grossSalary * config.laborInsuranceRate);
     const healthInsurance = Math.round(grossSalary * config.healthInsuranceRate);
-    const laborPensionSelf = Math.round(grossSalary * config.laborPensionRate);
+    const laborPensionSelf = Math.round(grossSalary * laborPensionRate);
     const totalDeductions = laborInsurance + healthInsurance + laborPensionSelf + leaveDeduction;
     const netSalary = grossSalary - totalDeductions;
 

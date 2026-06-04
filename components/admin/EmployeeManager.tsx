@@ -8,6 +8,7 @@ import {
     apiResetPassword
 } from '../../services/googleAppsScriptAPI';
 import { Employee, EmployeeStatus, UserRole } from '../../types';
+import { useAuth } from '../../contexts/AuthContext';
 import { UsersIcon } from '../icons';
 
 // 新增/編輯 icon
@@ -71,15 +72,20 @@ interface EmployeeFormModalProps {
     onClose: () => void;
     onSave: (data: Omit<Employee, 'id'> | Employee, initialPassword?: string) => void;
     isNew: boolean;
+    currentUserRole: UserRole;
 }
 
-const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({ employee, onClose, onSave, isNew }) => {
+const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({ employee, onClose, onSave, isNew, currentUserRole }) => {
     const [formData, setFormData] = useState<Omit<Employee, 'id'>>({
         name: employee?.name || '',
         phone: employee?.phone || '',
         email: employee?.email || '',
         hourlyRate: employee?.hourlyRate || 183,
         monthlySalary: employee?.monthlySalary ?? undefined,
+        laborPensionRate: employee?.laborPensionRate ?? 0,
+        annualLeaveQuotaHours: employee?.annualLeaveQuotaHours ?? undefined,
+        personalLeaveQuotaHours: employee?.personalLeaveQuotaHours ?? 14 * 8,
+        sickLeaveQuotaHours: employee?.sickLeaveQuotaHours ?? 30 * 8,
         hireDate: employee?.hireDate || new Date().toISOString().slice(0, 10),
         resignDate: employee?.resignDate || undefined,
         status: employee?.status || '在職',
@@ -90,12 +96,17 @@ const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({ employee, onClose
     });
     const [initialPassword, setInitialPassword] = useState('Aa123456');
     const [showLoa, setShowLoa] = useState<boolean>(!!(employee?.leaveOfAbsenceStart));
+    const allowedRoles = currentUserRole === UserRole.SuperAdmin
+        ? [UserRole.SuperAdmin, UserRole.Admin, UserRole.Employee]
+        : [UserRole.Admin, UserRole.Employee];
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
         const { name, value } = e.target;
         setFormData(prev => ({
             ...prev,
-            [name]: (name === 'hourlyRate' || name === 'monthlySalary') ? Number(value) : value
+            [name]: ['hourlyRate', 'monthlySalary', 'laborPensionRate', 'annualLeaveQuotaHours', 'personalLeaveQuotaHours', 'sickLeaveQuotaHours'].includes(name)
+                ? (value === '' ? undefined : Number(value))
+                : value
         }));
     };
 
@@ -205,11 +216,36 @@ const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({ employee, onClose
                                 onChange={handleChange}
                                 className="w-full p-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                             >
-                                <option value={UserRole.SuperAdmin}>最高管理者</option>
-                                <option value={UserRole.Admin}>管理者</option>
-                                <option value={UserRole.Employee}>員工</option>
+                                {allowedRoles.map(role => (
+                                    <option key={role} value={role}>{role}</option>
+                                ))}
                             </select>
+                            {currentUserRole !== UserRole.SuperAdmin && (
+                                <p className="text-xs text-gray-500 mt-1">管理者僅可指派管理者或員工，不可升為最高管理者。</p>
+                            )}
                         </div>
+                    </div>
+
+                    {/* 個人勞退自提 */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                            勞退自提率
+                        </label>
+                        <select
+                            name="laborPensionRate"
+                            value={formData.laborPensionRate ?? 0}
+                            onChange={handleChange}
+                            className="w-full p-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        >
+                            <option value={0}>不自提（0%）</option>
+                            <option value={0.01}>自提 1%</option>
+                            <option value={0.02}>自提 2%</option>
+                            <option value={0.03}>自提 3%</option>
+                            <option value={0.04}>自提 4%</option>
+                            <option value={0.05}>自提 5%</option>
+                            <option value={0.06}>自提 6%</option>
+                        </select>
+                        <p className="text-xs text-gray-500 mt-1">薪資計算以員工個人設定為準。</p>
                     </div>
 
                     {/* 時薪（僅兼職人員） */}
@@ -292,6 +328,48 @@ const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({ employee, onClose
                             <option value="離職">離職</option>
                             <option value="留停">留停</option>
                         </select>
+                    </div>
+
+                    {/* 假別年度配額 */}
+                    <div className="border-t pt-3">
+                        <h4 className="text-sm font-semibold text-gray-700 mb-2">假別年度配額（小時）</h4>
+                        <div className="grid grid-cols-3 gap-3">
+                            <div>
+                                <label className="block text-xs text-gray-600 mb-1">特休</label>
+                                <input
+                                    type="number"
+                                    name="annualLeaveQuotaHours"
+                                    value={formData.annualLeaveQuotaHours ?? ''}
+                                    onChange={handleChange}
+                                    min="0"
+                                    placeholder="自動"
+                                    className="w-full p-2 border rounded-md"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs text-gray-600 mb-1">事假</label>
+                                <input
+                                    type="number"
+                                    name="personalLeaveQuotaHours"
+                                    value={formData.personalLeaveQuotaHours ?? ''}
+                                    onChange={handleChange}
+                                    min="0"
+                                    className="w-full p-2 border rounded-md"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs text-gray-600 mb-1">病假</label>
+                                <input
+                                    type="number"
+                                    name="sickLeaveQuotaHours"
+                                    value={formData.sickLeaveQuotaHours ?? ''}
+                                    onChange={handleChange}
+                                    min="0"
+                                    className="w-full p-2 border rounded-md"
+                                />
+                            </div>
+                        </div>
+                        <p className="text-xs text-gray-500 mt-1">特休留空時依到職日與留停期間自動計算；事假/病假可依個人狀況覆寫。</p>
                     </div>
 
                     {/* 留停期間（Phase 8.2，僅編輯模式） */}
@@ -480,6 +558,7 @@ const ResetPasswordModal: React.FC<ResetPasswordModalProps> = ({ employee, onClo
 };
 
 const EmployeeManager: React.FC = () => {
+    const { user } = useAuth();
     const [employees, setEmployees] = useState<Employee[]>([]);
     const [loading, setLoading] = useState(true);
     const [showFormModal, setShowFormModal] = useState(false);
@@ -717,6 +796,7 @@ const EmployeeManager: React.FC = () => {
                     onClose={() => setShowFormModal(false)}
                     onSave={handleSave}
                     isNew={isNew}
+                    currentUserRole={user?.role || UserRole.Employee}
                 />
             )}
 

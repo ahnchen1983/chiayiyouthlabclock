@@ -126,6 +126,10 @@ export interface Employee {
     email: string;
     hourlyRate: number;
     monthlySalary?: number;
+    laborPensionRate?: number;       // 個人勞退自提率；未設定時使用 systemConfig
+    annualLeaveQuotaHours?: number;  // 個人年度特休配額覆寫（小時）
+    personalLeaveQuotaHours?: number;// 個人年度事假配額覆寫（小時）
+    sickLeaveQuotaHours?: number;    // 個人年度病假配額覆寫（小時）
     hireDate: string;
     resignDate?: string;
     status: EmployeeStatus;

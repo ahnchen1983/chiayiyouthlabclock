@@ -82,6 +82,36 @@ const getSystemConfig = async (): Promise<SystemConfig> => {
     return { ...DEFAULT_SYSTEM_CONFIG, ...(snap.data() as Partial<SystemConfig>) };
 };
 
+const roleRank = (role: UserRole | null | undefined): number => {
+    if (role === UserRole.SuperAdmin) return 3;
+    if (role === UserRole.Admin) return 2;
+    if (role === UserRole.Employee) return 1;
+    return 0;
+};
+
+const sanitizeEmployeePayload = (raw: any): any => {
+    const { id: _id, password: _password, ...rest } = raw || {};
+    const numericFields = [
+        'hourlyRate',
+        'monthlySalary',
+        'laborPensionRate',
+        'annualLeaveQuotaHours',
+        'personalLeaveQuotaHours',
+        'sickLeaveQuotaHours',
+    ];
+    for (const field of numericFields) {
+        if (rest[field] === '' || rest[field] === null || rest[field] === undefined) {
+            delete rest[field];
+        } else {
+            rest[field] = Number(rest[field]);
+        }
+    }
+    if (rest.laborPensionRate !== undefined) {
+        rest.laborPensionRate = Math.max(0, Math.min(0.06, rest.laborPensionRate));
+    }
+    return rest;
+};
+
 // ==================== 月結鎖定 Helper（Phase 6.3）====================
 
 const getMonthLock = async (yearMonth: string): Promise<MonthLock | null> => {
@@ -220,7 +250,19 @@ const getLeaveBalanceForEmployee = async (empId: string): Promise<any[]> => {
     });
 
     // Phase 8.1：特休跨年結轉計算
-    const annualSnap = computeLeaveBalanceWithCarryover(emp.hireDate, asOf, loaPeriods, annualLeaveUsageByYear);
+    const overrideHours = (value: unknown): number | undefined => {
+        const n = Number(value);
+        return Number.isFinite(n) && n >= 0 ? n : undefined;
+    };
+    const annualSnapBase = computeLeaveBalanceWithCarryover(emp.hireDate, asOf, loaPeriods, annualLeaveUsageByYear);
+    const annualOverride = overrideHours(emp.annualLeaveQuotaHours);
+    const annualSnap = annualOverride === undefined
+        ? annualSnapBase
+        : {
+            ...annualSnapBase,
+            newGrantedHours: annualOverride,
+            remainingHours: Math.round(Math.max(0, annualOverride + annualSnapBase.carriedFromPreviousYear - annualSnapBase.usedHours) * 10) / 10,
+        };
     const annualQuotaHours = annualSnap.newGrantedHours + annualSnap.carriedFromPreviousYear;
     const carriedNote = annualSnap.carriedFromPreviousYear > 0
         ? `；其中 ${annualSnap.carriedFromPreviousYear}h 為去年結轉，於 ${annualSnap.carriedExpiresAt} 失效`
@@ -232,10 +274,18 @@ const getLeaveBalanceForEmployee = async (empId: string): Promise<any[]> => {
     const quotas: Record<string, { hours: number; note: string }> = {
         [LeaveType.Annual]: {
             hours: annualQuotaHours,
-            note: `依到職日 ${emp.hireDate || '未設定'} 計算本年 ${annualSnap.newGrantedHours / 8} 天${carriedNote}${expiredNote}`,
+            note: annualOverride === undefined
+                ? `依到職日 ${emp.hireDate || '未設定'} 計算本年 ${annualSnap.newGrantedHours / 8} 天${carriedNote}${expiredNote}`
+                : `員工管理手動設定本年特休 ${annualSnap.newGrantedHours}h${carriedNote}${expiredNote}`,
         },
-        [LeaveType.Personal]: { hours: 14 * 8, note: '勞基法事假上限 14 天/年（不給薪）' },
-        [LeaveType.Sick]:     { hours: 30 * 8, note: '勞基法普通病假上限 30 天/年（半薪）' },
+        [LeaveType.Personal]: {
+            hours: overrideHours(emp.personalLeaveQuotaHours) ?? 14 * 8,
+            note: overrideHours(emp.personalLeaveQuotaHours) === undefined ? '勞基法事假上限 14 天/年（不給薪）' : '員工管理手動設定事假年度配額',
+        },
+        [LeaveType.Sick]: {
+            hours: overrideHours(emp.sickLeaveQuotaHours) ?? 30 * 8,
+            note: overrideHours(emp.sickLeaveQuotaHours) === undefined ? '勞基法普通病假上限 30 天/年（半薪）' : '員工管理手動設定病假年度配額',
+        },
         [LeaveType.Other]:    { hours: 9999, note: '其他假別不設上限' },
     };
 
@@ -1022,13 +1072,18 @@ export const handler: Handler = async (event) => {
             }
 
             case 'create-employee': {
+                if (!isAdmin) return fail(403, '僅管理者可新增員工');
                 const snap = await db.collection('employees').get();
                 const existingIds = snap.docs.map(d => d.id);
                 let num = existingIds.length + 1;
                 let newId = `EMP${String(num).padStart(3, '0')}`;
                 while (existingIds.includes(newId)) { num++; newId = `EMP${String(num).padStart(3, '0')}`; }
                 const rawPwd = data.initialPassword || 'Aa123456';
-                const newEmp = { ...data.employee, id: newId, password: hashPassword(rawPwd) };
+                const employeeData = sanitizeEmployeePayload(data.employee);
+                if (!isSuperAdmin && roleRank(employeeData.role) > roleRank(currentUserRole)) {
+                    return fail(403, '不可指派高於自身權限的系統角色');
+                }
+                const newEmp = { ...employeeData, id: newId, password: hashPassword(rawPwd) };
                 await db.collection('employees').doc(newId).set(newEmp);
                 const { password: _p, ...empWithoutPwd } = newEmp;
                 await writeAuditLog(uid, '新增員工', newId, `${data.employee.name} (${data.employee.position})`);
@@ -1036,21 +1091,29 @@ export const handler: Handler = async (event) => {
             }
 
             case 'update-employee': {
+                if (!isAdmin) return fail(403, '僅管理者可更新員工');
                 const ref = db.collection('employees').doc(data.empId);
                 const snap = await ref.get();
                 if (!snap.exists) return ok(null);
                 const before = snap.data()!;
-                await ref.update(data.updates);
+                if (!isSuperAdmin && roleRank(before.role) > roleRank(currentUserRole)) {
+                    return fail(403, '不可編輯高於自身權限的帳號');
+                }
+                const updates = sanitizeEmployeePayload(data.updates);
+                if (updates.role && !isSuperAdmin && roleRank(updates.role) > roleRank(currentUserRole)) {
+                    return fail(403, '不可指派高於自身權限的系統角色');
+                }
+                await ref.update(updates);
                 const updated = await ref.get();
                 const { password: _p, ...emp } = updated.data()!;
-                await writeAuditLog(uid, '更新員工', data.empId, JSON.stringify(data.updates));
+                await writeAuditLog(uid, '更新員工', data.empId, JSON.stringify(updates));
 
                 // Phase 8.2：留停欄位變動專屬 audit log
-                const startChanged = 'leaveOfAbsenceStart' in (data.updates || {}) && data.updates.leaveOfAbsenceStart !== before.leaveOfAbsenceStart;
-                const endChanged = 'leaveOfAbsenceEnd' in (data.updates || {}) && data.updates.leaveOfAbsenceEnd !== before.leaveOfAbsenceEnd;
+                const startChanged = 'leaveOfAbsenceStart' in (updates || {}) && updates.leaveOfAbsenceStart !== before.leaveOfAbsenceStart;
+                const endChanged = 'leaveOfAbsenceEnd' in (updates || {}) && updates.leaveOfAbsenceEnd !== before.leaveOfAbsenceEnd;
                 if (startChanged || endChanged) {
-                    const newStart = data.updates.leaveOfAbsenceStart ?? before.leaveOfAbsenceStart;
-                    const newEnd = data.updates.leaveOfAbsenceEnd ?? before.leaveOfAbsenceEnd;
+                    const newStart = updates.leaveOfAbsenceStart ?? before.leaveOfAbsenceStart;
+                    const newEnd = updates.leaveOfAbsenceEnd ?? before.leaveOfAbsenceEnd;
                     if (newStart && !newEnd) {
                         await writeAuditLog(uid, '設定留停', data.empId, `${before.name} 留停起始 ${newStart}`);
                     } else if (newStart && newEnd) {
