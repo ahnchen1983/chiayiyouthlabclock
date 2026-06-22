@@ -582,6 +582,23 @@ describe('computeCoverageSlots / computeCoverageGaps', () => {
             expect(s.covered).toBeLessThanOrEqual(1);
         });
     });
+
+    it('遠端工作與出差不計入現場覆蓋人數', () => {
+        const evt: ScheduleEvent = {
+            date: '2026-04-15', dayOfWeek: '三', status: '營運',
+            openingHours: '09:00-17:00',
+            requiredHeadcount: 1,
+            shifts: [
+                { empId: 'E1', name: '遠端員工', role: 'remoteWork', from: '09:00', to: '17:00' },
+                { empId: 'E2', name: '出差員工', role: 'businessTrip', from: '09:00', to: '17:00' },
+            ],
+        };
+        const slots = computeCoverageSlots(evt);
+        expect(slots.every(s => s.covered === 0 && s.short === 1)).toBe(true);
+        expect(computeCoverageGaps(evt)).toEqual([
+            { from: '09:00', to: '17:00', covered: 0, required: 1, short: 1 },
+        ]);
+    });
 });
 
 // =============================================================

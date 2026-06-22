@@ -1,8 +1,17 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiGetMonthlySchedule, apiGetAllLeaveRequests } from '../../services/googleAppsScriptAPI';
-import { ScheduleEvent, LeaveRequest, LeaveStatus } from '../../types';
+import { ScheduleEvent, LeaveRequest, LeaveStatus, StaffRole } from '../../types';
 import { ChevronLeftIcon, ChevronRightIcon } from '../icons';
+
+const STAFF_ROLES: StaffRole[] = ['staffA', 'staffB', 'remoteWork', 'businessTrip', 'partTime'];
+const ROLE_LABEL: Record<StaffRole, string> = {
+  staffA: '專責 A',
+  staffB: '專責 B',
+  remoteWork: '遠端工作',
+  businessTrip: '出差',
+  partTime: '兼職',
+};
 
 const FullScheduleCalendar: React.FC = () => {
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -71,10 +80,10 @@ const FullScheduleCalendar: React.FC = () => {
               {(event.status === '營運' || event.status === '休館(值班)') && (
                 <>
                   {event.openingHours && <p className="text-gray-500">{event.openingHours}</p>}
-                  {(['staffA', 'staffB', 'partTime'] as const).map(role => {
+                  {STAFF_ROLES.map(role => {
                     const list = (event.shifts || []).filter(s => s.role === role);
-                    if (list.length === 0 && role === 'partTime') return null;
-                    const label = role === 'staffA' ? 'A' : role === 'staffB' ? 'B' : 'PT';
+                    if (list.length === 0 && role !== 'staffA' && role !== 'staffB') return null;
+                    const label = ROLE_LABEL[role];
                     if (list.length === 0) return <p key={role}>{label}: <span className="text-gray-400">未排</span></p>;
                     return (
                       <p key={role}>{label}: <span className="font-medium">{list.map(s => s.name).join(', ')}</span></p>

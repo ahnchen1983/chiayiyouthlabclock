@@ -25,15 +25,31 @@ const toMin = (hhmm: string): number => {
   return h * 60 + m;
 };
 
+const STAFF_ROLES: StaffRole[] = ['staffA', 'staffB', 'remoteWork', 'businessTrip', 'partTime'];
+const FULL_TIME_STAFF_ROLES: StaffRole[] = ['staffA', 'staffB', 'remoteWork', 'businessTrip'];
+const PART_TIME_STAFF_ROLES: StaffRole[] = ['partTime'];
+const EMPTY_ROLE_GROUPS: Record<StaffRole, StaffShift[]> = {
+  staffA: [],
+  staffB: [],
+  remoteWork: [],
+  businessTrip: [],
+  partTime: [],
+};
+const isOnsiteRole = (role: StaffRole): boolean => role !== 'remoteWork' && role !== 'businessTrip';
+
 const ROLE_COLOR: Record<StaffRole, string> = {
   staffA: 'bg-blue-500',
   staffB: 'bg-emerald-500',
+  remoteWork: 'bg-indigo-500',
+  businessTrip: 'bg-sky-500',
   partTime: 'bg-orange-500',
 };
 
 const ROLE_COLOR_LIGHT: Record<StaffRole, string> = {
   staffA: 'bg-blue-200 text-blue-900',
   staffB: 'bg-emerald-200 text-emerald-900',
+  remoteWork: 'bg-indigo-200 text-indigo-900',
+  businessTrip: 'bg-sky-200 text-sky-900',
   partTime: 'bg-orange-200 text-orange-900',
 };
 
@@ -45,6 +61,8 @@ const ROLE_COLOR_LIGHT: Record<StaffRole, string> = {
 const ROLE_LABEL: Record<StaffRole, string> = {
   staffA: '專責 A',
   staffB: '專責 B',
+  remoteWork: '遠端工作',
+  businessTrip: '出差',
   partTime: '兼職',
 };
 
@@ -177,7 +195,7 @@ const ScheduleManager: React.FC = () => {
         if (!acc[s.role]) acc[s.role] = [];
         acc[s.role].push(s);
         return acc;
-      }, { staffA: [], staffB: [], partTime: [] });
+      }, { ...EMPTY_ROLE_GROUPS });
 
       days.push(
         <div key={day} className={`relative p-2 min-h-[120px] border-r border-b ${bgColor} transition-all hover:shadow-inner cursor-pointer`} onClick={() => event && openEditModal(event)}>
@@ -193,10 +211,10 @@ const ScheduleManager: React.FC = () => {
               {(event.status === '營運' || event.status === '休館(值班)') && (
                 <>
                   {event.openingHours && <p className="text-gray-500">{event.openingHours}</p>}
-                  {(['staffA', 'staffB', 'partTime'] as StaffRole[]).map(role => {
+                  {STAFF_ROLES.map(role => {
                     const list = groupedByRole[role];
                     if (list.length === 0 && role !== 'staffA' && role !== 'staffB') return null;
-                    const label = role === 'staffA' ? 'A' : role === 'staffB' ? 'B' : 'PT';
+                    const label = ROLE_LABEL[role];
                     if (list.length === 0) return <p key={role}>{label}: 未排</p>;
                     return (
                       <p key={role}>
@@ -497,8 +515,10 @@ const EditScheduleModal: React.FC<{
         if (patch.empId !== undefined) {
           const emp = employees.find(e => e.id === patch.empId);
           merged.name = emp?.name || '';
-          // 兼職員工預設 partTime，正職預設 staffA
-          if (emp) merged.role = emp.position === '兼職人員' ? 'partTime' : merged.role || 'staffA';
+          if (emp) {
+            const allowedRoles = emp.position === '兼職人員' ? PART_TIME_STAFF_ROLES : FULL_TIME_STAFF_ROLES;
+            merged.role = allowedRoles.includes(merged.role) ? merged.role : allowedRoles[0];
+          }
         }
         return merged;
       }),
@@ -531,6 +551,7 @@ const EditScheduleModal: React.FC<{
       const mid = (t + tTo) / 2;
       const set = new Set<string>();
       for (const sh of editedEvent.shifts) {
+        if (!isOnsiteRole(sh.role)) continue;
         if (toMin(sh.from) <= mid && mid < toMin(sh.to)) set.add(sh.empId || `n:${sh.name}`);
       }
       const short = Math.max(0, required - set.size);
@@ -631,6 +652,8 @@ const EditScheduleModal: React.FC<{
                     const empCountInShifts = shiftCountByEmp[s.empId || `n:${s.name}`] || 0;
                     const over = empCountInShifts > 2;
                     const prefMatch = matchPreferenceForDate(staffPreferences.get(s.empId), editedEvent.date);
+                    const selectedEmp = employees.find(e => e.id === s.empId);
+                    const roleOptions = selectedEmp?.position === '兼職人員' ? PART_TIME_STAFF_ROLES : FULL_TIME_STAFF_ROLES;
                     return (
                       <div key={idx} className={`flex flex-wrap items-center gap-2 p-2 rounded border ${over ? 'border-red-400 bg-red-50' : 'border-gray-200 bg-gray-50'}`}>
                         <select
@@ -654,7 +677,7 @@ const EditScheduleModal: React.FC<{
                           onChange={e => updateShift(idx, { role: e.target.value as StaffRole })}
                           className="p-1 border rounded text-sm"
                         >
-                          {(['staffA', 'staffB', 'partTime'] as StaffRole[]).map(r => (
+                          {roleOptions.map(r => (
                             <option key={r} value={r}>{ROLE_LABEL[r]}</option>
                           ))}
                         </select>
@@ -728,6 +751,7 @@ const ScheduleTimeline: React.FC<{ event: ScheduleEvent }> = ({ event }) => {
       const mid = (tFrom + tTo) / 2;
       const empSet = new Set<string>();
       for (const s of event.shifts) {
+        if (!isOnsiteRole(s.role)) continue;
         const sf = toMin(s.from), st = toMin(s.to);
         if (sf <= mid && mid < st) empSet.add(s.empId || `n:${s.name}`);
       }
@@ -775,10 +799,13 @@ const ScheduleTimeline: React.FC<{ event: ScheduleEvent }> = ({ event }) => {
     <div className="mb-4 border rounded-lg p-3 bg-gray-50">
       <div className="flex items-center justify-between mb-2">
         <h4 className="text-sm font-semibold text-gray-700">時間軸視覺化</h4>
-        <div className="flex gap-2 text-[10px]">
-          <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded bg-blue-500" />專責A</span>
-          <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded bg-emerald-500" />專責B</span>
-          <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded bg-orange-500" />兼職</span>
+        <div className="flex flex-wrap gap-2 text-[10px]">
+          {STAFF_ROLES.map(role => (
+            <span key={role} className="flex items-center gap-1">
+              <span className={`inline-block w-3 h-3 rounded ${ROLE_COLOR[role]}`} />
+              {ROLE_LABEL[role]}
+            </span>
+          ))}
         </div>
       </div>
 

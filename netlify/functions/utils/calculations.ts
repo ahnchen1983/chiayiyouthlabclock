@@ -353,6 +353,10 @@ const toHHMM = (totalMin: number): string => {
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 };
 
+export const isOnsiteCoverageRole = (role: StaffShift['role']): boolean => {
+    return role !== 'remoteWork' && role !== 'businessTrip';
+};
+
 export interface CoverageSlot {
     from: string;
     to: string;
@@ -388,6 +392,7 @@ export const computeCoverageSlots = (event: ScheduleEvent, intervalMin: number =
         const mid = (slotFrom + slotTo) / 2;
         const covered = new Set<string>();
         for (const s of event.shifts) {
+            if (!isOnsiteCoverageRole(s.role)) continue;
             const sFrom = toMin(s.from);
             const sTo = toMin(s.to);
             if (sFrom <= mid && mid < sTo) {

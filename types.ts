@@ -43,7 +43,7 @@ export interface ClockRecord {
 // 舊版 staffA / staffB / partTime / shiftTime 已廢棄。
 // 讀取時若遇到舊資料會由 normalizeScheduleDoc 自動轉換，但不回寫。
 
-export type StaffRole = 'staffA' | 'staffB' | 'partTime';
+export type StaffRole = 'staffA' | 'staffB' | 'partTime' | 'remoteWork' | 'businessTrip';
 
 export interface StaffShift {
     empId: string;       // 員工編號（必填）

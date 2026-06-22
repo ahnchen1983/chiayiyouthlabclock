@@ -8,7 +8,7 @@ import {
     calculateSalaryForEmployee,
     computePayableClockHours, deriveClockRecordDisplayStatus,
     normalizeScheduleDoc, getEmployeeShiftsForDay, isEmployeeScheduledForDay, shiftHours,
-    computeCoverageGaps,
+    computeCoverageGaps, isOnsiteCoverageRole,
 } from './utils/calculations';
 import { getMonthKey, isMonthLocked } from './utils/monthLock';
 import { validateLeaveOfAbsenceRequest } from './utils/selfServiceRequests';
@@ -2140,8 +2140,13 @@ export const handler: Handler = async (event) => {
                         if (n > 2) conflicts.push({ date: e.date, type: 'duplicate', name, message: `${name} 在 ${e.date} 排了 ${n} 段班次（兩頭班上限 2）` });
                     }
                     // 2. 應到人數不足（決策 3：僅警示）
-                    if (e.requiredHeadcount && empShiftCount.size < e.requiredHeadcount) {
-                        conflicts.push({ date: e.date, type: 'understaffed', message: `${e.date} 應到 ${e.requiredHeadcount} 人，目前只排了 ${empShiftCount.size} 人` });
+                    const onsiteEmpCount = new Set(
+                        e.shifts
+                            .filter(s => isOnsiteCoverageRole(s.role))
+                            .map(s => s.empId || `name:${s.name}`)
+                    ).size;
+                    if (e.requiredHeadcount && onsiteEmpCount < e.requiredHeadcount) {
+                        conflicts.push({ date: e.date, type: 'understaffed', message: `${e.date} 應到 ${e.requiredHeadcount} 人，目前現場只排了 ${onsiteEmpCount} 人` });
                     }
                     // 3. 營運日無 staffA
                     if (e.status === '營運' && !e.shifts.some(s => s.role === 'staffA')) {
