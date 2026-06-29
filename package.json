@@ -20,20 +20,20 @@
     "firebase:rules:deploy": "npx firebase-tools deploy --only firestore:rules"
   },
   "dependencies": {
-    "@sentry/react": "^10.53.1",
-    "firebase": "^12.10.0",
+    "@sentry/react": "^10.62.0",
+    "firebase": "^12.15.0",
     "firebase-admin": "^13.7.0",
-    "react": "^19.2.3",
-    "react-dom": "^19.2.3"
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^5.0.1",
-    "@netlify/functions": "^5.1.2",
-    "@playwright/test": "^1.60.0",
+    "@netlify/functions": "^5.3.0",
+    "@playwright/test": "^1.61.1",
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0",
-    "vitest": "^4.1.6"
+    "vitest": "^4.1.9"
   }
 }
