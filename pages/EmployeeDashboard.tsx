@@ -136,7 +136,7 @@ const EmployeeDashboard: React.FC = () => {
         <NavItem view="openShifts" icon={<CalendarIcon className="w-6 h-6" />} label="認領班次" />
         <NavItem view="shiftSwap" icon={<CalendarIcon className="w-6 h-6" />} label="換班" />
         <NavItem view="records" icon={<ListIcon className="w-6 h-6" />} label="打卡紀錄" />
-        <NavItem view="leave" icon={<SendIcon className="w-6 h-6" />} label="請假申請" />
+        <NavItem view="leave" icon={<SendIcon className="w-6 h-6" />} label="請假/外勤" />
         <NavItem view="leaveOfAbsence" icon={<SendIcon className="w-6 h-6" />} label="留停申請" />
         <NavItem view="leaveBalance" icon={<ListIcon className="w-6 h-6" />} label="假別餘額" />
         <NavItem view="preferences" icon={<CalendarIcon className="w-6 h-6" />} label="偏好設定" />

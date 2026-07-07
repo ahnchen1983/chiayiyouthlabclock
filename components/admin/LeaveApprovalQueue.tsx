@@ -53,7 +53,7 @@ const LeaveApprovalQueue: React.FC = () => {
 
     return (
         <div className="p-4 bg-white rounded-lg shadow-lg">
-            <h1 className="text-3xl font-bold text-gray-800 mb-4">請假審核</h1>
+            <h1 className="text-3xl font-bold text-gray-800 mb-4">請假／外勤審核</h1>
             
             <div className="flex space-x-2 mb-4 border-b">
                 <button onClick={() => setFilter(LeaveStatus.Pending)} className={`py-2 px-4 font-semibold ${filter === LeaveStatus.Pending ? 'border-b-2 border-brand-blue-dark text-brand-blue-dark' : 'text-gray-500'}`}>待審核</button>

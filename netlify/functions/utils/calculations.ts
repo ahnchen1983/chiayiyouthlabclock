@@ -5,7 +5,7 @@
  * Phase 7.1 — Vitest 測試骨架
  */
 import { scryptSync, randomBytes, timingSafeEqual } from 'crypto';
-import { LeaveStatus, LeaveType } from '../../../types';
+import { LeaveStatus, LeaveType, isOutingLeaveType } from '../../../types';
 import type { ClockRecord, LeaveRequest, ScheduleEvent, StaffShift, SalaryDetail, SystemConfig, AnnualLeaveSnapshot } from '../../../types';
 
 export type { AnnualLeaveSnapshot };
@@ -466,8 +466,10 @@ export const calculateSalaryForEmployee = (
         }, 0)
         : scheduledHours;
 
+    // 外勤（公出/出差/遠端工作）不屬於請假：不計入請假時數、不扣薪
     const empLeaves = leaveRequests.filter(
         lr => lr.empId === emp.id && lr.status === LeaveStatus.Approved && lr.startDate.slice(0, 7) === yearMonth
+            && !isOutingLeaveType(lr.leaveType)
     );
     const totalLeaveHours = empLeaves.reduce((sum, lr) => sum + lr.hours, 0);
     const leaveDetails = empLeaves.map(lr => ({ type: lr.leaveType, hours: lr.hours }));

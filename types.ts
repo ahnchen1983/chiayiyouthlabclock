@@ -43,6 +43,8 @@ export interface ClockRecord {
 // 舊版 staffA / staffB / partTime / shiftTime 已廢棄。
 // 讀取時若遇到舊資料會由 normalizeScheduleDoc 自動轉換，但不回寫。
 
+// remoteWork / businessTrip 已不再提供排班選用（遠端/出差改走「外勤申請」核准制），
+// 型別保留是為了讓既有排班資料仍能正常顯示與編輯。
 export type StaffRole = 'staffA' | 'staffB' | 'partTime' | 'remoteWork' | 'businessTrip';
 
 export interface StaffShift {
@@ -92,7 +94,21 @@ export enum LeaveType {
     Sick = '病假',
     Annual = '特休',
     Other = '其他',
+    // 外勤申請（非請假）：不計假別餘額、不扣薪，核准後出勤對照不列為缺勤
+    OfficialBusiness = '公出',
+    BusinessTrip = '出差',
+    RemoteWork = '遠端工作',
 }
+
+// 外勤類型：走請假申請/審核同一套流程，但不屬於「請假」——
+// 不佔假別餘額、不扣薪、不計入薪資單請假時數與月結假別分布
+export const OUTING_LEAVE_TYPES: LeaveType[] = [
+    LeaveType.OfficialBusiness,
+    LeaveType.BusinessTrip,
+    LeaveType.RemoteWork,
+];
+export const isOutingLeaveType = (type: LeaveType | string): boolean =>
+    OUTING_LEAVE_TYPES.includes(type as LeaveType);
 
 export enum LeaveStatus {
     Pending = '待審核',

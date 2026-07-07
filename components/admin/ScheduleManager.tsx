@@ -25,16 +25,17 @@ const toMin = (hhmm: string): number => {
   return h * 60 + m;
 };
 
+// remoteWork / businessTrip 僅供舊排班資料顯示，不再開放選用（遠端/出差改走外勤申請）
 const STAFF_ROLES: StaffRole[] = ['staffA', 'staffB', 'remoteWork', 'businessTrip', 'partTime'];
-const FULL_TIME_STAFF_ROLES: StaffRole[] = ['staffA', 'staffB', 'remoteWork', 'businessTrip'];
+const FULL_TIME_STAFF_ROLES: StaffRole[] = ['staffA', 'staffB'];
 const PART_TIME_STAFF_ROLES: StaffRole[] = ['partTime'];
-const EMPTY_ROLE_GROUPS: Record<StaffRole, StaffShift[]> = {
+const emptyRoleGroups = (): Record<StaffRole, StaffShift[]> => ({
   staffA: [],
   staffB: [],
   remoteWork: [],
   businessTrip: [],
   partTime: [],
-};
+});
 const isOnsiteRole = (role: StaffRole): boolean => role !== 'remoteWork' && role !== 'businessTrip';
 
 const ROLE_COLOR: Record<StaffRole, string> = {
@@ -195,7 +196,7 @@ const ScheduleManager: React.FC = () => {
         if (!acc[s.role]) acc[s.role] = [];
         acc[s.role].push(s);
         return acc;
-      }, { ...EMPTY_ROLE_GROUPS });
+      }, emptyRoleGroups());
 
       days.push(
         <div key={day} className={`relative p-2 min-h-[120px] border-r border-b ${bgColor} transition-all hover:shadow-inner cursor-pointer`} onClick={() => event && openEditModal(event)}>
@@ -653,7 +654,9 @@ const EditScheduleModal: React.FC<{
                     const over = empCountInShifts > 2;
                     const prefMatch = matchPreferenceForDate(staffPreferences.get(s.empId), editedEvent.date);
                     const selectedEmp = employees.find(e => e.id === s.empId);
-                    const roleOptions = selectedEmp?.position === '兼職人員' ? PART_TIME_STAFF_ROLES : FULL_TIME_STAFF_ROLES;
+                    const baseRoleOptions = selectedEmp?.position === '兼職人員' ? PART_TIME_STAFF_ROLES : FULL_TIME_STAFF_ROLES;
+                    // 舊資料若仍是遠端/出差角色，保留該選項讓值不被隱性改掉
+                    const roleOptions = baseRoleOptions.includes(s.role) ? baseRoleOptions : [...baseRoleOptions, s.role];
                     return (
                       <div key={idx} className={`flex flex-wrap items-center gap-2 p-2 rounded border ${over ? 'border-red-400 bg-red-50' : 'border-gray-200 bg-gray-50'}`}>
                         <select
@@ -800,7 +803,7 @@ const ScheduleTimeline: React.FC<{ event: ScheduleEvent }> = ({ event }) => {
       <div className="flex items-center justify-between mb-2">
         <h4 className="text-sm font-semibold text-gray-700">時間軸視覺化</h4>
         <div className="flex flex-wrap gap-2 text-[10px]">
-          {STAFF_ROLES.map(role => (
+          {STAFF_ROLES.filter(isOnsiteRole).map(role => (
             <span key={role} className="flex items-center gap-1">
               <span className={`inline-block w-3 h-3 rounded ${ROLE_COLOR[role]}`} />
               {ROLE_LABEL[role]}

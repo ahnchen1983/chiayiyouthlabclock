@@ -2,7 +2,9 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { apiSubmitLeaveRequest, apiGetLeaveBalance } from '../../services/googleAppsScriptAPI';
-import { LeaveType, LeaveRequest, LeaveBalance } from '../../types';
+import { LeaveType, LeaveRequest, LeaveBalance, OUTING_LEAVE_TYPES, isOutingLeaveType } from '../../types';
+
+const REGULAR_LEAVE_TYPES: LeaveType[] = [LeaveType.Personal, LeaveType.Sick, LeaveType.Annual, LeaveType.Other];
 
 const LeaveRequestForm: React.FC = () => {
   const { user } = useAuth();
@@ -87,17 +89,22 @@ const LeaveRequestForm: React.FC = () => {
 
   return (
     <div className="max-w-2xl mx-auto mt-4 p-6 bg-white rounded-lg shadow-md">
-      <h2 className="text-2xl font-bold text-center mb-6 text-gray-800">請假申請</h2>
+      <h2 className="text-2xl font-bold text-center mb-6 text-gray-800">請假／外勤申請</h2>
       <form onSubmit={handleSubmit} className="space-y-6">
         <div>
-          <label htmlFor="leaveType" className="block text-sm font-medium text-gray-700">假別</label>
+          <label htmlFor="leaveType" className="block text-sm font-medium text-gray-700">類別</label>
           <select
             id="leaveType"
             value={leaveType}
             onChange={(e) => setLeaveType(e.target.value as LeaveType)}
             className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-brand-green-dark focus:border-brand-green-dark sm:text-sm rounded-md"
           >
-            {Object.values(LeaveType).map(lt => <option key={lt} value={lt}>{lt}</option>)}
+            <optgroup label="請假">
+              {REGULAR_LEAVE_TYPES.map(lt => <option key={lt} value={lt}>{lt}</option>)}
+            </optgroup>
+            <optgroup label="外勤（不佔假別餘額、不扣薪）">
+              {OUTING_LEAVE_TYPES.map(lt => <option key={lt} value={lt}>{lt}</option>)}
+            </optgroup>
           </select>
           {currentBalance && leaveType !== LeaveType.Other && (
             <div className="mt-1 text-xs text-gray-500 space-y-0.5">
@@ -131,8 +138,13 @@ const LeaveRequestForm: React.FC = () => {
               )}
             </div>
           )}
+          {isOutingLeaveType(leaveType) && (
+            <p className="mt-1 text-xs text-blue-600">
+              外勤申請（公出／出差／遠端工作）核准後，該時段出勤對照不會列為缺勤；不佔假別餘額、不影響薪資。
+            </p>
+          )}
           <p className="mt-2 text-xs text-gray-400">
-            ℹ️ 特休、事假、病假皆依剩餘餘額檢查；留停請至「留停申請」頁面提出。
+            ℹ️ 特休、事假、病假皆依剩餘餘額檢查；公出／出差／遠端工作屬外勤申請，不檢查餘額；留停請至「留停申請」頁面提出。
           </p>
         </div>
 

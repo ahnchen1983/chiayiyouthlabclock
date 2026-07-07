@@ -323,6 +323,18 @@ describe('calculateSalaryForEmployee', () => {
         expect(result.totalLeaveHours).toBe(16);
     });
 
+    it('外勤（公出/出差/遠端工作）不計請假時數、不扣薪', () => {
+        const leaves: LeaveRequest[] = [
+            { id: 'L1', empId: 'EMP001', name: '小王', leaveType: LeaveType.OfficialBusiness, startDate: '2026-04-05T09:00', endDate: '2026-04-05T17:00', hours: 8, reason: '市府開會', requestDate: '2026-04-04', status: LeaveStatus.Approved },
+            { id: 'L2', empId: 'EMP001', name: '小王', leaveType: LeaveType.BusinessTrip, startDate: '2026-04-10T09:00', endDate: '2026-04-11T17:00', hours: 16, reason: '台北出差', requestDate: '2026-04-09', status: LeaveStatus.Approved },
+            { id: 'L3', empId: 'EMP001', name: '小王', leaveType: LeaveType.RemoteWork, startDate: '2026-04-15T09:00', endDate: '2026-04-15T17:00', hours: 8, reason: '居家工作', requestDate: '2026-04-14', status: LeaveStatus.Approved },
+        ];
+        const result = calculateSalaryForEmployee(fullTimeEmp, '2026-04', [], [], leaves);
+        expect(result.leaveDeduction).toBe(0);
+        expect(result.totalLeaveHours).toBe(0);
+        expect(result.leaveDetails).toEqual([]);
+    });
+
     it('未核准的請假不計扣薪', () => {
         const leaves: LeaveRequest[] = [
             { id: 'L1', empId: 'EMP001', name: '小王', leaveType: LeaveType.Personal, startDate: '2026-04-05T09:00', endDate: '2026-04-05T17:00', hours: 8, reason: '私事', requestDate: '2026-04-04', status: LeaveStatus.Pending },

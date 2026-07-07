@@ -15,7 +15,7 @@ test('employee can submit leave request', async ({ page }) => {
   await mockApi(page);
   await page.goto('/');
 
-  await page.getByRole('button', { name: '請假申請' }).click();
+  await page.getByRole('button', { name: '請假/外勤' }).click();
   await expect(page.getByText('本年度事假剩餘')).toBeVisible();
   await page.locator('#startDate').fill(tomorrowAt(9));
   await page.locator('#endDate').fill(tomorrowAt(13));

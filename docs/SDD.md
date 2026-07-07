@@ -293,6 +293,18 @@ chiayiyouthlabclock/
 | 特休 | `LeaveType.Annual` | 不扣薪 |
 | 其他 | `LeaveType.Other` | 不扣薪 |
 
+**外勤類型（2026-07-07 新增，走同一申請/審核流程但「非請假」）：**
+
+| 類型 | 值 | 特性 |
+|------|-----|------|
+| 公出 | `LeaveType.OfficialBusiness` | 不佔假別餘額、不扣薪、不計入薪資單請假時數與月結假別分布 |
+| 出差 | `LeaveType.BusinessTrip` | 同上 |
+| 遠端工作 | `LeaveType.RemoteWork` | 同上 |
+
+- 判斷函式：`isOutingLeaveType()`（`types.ts` 之 `OUTING_LEAVE_TYPES`）。
+- 核准後效果：該時段出勤對照沿用既有「核准單覆蓋 → 不列缺勤」機制。
+- 對應決策：排班管理不再提供「遠端工作／出差」班別選用（`remoteWork` / `businessTrip` 型別保留，僅供舊資料顯示）。遠端／出差一律改走外勤申請。
+
 **審核狀態：** `待審核` → `核准` / `駁回`
 
 **請假時數計算：** `(endDate - startDate)` 轉換為小時（後端計算）

@@ -62,7 +62,8 @@ type AdminView = 'overview' | 'schedule' | 'attendance' | 'leave' | 'employees' 
 
 const AdminDashboard: React.FC = () => {
   const { user, logout } = useAuth();
-  const [currentView, setCurrentView] = useState<AdminView>('overview');
+  // 一進入介面即為自己的打卡頁（管理功能仍在側邊選單）
+  const [currentView, setCurrentView] = useState<AdminView>('myClock');
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -134,7 +135,7 @@ const AdminDashboard: React.FC = () => {
             <NavItem view="schedule" icon={<CalendarIcon className="w-6 h-6" />} label="排班管理" />
             <NavItem view="comparison" icon={<CompareIcon className="w-6 h-6" />} label="排班對照表" />
             <NavItem view="attendance" icon={<ListIcon className="w-6 h-6" />} label="出勤紀錄" />
-            <NavItem view="leave" icon={<CheckSquareIcon className="w-6 h-6" />} label="請假審核" />
+            <NavItem view="leave" icon={<CheckSquareIcon className="w-6 h-6" />} label="請假/外勤審核" />
             <NavItem view="shiftSwapApproval" icon={<CalendarIcon className="w-6 h-6" />} label="換班審核" />
             <NavItem view="loaApproval" icon={<CheckSquareIcon className="w-6 h-6" />} label="留停審核" />
             <NavItem view="makeupApproval" icon={<CheckSquareIcon className="w-6 h-6" />} label="補打卡審核" />
@@ -156,7 +157,7 @@ const AdminDashboard: React.FC = () => {
             <ul className="space-y-2">
               <NavItem view="myClock" icon={<ClockIcon className="w-6 h-6" />} label="我的打卡" />
               <NavItem view="myRecords" icon={<ListIcon className="w-6 h-6" />} label="我的出勤紀錄" />
-              <NavItem view="myLeave" icon={<SendIcon className="w-6 h-6" />} label="我的請假" />
+              <NavItem view="myLeave" icon={<SendIcon className="w-6 h-6" />} label="請假/外勤申請" />
               <NavItem view="myLeaveOfAbsence" icon={<SendIcon className="w-6 h-6" />} label="留停申請" />
               <NavItem view="myMakeup" icon={<SendIcon className="w-6 h-6" />} label="補打卡申請" />
               <NavItem view="myLeaveBalance" icon={<CheckSquareIcon className="w-6 h-6" />} label="假別餘額" />
