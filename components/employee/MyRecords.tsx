@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { apiGetClockRecords } from '../../services/googleAppsScriptAPI';
 import { openAttendancePrintView } from '../../services/attendancePrint';
@@ -10,6 +10,7 @@ const MyRecords: React.FC = () => {
   const [records, setRecords] = useState<ClockRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
+  const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
 
   useEffect(() => {
     const fetchRecords = async () => {
@@ -22,6 +23,13 @@ const MyRecords: React.FC = () => {
     };
     fetchRecords();
   }, [user, month]);
+
+  const sortedRecords = useMemo(() => {
+    return [...records].sort((a, b) => {
+      const cmp = a.date.localeCompare(b.date) || (a.clockInTime || '').localeCompare(b.clockInTime || '');
+      return sortOrder === 'asc' ? cmp : -cmp;
+    });
+  }, [records, sortOrder]);
 
   return (
     <div className="p-4 bg-white rounded-lg shadow-md">
@@ -39,11 +47,11 @@ const MyRecords: React.FC = () => {
         </div>
         <button
           onClick={() => {
-            if (records.length === 0) {
+            if (sortedRecords.length === 0) {
               alert('本月無打卡紀錄可列印');
               return;
             }
-            openAttendancePrintView(records, {
+            openAttendancePrintView(sortedRecords, {
               empName: user?.name || '',
               month,
               isAdminView: false,
@@ -52,6 +60,12 @@ const MyRecords: React.FC = () => {
           className="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 transition-colors"
         >
           📥 列印出勤紀錄
+        </button>
+        <button
+          onClick={() => setSortOrder(prev => prev === 'desc' ? 'asc' : 'desc')}
+          className="px-4 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 transition-colors"
+        >
+          日期：{sortOrder === 'desc' ? '新到舊' : '舊到新'}
         </button>
       </div>
       <div className="overflow-x-auto">
@@ -74,8 +88,8 @@ const MyRecords: React.FC = () => {
                     </div>
                 </td>
               </tr>
-            ) : records.length > 0 ? (
-              records.map(record => (
+            ) : sortedRecords.length > 0 ? (
+              sortedRecords.map(record => (
                 <tr key={record.id} className="text-center hover:bg-gray-50">
                   <td className="py-2 px-4 border-b">{record.date}</td>
                   <td className="py-2 px-4 border-b">{record.clockInTime}</td>

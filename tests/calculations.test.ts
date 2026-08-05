@@ -108,6 +108,12 @@ describe('determineClockStatus', () => {
         expect(deriveClockRecordDisplayStatus({ clockInTime: '08:30', clockOutTime: '17:30', status: '正常' })).toBe('正常');
     });
 
+    it('出勤紀錄顯示狀態：實際打卡超過 9 小時且原狀態正常 → 加班', () => {
+        expect(deriveClockRecordDisplayStatus({ clockInTime: '08:30', clockOutTime: '17:30', status: '正常' })).toBe('正常');
+        expect(deriveClockRecordDisplayStatus({ clockInTime: '08:30', clockOutTime: '17:31', status: '正常' })).toBe('加班');
+        expect(deriveClockRecordDisplayStatus({ clockInTime: '08:30', clockOutTime: '18:30', status: '遲到' })).toBe('遲到');
+    });
+
     it('寬限分鐘可調', () => {
         expect(determineClockStatus('08:30-17:30', '08:40', '17:30', 5)).toBe('遲到');
         expect(determineClockStatus('08:30-17:30', '08:40', '17:30', 15)).toBe('正常');

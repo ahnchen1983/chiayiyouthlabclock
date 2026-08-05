@@ -42,11 +42,6 @@ const LeaveRequestForm: React.FC = () => {
       setMessage({ type: 'error', text: '結束時間必須晚於開始時間。' });
       return;
     }
-    const todayMs = new Date(new Date().toISOString().slice(0, 10)).getTime();
-    if (startMs < todayMs - 7 * 24 * 60 * 60 * 1000) {
-      setMessage({ type: 'error', text: '請假開始時間不可早於 7 天前。' });
-      return;
-    }
     const hours = (endMs - startMs) / (1000 * 60 * 60);
     if (hours < 0.5) {
       setMessage({ type: 'error', text: '請假時數至少需 0.5 小時。' });

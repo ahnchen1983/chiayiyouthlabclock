@@ -76,11 +76,44 @@ export const determineClockStatus = (
     return '正常';
 };
 
+export const OVERTIME_STATUS_THRESHOLD_HOURS = 9;
+
+const clockHoursFromHHMM = (clockInTime: string | null | undefined, clockOutTime: string | null | undefined): number => {
+    if (!clockInTime || !clockOutTime || !clockInTime.includes(':') || !clockOutTime.includes(':')) return 0;
+    const [ih, im] = clockInTime.split(':').map(Number);
+    const [oh, om] = clockOutTime.split(':').map(Number);
+    const inMin = ih * 60 + im;
+    const outMin = oh * 60 + om;
+    if (!Number.isFinite(inMin) || !Number.isFinite(outMin) || outMin <= inMin) return 0;
+    return Math.round(((outMin - inMin) / 60) * 10) / 10;
+};
+
+const clockMinutesFromHHMM = (clockInTime: string | null | undefined, clockOutTime: string | null | undefined): number => {
+    if (!clockInTime || !clockOutTime || !clockInTime.includes(':') || !clockOutTime.includes(':')) return 0;
+    const [ih, im] = clockInTime.split(':').map(Number);
+    const [oh, om] = clockOutTime.split(':').map(Number);
+    const inMin = ih * 60 + im;
+    const outMin = oh * 60 + om;
+    if (!Number.isFinite(inMin) || !Number.isFinite(outMin) || outMin <= inMin) return 0;
+    return outMin - inMin;
+};
+
+export const applyOvertimeClockStatus = (
+    status: ClockRecord['status'],
+    clockInTime: string | null | undefined,
+    clockOutTime: string | null | undefined,
+    thresholdHours: number = OVERTIME_STATUS_THRESHOLD_HOURS
+): ClockRecord['status'] => {
+    if (!clockInTime || !clockOutTime || status === '異常') return status;
+    if (status === '正常' && clockMinutesFromHHMM(clockInTime, clockOutTime) > thresholdHours * 60) return '加班';
+    return status;
+};
+
 export const deriveClockRecordDisplayStatus = (
     record: Pick<ClockRecord, 'clockInTime' | 'clockOutTime' | 'status'>
 ): ClockRecord['status'] => {
     if (!record.clockInTime || !record.clockOutTime) return '異常';
-    return record.status;
+    return applyOvertimeClockStatus(record.status, record.clockInTime, record.clockOutTime);
 };
 
 // ==================== 留停期間（Phase 8.2）====================
@@ -298,10 +331,7 @@ const minutesFromHHMM = (hhmm: string | null | undefined): number | null => {
 };
 
 export const rawClockHours = (clockInTime: string | null | undefined, clockOutTime: string | null | undefined): number => {
-    const clockIn = minutesFromHHMM(clockInTime);
-    const clockOut = minutesFromHHMM(clockOutTime);
-    if (clockIn == null || clockOut == null || clockOut <= clockIn) return 0;
-    return Math.round(((clockOut - clockIn) / 60) * 10) / 10;
+    return clockHoursFromHHMM(clockInTime, clockOutTime);
 };
 
 /**

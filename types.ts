@@ -17,7 +17,7 @@ export interface ClockStatus {
   clockOutTime?: string;
 }
 
-export type ClockRecordStatus = '正常' | '遲到' | '早退' | '遲到+早退' | '異常';
+export type ClockRecordStatus = '正常' | '遲到' | '早退' | '遲到+早退' | '異常' | '加班';
 
 export interface ClockRecord {
   id: string;

@@ -67,6 +67,7 @@ const EditClockModal: React.FC<EditModalProps> = ({ record, onClose, onSaved }) 
                             <option value="早退">早退</option>
                             <option value="遲到+早退">遲到+早退</option>
                             <option value="異常">異常</option>
+                            <option value="加班">加班</option>
                         </select>
                     </div>
                     <div>
@@ -98,6 +99,7 @@ const StatusBadge: React.FC<{ status: ClockRecordStatus }> = ({ status }) => {
         '早退': 'bg-orange-100 text-orange-800',
         '遲到+早退': 'bg-red-100 text-red-800',
         '異常': 'bg-red-100 text-red-800',
+        '加班': 'bg-blue-100 text-blue-800',
     };
     return (
         <span className={`px-2 py-1 rounded-full text-xs font-medium ${colorMap[status] || 'bg-gray-100 text-gray-800'}`}>
@@ -171,6 +173,7 @@ const AttendanceLog: React.FC = () => {
     const [month, setMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
     const [selectedEmployee, setSelectedEmployee] = useState<string>('all');
     const [selectedStatus, setSelectedStatus] = useState<'all' | ClockRecordStatus>('all');
+    const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
     const [editing, setEditing] = useState<ClockRecord | null>(null);
     const [reloadKey, setReloadKey] = useState(0);
 
@@ -202,8 +205,13 @@ const AttendanceLog: React.FC = () => {
             result = result.filter(r => r.status === selectedStatus);
         }
 
+        result = [...result].sort((a, b) => {
+            const cmp = a.date.localeCompare(b.date) || a.name.localeCompare(b.name) || a.empId.localeCompare(b.empId);
+            return sortOrder === 'asc' ? cmp : -cmp;
+        });
+
         setFilteredRecords(result);
-    }, [selectedEmployee, selectedStatus, records]);
+    }, [selectedEmployee, selectedStatus, sortOrder, records]);
 
     // 計算統計
     const stats = {
@@ -211,6 +219,7 @@ const AttendanceLog: React.FC = () => {
         normal: filteredRecords.filter(r => r.status === '正常').length,
         late: filteredRecords.filter(r => r.status === '遲到').length,
         early: filteredRecords.filter(r => r.status === '早退').length,
+        overtime: filteredRecords.filter(r => r.status === '加班').length,
         totalHours: filteredRecords.reduce((sum, r) => sum + (r.workHours || 0), 0),
     };
 
@@ -281,7 +290,7 @@ const AttendanceLog: React.FC = () => {
             </div>
 
             {/* 統計卡片 */}
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-4 mb-6">
                 <div className="bg-gray-50 p-4 rounded-lg text-center">
                     <p className="text-2xl font-bold text-gray-800">{stats.total}</p>
                     <p className="text-sm text-gray-500">總筆數</p>
@@ -299,6 +308,10 @@ const AttendanceLog: React.FC = () => {
                     <p className="text-sm text-gray-500">早退</p>
                 </div>
                 <div className="bg-blue-50 p-4 rounded-lg text-center">
+                    <p className="text-2xl font-bold text-blue-600">{stats.overtime}</p>
+                    <p className="text-sm text-gray-500">加班</p>
+                </div>
+                <div className="bg-slate-50 p-4 rounded-lg text-center">
                     <p className="text-2xl font-bold text-blue-600">{stats.totalHours.toFixed(1)}</p>
                     <p className="text-sm text-gray-500">總工時</p>
                 </div>
@@ -344,6 +357,21 @@ const AttendanceLog: React.FC = () => {
                         <option value="正常">正常</option>
                         <option value="遲到">遲到</option>
                         <option value="早退">早退</option>
+                        <option value="加班">加班</option>
+                        <option value="遲到+早退">遲到+早退</option>
+                        <option value="異常">異常</option>
+                    </select>
+                </div>
+                <div>
+                    <label htmlFor="sort-select" className="mr-2 font-semibold text-gray-700">排序:</label>
+                    <select
+                        id="sort-select"
+                        value={sortOrder}
+                        onChange={(e) => setSortOrder(e.target.value as typeof sortOrder)}
+                        className="p-2 border rounded-md"
+                    >
+                        <option value="desc">日期新到舊</option>
+                        <option value="asc">日期舊到新</option>
                     </select>
                 </div>
 
@@ -388,6 +416,16 @@ const AttendanceLog: React.FC = () => {
                         }`}
                     >
                         早退
+                    </button>
+                    <button
+                        onClick={() => setSelectedStatus('加班')}
+                        className={`px-3 py-1 rounded-full text-sm transition-colors ${
+                            selectedStatus === '加班'
+                                ? 'bg-blue-500 text-white'
+                                : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+                        }`}
+                    >
+                        加班
                     </button>
                 </div>
             </div>

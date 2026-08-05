@@ -6,7 +6,7 @@ import {
     DEFAULT_SYSTEM_CONFIG, determineClockStatus,
     computeAnnualLeaveDays, computeLeaveBalanceWithCarryover,
     calculateSalaryForEmployee,
-    computePayableClockHours, deriveClockRecordDisplayStatus,
+    computePayableClockHours, deriveClockRecordDisplayStatus, applyOvertimeClockStatus,
     normalizeScheduleDoc, getEmployeeShiftsForDay, isEmployeeScheduledForDay, shiftHours,
     computeCoverageGaps, isOnsiteCoverageRole,
 } from './utils/calculations';
@@ -828,6 +828,9 @@ export const handler: Handler = async (event) => {
                     clockOutTime,
                     sysConfig.lateGraceMinutes
                 );
+                const finalStatus = hasClockIn
+                    ? applyOvertimeClockStatus(status, existingClock.clockInTime, clockOutTime)
+                    : '異常';
                 // Phase 6.3：月結後下班打卡不擋，但 merge 警示 note
                 const recDate = existingClock.date;
                 const lockChk = await assertMonthNotLocked(recDate);
@@ -840,7 +843,7 @@ export const handler: Handler = async (event) => {
                 await docSnap.ref.update({
                     clockOutTime,
                     workHours,
-                    status: hasClockIn ? status : '異常',
+                    status: finalStatus,
                     ...(mergedNote ? { note: mergedNote } : {}),
                 });
                 return ok(true);
@@ -865,7 +868,8 @@ export const handler: Handler = async (event) => {
                 const records = snap.docs
                     .map(d => ({ id: d.id, ...d.data() } as ClockRecord))
                     .filter(r => r.date.startsWith(data.yearMonth))
-                    .map(r => ({ ...r, status: deriveClockRecordDisplayStatus(r) }));
+                    .map(r => ({ ...r, status: deriveClockRecordDisplayStatus(r) }))
+                    .sort((a, b) => b.date.localeCompare(a.date) || (b.clockInTime || '').localeCompare(a.clockInTime || ''));
                 return ok(records);
             }
 
@@ -874,7 +878,8 @@ export const handler: Handler = async (event) => {
                 const records = snap.docs
                     .map(d => ({ id: d.id, ...d.data() } as ClockRecord))
                     .filter(r => r.date.startsWith(data.yearMonth))
-                    .map(r => ({ ...r, status: deriveClockRecordDisplayStatus(r) }));
+                    .map(r => ({ ...r, status: deriveClockRecordDisplayStatus(r) }))
+                    .sort((a, b) => b.date.localeCompare(a.date) || a.name.localeCompare(b.name) || a.empId.localeCompare(b.empId));
                 return ok(records);
             }
 
