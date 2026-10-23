@@ -8,6 +8,7 @@ import {
     LeaveBalance, OpenShift, MonthLock, LoginResult,
     MonthlyReportData, LeaveOfAbsenceRequest,
     ScheduleVersion, ShiftSwapRequest, StaffPreference,
+    PayrollReviewInputs, PayrollReviewSubmission,
 } from '../types';
 
 // ==================== API 呼叫 Helper ====================
@@ -210,6 +211,10 @@ export const apiGetEmployeeSalary = async (empId: string, yearMonth: string): Pr
 export const apiGetMonthlyReport = async (yearMonth: string): Promise<MonthlyReportData> => {
     return callAPI('get-monthly-report', { yearMonth });
 };
+
+export const apiGetPayrollReviewInputs = (yearMonth: string): Promise<PayrollReviewInputs> => callAPI('get-payroll-review-inputs', { yearMonth });
+export const apiReviewPayrollInputs = (empId: string, review: PayrollReviewSubmission): Promise<boolean> => callAPI('review-payroll-inputs', { empId, review });
+export const apiReviewLeaveAllocation = (requestId: string, allocations: NonNullable<LeaveRequest['payrollAllocations']>): Promise<boolean> => callAPI('review-leave-allocation', { requestId, allocations });
 
 // ==================== 稽核日誌 ====================
 

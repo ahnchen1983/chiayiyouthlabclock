@@ -1,6 +1,6 @@
 import { formatHours } from '../../utils/format';
 import { sumKnownHours } from '../../utils/attendance';
-import { taipeiDate, localInstant, hhmmMinutes } from '../../utils/attendance';
+import { taipeiDate, localInstant, parseWorkIntervals, formatWorkIntervals } from '../../utils/attendance';
 
 import React, { useState, useEffect } from 'react';
 import { apiGetAllClockRecords, apiGetAllEmployees, apiUpdateClockRecord } from '../../services/googleAppsScriptAPI';
@@ -31,17 +31,12 @@ const EditClockModal: React.FC<EditModalProps> = ({ record, onClose, onSaved }) 
     const [saving, setSaving] = useState(false);
     const [outDate, setOutDate] = useState(record.clockOutAt ? taipeiDate(new Date(record.clockOutAt)) : record.date);
     const [confirmWork, setConfirmWork] = useState(false);
-    const [workText, setWorkText] = useState('');
+    const [workText, setWorkText] = useState(formatWorkIntervals(record.workIntervals || []));
 
     const handleSave = async () => {
         setSaving(true);
         try {
-            const workIntervals = confirmWork ? workText.split(',').filter(x => x.trim()).map(part => {
-                const [from, to] = part.trim().split('-');
-                const start = hhmmMinutes(from), end = hhmmMinutes(to?.replace('+1', ''));
-                if (start === null || end === null) throw new Error('工作時段格式：09:00-12:00,14:00-18:00；翌日結束可加 +1');
-                return { start, end: end + (to.endsWith('+1') ? 1440 : 0) };
-            }) : undefined;
+            const workIntervals = confirmWork ? parseWorkIntervals(workText) : undefined;
             await apiUpdateClockRecord(record.id, {
                 clockInAt: clockInTime ? localInstant(record.date, clockInTime) : null,
                 clockOutAt: clockOutTime ? localInstant(outDate, clockOutTime) : null,
@@ -87,7 +82,7 @@ const EditClockModal: React.FC<EditModalProps> = ({ record, onClose, onSaved }) 
                     <div className="rounded bg-amber-50 p-2 text-sm">
                         <label><input type="checkbox" checked={confirmWork} onChange={e => setConfirmWork(e.target.checked)} /> 我已核實以下實際工作時段（排除未工作休息）</label>
                         {confirmWork && <input aria-label="已核實工作時段" value={workText} onChange={e => setWorkText(e.target.value)} placeholder="09:00-12:00,14:00-18:00" className="w-full p-2 border" />}
-                        <p>翌日結束例：22:00-06:00+1。空白並確認表示本筆無實際工作。未勾選則保存為待覆核。</p>
+                        <p>翌日起訖加 +1，例如 22:00-02:00+1,03:00+1-06:00+1。空白並確認表示本筆無實際工作。未勾選則保存為待覆核。</p>
                     </div>
                     <div>
                         <label className="text-sm font-medium text-gray-700">備註</label>

@@ -6,6 +6,7 @@ test('overnight split work can record a break after midnight', async ({ page }) 
     await seedSession(page, adminUser);
     await mockApi(page, { user: adminUser });
     let updateRequests = 0;
+    let updatedIntervals: unknown;
     const record = {
         id: 'synthetic-overnight', empId: employeeUser.id, name: employeeUser.name,
         date: '2026-10-22', clockInTime: '22:00', clockOutTime: '06:00',
@@ -15,7 +16,7 @@ test('overnight split work can record a break after midnight', async ({ page }) 
     await page.route('**/.netlify/functions/api', async route => {
         const body = route.request().postDataJSON();
         if (body.action === 'get-all-clock-records') return route.fulfill({ json: [record] });
-        if (body.action === 'update-clock-record') { updateRequests++; return route.fulfill({ json: true }); }
+        if (body.action === 'update-clock-record') { updateRequests++; updatedIntervals = body.workIntervals; return route.fulfill({ json: true }); }
         if (body.action === 'get-admin-overview') return route.fulfill({ json: {} });
         await route.fallback();
     });
@@ -27,7 +28,8 @@ test('overnight split work can record a break after midnight', async ({ page }) 
     let alert = '';
     page.once('dialog', async dialog => { alert = dialog.message(); await dialog.dismiss(); });
     await page.getByRole('button', { name: '儲存', exact: true }).click();
-    console.log('overnight split observed alert:', alert, '; update requests:', updateRequests);
+    await expect(page.getByRole('heading', { name: '修改打卡紀錄', exact: true })).toBeHidden();
     expect(alert).toBe('');
     expect(updateRequests).toBe(1);
+    expect(updatedIntervals).toEqual([{ start: 1320, end: 1560 }, { start: 1620, end: 1800 }]);
 });

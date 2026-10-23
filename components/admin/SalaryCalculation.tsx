@@ -1,11 +1,12 @@
 import { taipeiDate } from '../../utils/attendance';
 import { formatMoney, formatHours } from '../../utils/format';
 import { PayrollReviewNotice } from '../PayrollReviewNotice';
+import PayrollReviewPanel from './PayrollReviewPanel';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
     apiGetAllSalaryDetails,
-    apiGetMonthLock, apiLockMonth, apiUnlockMonth,
+    apiGetMonthLock, apiLockMonth,
 } from '../../services/googleAppsScriptAPI';
 import { openPayslipPrintView } from '../../services/payslipPrint';
 import { SalaryDetail, MonthLock, UserRole } from '../../types';
@@ -34,6 +35,7 @@ const SalaryDetailModal: React.FC<{ salary: SalaryDetail; onClose: () => void }>
                 </div>
 
                 <div className="p-6 space-y-6">
+                    <PayrollReviewNotice salary={salary} />
                     {/* 出勤統計 */}
                     <div>
                         <h4 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">📊 出勤統計</h4>
@@ -90,11 +92,11 @@ const SalaryDetailModal: React.FC<{ salary: SalaryDetail; onClose: () => void }>
                         <h4 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">📋 法定扣除項目</h4>
                         <div className="space-y-2">
                             <div className="flex justify-between py-2 border-b border-gray-100">
-                                <span className="text-gray-600">勞保自付額 (2.3%)</span>
+                                <span className="text-gray-600">勞保自付額（本月覆核）</span>
                                 <span className="font-semibold text-red-600">-{formatCurrency(salary.laborInsurance)}</span>
                             </div>
                             <div className="flex justify-between py-2 border-b border-gray-100">
-                                <span className="text-gray-600">健保自付額 (2.11%)</span>
+                                <span className="text-gray-600">健保自付額（本月覆核）</span>
                                 <span className="font-semibold text-red-600">-{formatCurrency(salary.healthInsurance)}</span>
                             </div>
                             <div className="flex justify-between py-2 border-b border-gray-100">
@@ -122,14 +124,8 @@ const SalaryDetailModal: React.FC<{ salary: SalaryDetail; onClose: () => void }>
 
                     {/* 法規說明 */}
                     <div className="bg-gray-50 rounded-lg p-3 text-xs text-gray-500">
-                        <p className="font-semibold mb-1">⚖️ 依據台灣勞基法規定：</p>
-                        <ul className="list-disc list-inside space-y-0.5">
-                            <li>勞保費率: 員工自付 20%（費率約 11.5%，自付比例約 2.3%）</li>
-                            <li>健保費率: 員工自付 30%（費率約 5.17%，自付比例約 2.11%）</li>
-                            <li>勞退自提: 依系統設定計算，預設不自提；員工可自願提繳 0~6%</li>
-                            <li>加班費: 前 2 小時按 1.34 倍、第 3 小時起按 1.67 倍計算</li>
-                            <li>事假扣全薪、病假扣半薪、特休不扣薪</li>
-                        </ul>
+                        <p className="font-semibold mb-1">計算依據</p>
+                        <p>工作時段、假別比例、加班級距與個人保費依本月已覆核資料計算。政策版本：{salary.policyVersion || '待覆核'}。</p>
                     </div>
                 </div>
 
@@ -191,60 +187,46 @@ const SalaryCalculation: React.FC = () => {
     const [selectedSalary, setSelectedSalary] = useState<SalaryDetail | null>(null);
     const [monthLock, setMonthLock] = useState<MonthLock | null>(null);
     const [lockBusy, setLockBusy] = useState(false);
+    const [showReview, setShowReview] = useState(false);
+    const [reviewBusy, setReviewBusy] = useState(false);
+    const [error, setError] = useState('');
+    const currentMonth = useRef(month);
+    currentMonth.current = month;
     const isLocked = !!monthLock && !monthLock.unlockedAt;
 
-    useEffect(() => {
-        const fetchData = async () => {
-            setLoading(true);
+    const fetchData = useCallback(async () => {
+        setLoading(true); setError('');
+        try {
             const [data, lock] = await Promise.all([
                 apiGetAllSalaryDetails(month),
-                apiGetMonthLock(month).catch(() => null),
+                apiGetMonthLock(month),
             ]);
-            setSalaries(data);
-            setMonthLock(lock);
-            setLoading(false);
-        };
-        fetchData();
+            if (currentMonth.current === month) { setSalaries(data); setMonthLock(lock); }
+        } catch (e: any) {
+            if (currentMonth.current === month) { setError(e.message || '薪資資料讀取失敗'); setSalaries([]); setMonthLock(null); }
+            throw e;
+        } finally { if (currentMonth.current === month) setLoading(false); }
     }, [month]);
+    useEffect(() => { setSalaries([]); setMonthLock(null); setSelectedSalary(null); fetchData().catch(() => {}); }, [fetchData]);
 
     const handleLock = async () => {
+        if (!salaries.length || salaries.some(s => s.calculationStatus !== 'ready')) { alert('請先完成全部薪資覆核'); return; }
         const totalGrossNow = salaries.reduce((s, x) => s + x.grossSalary, 0);
         const confirmed = window.confirm(
             `確定要結算並鎖定 ${month}?\n\n` +
             `員工數: ${salaries.length}\n應發總額: ${formatCurrency(totalGrossNow)}\n\n` +
             `鎖定後，本月排班、打卡編輯、請假審核、補打卡審核都會被擋下。\n` +
-            `如需修改需 SuperAdmin 手動解鎖（會留稽核紀錄）。`
+            `結算結果將保留快照；歷史差異須另行覆核，不能解鎖覆寫。`
         );
         if (!confirmed) return;
         setLockBusy(true);
         try {
             const lock = await apiLockMonth(month);
             setMonthLock(lock);
+            await fetchData();
             alert(`已鎖定 ${month}`);
         } catch (e: any) {
             alert(`鎖定失敗：${e?.message || e}`);
-        } finally {
-            setLockBusy(false);
-        }
-    };
-
-    const handleUnlock = async () => {
-        const reason = window.prompt(
-            `確定要解鎖 ${month}?\n\n解鎖會留下稽核紀錄。請填寫解鎖理由（至少 5 字）：`
-        );
-        if (reason === null) return;
-        if (reason.trim().length < 5) {
-            alert('理由至少 5 字');
-            return;
-        }
-        setLockBusy(true);
-        try {
-            await apiUnlockMonth(month, reason.trim());
-            const fresh = await apiGetMonthLock(month);
-            setMonthLock(fresh);
-            alert(`已解鎖 ${month}`);
-        } catch (e: any) {
-            alert(`解鎖失敗：${e?.message || e}`);
         } finally {
             setLockBusy(false);
         }
@@ -268,6 +250,8 @@ const SalaryCalculation: React.FC = () => {
                         type="month"
                         value={month}
                         onChange={(e) => setMonth(e.target.value)}
+                        disabled={lockBusy || reviewBusy}
+                        aria-label="薪資月份"
                         className="p-2 border rounded-md"
                     />
                     <button
@@ -318,23 +302,18 @@ const SalaryCalculation: React.FC = () => {
                     {isSuperAdmin && !isLocked && salaries.length > 0 && (
                         <button
                             onClick={handleLock}
-                            disabled={lockBusy || salaries.some(s => s.calculationStatus !== 'ready')}
+                            disabled={lockBusy || reviewBusy || loading || salaries.some(s => s.calculationStatus !== 'ready')}
                             className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 transition-colors"
                         >
                             🔐 結算並鎖定
                         </button>
                     )}
-                    {isSuperAdmin && isLocked && (
-                        <button
-                            onClick={handleUnlock}
-                            disabled={lockBusy || salaries.some(s => s.calculationStatus !== 'ready')}
-                            className="flex items-center gap-2 px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700 disabled:opacity-50 transition-colors"
-                        >
-                            🔓 解鎖
-                        </button>
-                    )}
+                    {isSuperAdmin && <button type="button" disabled={reviewBusy} onClick={() => setShowReview(!showReview)} className="rounded border border-blue-300 px-3 py-2 text-blue-800">{showReview ? '收起計薪覆核' : '覆核計薪資料'}</button>}
                 </div>
             </div>
+
+            {error && <p role="alert" className="mb-4 rounded bg-red-50 p-3 text-red-700">{error}</p>}
+            {isSuperAdmin && showReview && <PayrollReviewPanel month={month} onSaved={fetchData} onBusyChange={setReviewBusy} />}
 
             {/* 統計卡片 */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">

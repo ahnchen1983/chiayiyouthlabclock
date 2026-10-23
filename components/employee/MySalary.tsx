@@ -160,21 +160,21 @@ const MySalary: React.FC = () => {
                             <div className="flex justify-between items-center">
                                 <div>
                                     <p className="text-gray-700">勞保自付額</p>
-                                    <p className="text-xs text-gray-400">費率 2.3%（含就業保險）</p>
+                                    <p className="text-xs text-gray-400">依本月已覆核金額</p>
                                 </div>
                                 <span className="font-semibold text-red-600">-{formatCurrency(salary.laborInsurance)}</span>
                             </div>
                             <div className="flex justify-between items-center">
                                 <div>
                                     <p className="text-gray-700">健保自付額</p>
-                                    <p className="text-xs text-gray-400">費率 2.11%</p>
+                                    <p className="text-xs text-gray-400">依本月已覆核金額</p>
                                 </div>
                                 <span className="font-semibold text-red-600">-{formatCurrency(salary.healthInsurance)}</span>
                             </div>
                             <div className="flex justify-between items-center">
                                 <div>
                                     <p className="text-gray-700">勞退自提</p>
-                                    <p className="text-xs text-gray-400">依系統設定</p>
+                                    <p className="text-xs text-gray-400">依本月已覆核金額</p>
                                 </div>
                                 <span className="font-semibold text-red-600">-{formatCurrency(salary.laborPensionSelf)}</span>
                             </div>
@@ -182,7 +182,7 @@ const MySalary: React.FC = () => {
                                 <div className="flex justify-between items-center">
                                     <div>
                                         <p className="text-gray-700">請假扣薪</p>
-                                        <p className="text-xs text-gray-400">事假全扣 / 病假半扣</p>
+                                        <p className="text-xs text-gray-400">依本月已覆核假別比例</p>
                                     </div>
                                     <span className="font-semibold text-red-600">-{formatCurrency(salary.leaveDeduction)}</span>
                                 </div>
@@ -196,14 +196,8 @@ const MySalary: React.FC = () => {
 
                     {/* 法規說明 */}
                     <div className="bg-gray-50 rounded-2xl p-4 text-xs text-gray-500">
-                        <p className="font-semibold mb-2">⚖️ 依據台灣勞動基準法：</p>
-                        <ul className="list-disc list-inside space-y-1">
-                            <li>勞保費率約 11.5%，勞工自付 20%（約 2.3%）</li>
-                            <li>健保費率約 5.17%，被保險人自付 30%（約 2.11%）</li>
-                            <li>勞退自提 0~6%，依系統設定計算；預設不自提</li>
-                            <li>加班費: 前 2 小時（依已覆核級距），第 3 小時起 × 1.67 倍</li>
-                            <li>事假不給薪、病假半薪、特休照給薪</li>
-                        </ul>
+                        <p className="font-semibold mb-2">計算依據</p>
+                        <p>工作時段、假別比例、加班級距與個人保費依本月已覆核資料計算。政策版本：{salary.policyVersion || '待覆核'}。</p>
                     </div>
                 </div>
             )}

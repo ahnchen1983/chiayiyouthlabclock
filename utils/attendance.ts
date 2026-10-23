@@ -13,11 +13,34 @@ export const hhmmMinutes = (value: string | null | undefined): number | null => 
     const [h, m] = value.split(':').map(Number);
     return h * 60 + m;
 };
+// Daily leave allocations may end exactly at the next midnight. Starts and
+// clock timestamps retain their normal 00:00–23:59 validation.
+export const leaveEndMinutes = (value: string | null | undefined): number | null => value === '24:00' ? 1440 : hhmmMinutes(value);
 export const localInstant = (date: string, time: string | null | undefined): string | null => {
     if (!validDate(date) || hhmmMinutes(time) === null) return null;
     return new Date(`${date}T${time!.slice(0, 5)}:00+08:00`).toISOString();
 };
 export type Interval = { start: number; end: number };
+export const parseWorkIntervals = (text: string): Interval[] => {
+    const parse = (value: string): number => {
+        const match = /^([0-2]\d:[0-5]\d)(\+1)?$/.exec(value.trim());
+        const minutes = match ? hhmmMinutes(match[1]) : null;
+        if (minutes === null) throw new Error('工作時段格式：09:00-12:00,14:00-18:00；翌日起訖可加 +1');
+        return minutes + (match[2] ? 1440 : 0);
+    };
+    if (!text.trim()) return [];
+    return text.split(',').map(part => {
+        const sides = part.trim().split('-');
+        if (sides.length !== 2) throw new Error('每段工作時段需要起點與終點');
+        const start = parse(sides[0]), end = parse(sides[1]);
+        if (end <= start) throw new Error('工作時段結束必須晚於開始；翌日時間請加 +1');
+        return { start, end };
+    });
+};
+export const formatWorkIntervals = (ranges: Interval[]): string => {
+    const time = (n: number) => `${String(Math.floor(n / 60) % 24).padStart(2, '0')}:${String(n % 60).padStart(2, '0')}${n >= 1440 ? '+1' : ''}`;
+    return ranges.map(r => `${time(r.start)}-${time(r.end)}`).join(',');
+};
 export const unionIntervals = (ranges: Interval[]): Interval[] => {
     const sorted = ranges.filter(x => Number.isFinite(x.start) && Number.isFinite(x.end) && x.end > x.start).map(x => ({ ...x })).sort((a, b) => a.start - b.start);
     const result: Interval[] = [];

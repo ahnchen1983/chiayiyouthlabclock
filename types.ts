@@ -503,3 +503,19 @@ export interface PayrollRun {
     // Source snapshot retained for reproducibility, without passwords or credentials.
     inputs: { employees: unknown[]; schedules: ScheduleEvent[]; records: ClockRecord[]; leaves: LeaveRequest[] };
 }
+
+export type PayrollReviewEmployee = Pick<Employee, 'id' | 'name' | 'role' | 'position' | 'status' | 'hourlyRate' | 'monthlySalary' | 'hireDate' | 'resignDate' | 'accountKind' | 'payrollReview'>;
+export interface PayrollReviewInputs {
+    employees: PayrollReviewEmployee[];
+    leaves: LeaveRequest[];
+    locked: boolean;
+    scheduleGaps: PayrollScheduleGap[];
+}
+export interface PayrollScheduleGap {
+    empId: string;
+    date: string;
+    sourceKey: string;
+    scheduledMinutes: number;
+    coveredMinutes: number;
+}
+export type PayrollReviewSubmission = Omit<PayrollReview, 'reviewedBy' | 'reviewedAt' | 'policy' | 'insurance'> & Partial<Pick<PayrollReview, 'policy' | 'insurance'>>;

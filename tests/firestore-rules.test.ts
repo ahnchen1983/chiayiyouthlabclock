@@ -19,14 +19,18 @@ import { resolve } from 'path';
 import { setDoc, getDoc, getDocs, collection, doc } from 'firebase/firestore';
 
 let testEnv: RulesTestEnvironment;
+const emulatorHost = process.env.FIRESTORE_EMULATOR_HOST || '';
+if (!/^127\.0\.0\.1:(8086|8087)$/.test(emulatorHost) || process.env.FIREBASE_PROJECT_ID !== 'demo-chiayi-payroll') {
+    throw new Error('Rules tests require the explicit local demo-chiayi-payroll Firestore emulator');
+}
 
 beforeAll(async () => {
     testEnv = await initializeTestEnvironment({
-        projectId: 'chiayiyouthlabclock-rules-test',
+        projectId: 'demo-chiayi-payroll',
         firestore: {
             rules: readFileSync(resolve(__dirname, '../firestore.rules'), 'utf8'),
             host: '127.0.0.1',
-            port: 8080,
+            port: Number(emulatorHost.split(':')[1]),
         },
     });
 });
