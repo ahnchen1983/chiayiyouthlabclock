@@ -3,13 +3,15 @@ import { LeaveStatus, isOutingLeaveType } from '../../../types';
 import { clockInterval, confirmedWork, resolveAttendance, shiftIntervals, intervalMinutes, hhmmMinutes, validDate, clockSourceKey } from '../../../utils/attendance';
 import { roundMoney } from '../../../utils/format';
 
+const leaveInstant = (value: string): number => Date.parse(/(Z|[+-]\d\d:\d\d)$/.test(value || '') ? value : value + '+08:00');
+const overlaps = (a: { start: number; end: number }, b: { start: number; end: number }): boolean => Math.min(a.end, b.end) > Math.max(a.start, b.start);
+
 export const validLeaveAllocations = (leave: LeaveRequest, allocations = leave.payrollAllocations): boolean => {
-    const instant = (value: string) => Date.parse(/(Z|[+-]\d\d:\d\d)$/.test(value || '') ? value : value + '+08:00');
-    const from = instant(leave.startDate), to = instant(leave.endDate);
+    const from = leaveInstant(leave.startDate), to = leaveInstant(leave.endDate);
     if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from || !Number.isFinite(leave.hours) || leave.hours < 0 || !allocations?.length) return false;
     const ranges = [];
     for (const a of allocations) {
-        const start = instant(`${a.date}T${a.from}`), end = instant(`${a.date}T${a.to}`);
+        const start = leaveInstant(`${a.date}T${a.from}`), end = leaveInstant(`${a.date}T${a.to}`);
         if (!validDate(a.date) || hhmmMinutes(a.from) === null || hhmmMinutes(a.to) === null || !Number.isInteger(a.minutes) || a.minutes <= 0 || end - start !== a.minutes * 60000 || start < from || end > to) return false;
         ranges.push({start: start / 60000, end: end / 60000});
     }
@@ -33,7 +35,7 @@ export const calculateSalaryForEmployee = (
     const money = (value: number) => roundMoney(value, policy?.moneyDecimals ?? 2);
     const scheduled = new Map(scheduleEvents.filter(e => e.date.startsWith(yearMonth)).map(e => [e.date, e.shifts.filter(s => s.empId ? s.empId === emp.id : s.name === emp.name)]));
     const allEmployeeRecords = clockRecords.filter(r => r.empId === emp.id);
-    const absolute = (r: ClockRecord, range: {start:number;end:number}) => { const base = Date.parse(r.date + 'T00:00:00+08:00') / 60000; return {start: base + range.start, end: base + range.end}; };
+    const absolute = (r: Pick<ClockRecord, 'date'>, range: {start:number;end:number}) => { const base = Date.parse(r.date + 'T00:00:00+08:00') / 60000; return {start: base + range.start, end: base + range.end}; };
     let crossDateConflict = false;
     for (let i = 0; i < allEmployeeRecords.length; i++) for (let j = i + 1; j < allEmployeeRecords.length; j++) {
         const a = allEmployeeRecords[i], b = allEmployeeRecords[j], ar = clockInterval(a), br = clockInterval(b);
@@ -42,11 +44,22 @@ export const calculateSalaryForEmployee = (
         if (Math.min(x.end, y.end) > Math.max(x.start, y.start)) { crossDateConflict = true; reasons.add('跨日/跨月打卡重疊，須先核實日歸屬'); }
     }
     const records = clockRecords.filter(r => r.empId === emp.id && r.date.startsWith(yearMonth));
+    const currentCardRanges = records.flatMap(r => { const span = clockInterval(r); return span ? [absolute(r, span)] : []; });
+    const workEvidence = allEmployeeRecords.map(r => ({ record: r, span: clockInterval(r), work: confirmedWork(r) }));
     const dates = new Set([...scheduled.entries()].filter(([, s]) => s.length).map(([d]) => d));
     records.forEach(r => dates.add(r.date));
     const leaveByDate = new Map<string, { start: number; end: number; type: string; minutes: number }[]>();
-    const leaves = leaveRequests.filter(l => l.empId === emp.id && l.status === LeaveStatus.Approved && (l.startDate || '').slice(0, 7) <= yearMonth && (l.endDate || l.startDate || '').slice(0, 7) >= yearMonth);
+    const leaves = leaveRequests.filter(l => {
+        if (l.empId !== emp.id || l.status !== LeaveStatus.Approved) return false;
+        if ((l.startDate || '').slice(0, 7) <= yearMonth && (l.endDate || l.startDate || '').slice(0, 7) >= yearMonth) return true;
+        if (l.payrollAllocations?.some(a => a.date.startsWith(yearMonth))) return true;
+        // Last-day overnight work belongs to this month but can conflict with next month's leave.
+        // Boundary evidence only affects this calculation if its approved span touches our cards.
+        const span = { start: leaveInstant(l.startDate) / 60000, end: leaveInstant(l.endDate) / 60000 };
+        return currentCardRanges.some(r => overlaps(r, span));
+    });
     const leaveDetails: { type: string; hours: number }[] = [];
+    let boundaryAttendanceUnknown = false;
     for (const l of leaves) {
         // Historical elapsed hours are not silently interpreted as paid working time.
         if (!l.payrollAllocations?.length) { reasons.add(`請假/外勤 ${l.id} 尚未按日覆核時段`); continue; }
@@ -55,6 +68,20 @@ export const calculateSalaryForEmployee = (
         for (const a of l.payrollAllocations) {
             const start = hhmmMinutes(a.from), end = hhmmMinutes(a.to);
             if (!validDate(a.date) || a.date < l.startDate.slice(0, 10) || a.date > l.endDate.slice(0, 10) || start === null || end === null || end <= start || a.minutes !== end - start) { reasons.add(`請假 ${l.id} 分配資料無效`); continue; }
+            const allocation = absolute(a, { start, end });
+            for (const evidence of workEvidence) {
+                if (!a.date.startsWith(yearMonth) && !evidence.record.date.startsWith(yearMonth)) continue;
+                if (evidence.work === null) {
+                    // An adjacent-month card is not paid here, but unknown work/break evidence
+                    // must not silently authorize overlapping leave in this month's payroll.
+                    if (a.date.startsWith(yearMonth) && !evidence.record.date.startsWith(yearMonth) && evidence.span && overlaps(allocation, absolute(evidence.record, evidence.span))) {
+                        reasons.add(`${evidence.record.date} 跨月實際工作/休息區間待覆核`);
+                        boundaryAttendanceUnknown = true;
+                    }
+                } else if (evidence.work.some(r => overlaps(allocation, absolute(evidence.record, r)))) {
+                    reasons.add(`${a.date} 出勤與請假時段重疊待核實`);
+                }
+            }
             if (!a.date.startsWith(yearMonth)) continue;
             dates.add(a.date);
             const entries = leaveByDate.get(a.date) || [];
@@ -65,7 +92,7 @@ export const calculateSalaryForEmployee = (
         if (!isOutingLeaveType(l.leaveType)) leaveDetails.push({ type: l.leaveType, hours: minutes / 60 });
     }
     let knownMinutes = 0, otMinutes = 0, otMoney = 0, hourlyLeavePay = 0, monthlyDeduction = 0, attendedDays = 0;
-    let incompleteAttendance = crossDateConflict;
+    let incompleteAttendance = crossDateConflict || boundaryAttendanceUnknown;
     const monthly = emp.position === '專責人員';
     const baseRate = monthly ? Number(emp.monthlySalary) : Number(emp.hourlyRate);
     if (!Number.isFinite(baseRate) || baseRate <= 0) reasons.add('薪資設定缺漏或無效');
@@ -87,7 +114,6 @@ export const calculateSalaryForEmployee = (
         const completeRanges = cardRanges.filter((r): r is NonNullable<typeof r> => r !== null);
         if (intervalMinutes(completeRanges) !== completeRanges.reduce((n, r) => n + r.end - r.start, 0)) { reasons.add(`${date} 重複或重疊打卡待核實`); incompleteAttendance = true; }
         for (const l of dayLeaves) {
-            if (reviewedRanges.flatMap(r => r || []).some(r => Math.min(r.end, l.end) > Math.max(r.start, l.start))) reasons.add(`${date} 出勤與請假時段重疊待核實`);
             const fraction = monthly ? policy?.monthlyLeaveDeductionFraction?.[l.type] : policy?.hourlyLeavePaidFraction?.[l.type];
             if (!Number.isFinite(fraction) || fraction < 0 || fraction > 1) { reasons.add(`${l.type} 給薪規則待確認`); continue; }
             // Hourly pay is built from work + paid leave; never deduct unpaid leave again.
