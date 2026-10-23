@@ -504,7 +504,7 @@ export interface PayrollRun {
     inputs: { employees: unknown[]; schedules: ScheduleEvent[]; records: ClockRecord[]; leaves: LeaveRequest[] };
 }
 
-export type PayrollReviewEmployee = Pick<Employee, 'id' | 'name' | 'role' | 'position' | 'status' | 'hourlyRate' | 'monthlySalary' | 'hireDate' | 'resignDate' | 'accountKind' | 'payrollReview'>;
+export type PayrollReviewEmployee = Pick<Employee, 'id' | 'name' | 'role' | 'position' | 'status' | 'hourlyRate' | 'monthlySalary' | 'hireDate' | 'resignDate' | 'accountKind' | 'payrollReview'> & { employeeSourceKey?: string };
 export interface PayrollReviewInputs {
     employees: PayrollReviewEmployee[];
     leaves: LeaveRequest[];

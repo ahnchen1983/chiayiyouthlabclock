@@ -24,6 +24,7 @@ const LeaveAllocationEditor: React.FC<{ leave: LeaveRequest; locked: boolean; on
     const save = async () => {
         setBusy(true); onBusyChange(true); setError(''); setSaved(false);
         try {
+            if (!confirmed) throw new Error('請先確認已核對核准假單與逐日時段');
             if (!rows.length) throw new Error('請至少填寫一個實際請假／外勤時段');
             const allocations = rows.map(row => {
                 const from = hhmmMinutes(row.from), to = leaveEndMinutes(row.to);
@@ -39,7 +40,7 @@ const LeaveAllocationEditor: React.FC<{ leave: LeaveRequest; locked: boolean; on
         <h4 className="font-semibold">{leave.leaveType}：{leave.startDate.replace('T', ' ')} ～ {leave.endDate.replace('T', ' ')}</h4>
         <p className="mb-2 text-sm text-gray-600">核准時數 {leave.hours} 小時。請逐日填入實際請假／外勤時段，排除非工作時間；合計不得超過核准範圍與時數。當日午夜結束可填 24:00，跨日請分成兩筆。</p>
         <fieldset disabled={locked || busy} className="space-y-2">
-            {rows.map((row, i) => <div key={i} className="grid grid-cols-4 gap-2">
+            {rows.map((row, i) => <div key={i} className="grid grid-cols-1 gap-2 sm:grid-cols-4">
                 <input aria-label={`請假日期 ${i + 1}`} type="date" className={fieldClass} value={row.date} onChange={e => change(i, 'date', e.target.value)} />
                 <input aria-label={`請假開始 ${i + 1}`} type="time" className={fieldClass} value={row.from} onChange={e => change(i, 'from', e.target.value)} />
                 <input aria-label={`請假結束 ${i + 1}`} type="text" placeholder="HH:mm 或 24:00" className={fieldClass} value={row.to} onChange={e => change(i, 'to', e.target.value)} />
@@ -50,7 +51,6 @@ const LeaveAllocationEditor: React.FC<{ leave: LeaveRequest; locked: boolean; on
             <button type="button" disabled={!confirmed} onClick={save} className="rounded bg-blue-600 px-3 py-2 text-white disabled:opacity-50">儲存請假時段</button>
         </fieldset>
         {error && <p role="alert" className="mt-2 text-red-700">{error}</p>}
-        {saved && <p role="status" className="mt-2 text-green-700">請假時段已儲存，薪資已重新檢查。</p>}
     </section>;
 };
 
@@ -80,6 +80,7 @@ const EmployeeReviewForm: React.FC<{ employee: PayrollReviewEmployee; month: str
     const save = async (event: React.FormEvent) => {
         event.preventDefault(); setBusy(true); onBusyChange(true); setError(''); setSaved(false);
         try {
+            if (!confirmed) throw new Error('請先完成本月計薪資料的逐項確認');
             let review: PayrollReviewSubmission;
             if (excluded) {
                 if (!reason.trim()) throw new Error('請填寫非受薪系統帳號的排除原因');
@@ -112,7 +113,7 @@ const EmployeeReviewForm: React.FC<{ employee: PayrollReviewEmployee; month: str
                     insurance: { labor: numberValue(insurance.labor, '勞保自付額'), health: numberValue(insurance.health, '健保自付額'), pensionSelf: numberValue(insurance.pensionSelf, '勞退自提額') },
                 };
             }
-            await apiReviewPayrollInputs(employee.id, review);
+            await apiReviewPayrollInputs(employee.id, review, employee.employeeSourceKey);
             await onSaved(); setSaved(true); setConfirmed(false);
         } catch (e: any) { setError(e.message || '計薪覆核儲存失敗'); }
         finally { setBusy(false); onBusyChange(false); }
@@ -140,7 +141,7 @@ const EmployeeReviewForm: React.FC<{ employee: PayrollReviewEmployee; month: str
                 </div>)}</div>}
                 <div><h4 className="font-semibold">已確認的加班級距</h4><p className="mb-2 text-sm text-gray-600">依序填寫每一級距的分鐘與倍率分子／分母；未新增級距時，超過 8 小時的工作會保留待覆核。</p>
                     {tiers.map((tier, i) => <div className="mb-2 grid grid-cols-4 gap-2" key={i}>
-                        {(['minutes', 'numerator', 'denominator'] as const).map((key, n) => <label key={key} className="text-sm">{['分鐘', '倍率分子', '倍率分母'][n]}<input aria-label={`加班級距 ${i + 1} ${['分鐘', '倍率分子', '倍率分母'][n]}`} className={fieldClass} type="number" min="0.01" step={key === 'minutes' ? '1' : 'any'} value={tier[key]} onChange={e => { setTiers(tiers.map((t, index) => index === i ? { ...t, [key]: e.target.value } : t)); changed(); }} /></label>)}
+                        {(['minutes', 'numerator', 'denominator'] as const).map((key, n) => <label key={key} className="text-sm">{['分鐘', '倍率分子', '倍率分母'][n]}<input aria-label={`加班級距 ${i + 1} ${['分鐘', '倍率分子', '倍率分母'][n]}`} className={fieldClass} type="number" min={key === 'minutes' ? '1' : '0.000001'} step={key === 'minutes' ? '1' : 'any'} value={tier[key]} onChange={e => { setTiers(tiers.map((t, index) => index === i ? { ...t, [key]: e.target.value } : t)); changed(); }} /></label>)}
                         <button type="button" className="rounded border text-sm" onClick={() => { setTiers(tiers.filter((_, n) => n !== i)); changed(); }}>移除級距</button>
                     </div>)}
                     <button type="button" className="rounded border px-3 py-1 text-sm" onClick={() => { setTiers([...tiers, { minutes: '', numerator: '', denominator: '' }]); changed(); }}>新增加班級距</button>
@@ -156,16 +157,16 @@ const EmployeeReviewForm: React.FC<{ employee: PayrollReviewEmployee; month: str
             <button type="submit" disabled={!confirmed} className="rounded bg-green-700 px-4 py-2 text-white disabled:opacity-50">{busy ? '儲存中…' : '儲存計薪覆核'}</button>
         </fieldset>
         {error && <p role="alert" className="text-red-700">{error}</p>}
-        {saved && <p role="status" className="text-green-700">計薪覆核已儲存，薪資已重新檢查；其餘待覆核項目仍需處理。</p>}
     </form>;
 };
 
-const PayrollReviewPanel = ({ month, onSaved, onBusyChange }: { month: string; onSaved: () => Promise<void>; onBusyChange: (busy: boolean) => void }) => {
+const PayrollReviewPanel: React.FC<{ month: string; locked: boolean; settling: boolean; onSaved: () => Promise<void>; onBusyChange: (busy: boolean) => void }> = ({ month, locked, settling, onSaved, onBusyChange }) => {
     const [inputs, setInputs] = useState<PayrollReviewInputs | null>(null);
     const [selected, setSelected] = useState('');
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(true);
     const [mutating, setMutating] = useState(false);
+    const [notice, setNotice] = useState('');
     const currentMonth = useRef(month);
     currentMonth.current = month;
     useEffect(() => {
@@ -173,24 +174,28 @@ const PayrollReviewPanel = ({ month, onSaved, onBusyChange }: { month: string; o
         apiGetPayrollReviewInputs(month).then(data => { if (active) { setInputs(data); setSelected(data.employees[0]?.id || ''); } }).catch(e => { if (active) setError(e.message || '覆核資料讀取失敗'); }).finally(() => { if (active) setLoading(false); });
         return () => { active = false; };
     }, [month]);
-    const refreshed = async () => {
+    const refreshed = async (message: string) => {
         if (currentMonth.current !== month) return;
         const data = await apiGetPayrollReviewInputs(month);
         if (currentMonth.current !== month) return;
         setInputs(data);
         await onSaved();
+        if (currentMonth.current === month) setNotice(message);
     };
     const mutationBusy = (value: boolean) => { setMutating(value); onBusyChange(value); };
     const employee = inputs?.employees.find(e => e.id === selected);
+    const readOnly = locked || settling || !!inputs?.locked;
     return <section className="mb-6 space-y-4 rounded-lg border border-blue-200 bg-blue-50 p-4" aria-label="計薪資料覆核">
         <h3 className="text-lg font-bold">{month} 計薪資料覆核</h3>
         <p className="text-sm text-gray-700">依序完成個人薪制與保費、出勤工作區間、核准假單時段；薪資仍顯示待覆核時，請依原因逐項處理。保存設定不代表已完成月結。</p>
         {loading && <p>讀取覆核資料中…</p>}
         {error && <p role="alert" className="text-red-700">{error}</p>}
-        {inputs?.locked && <p role="status" className="rounded bg-amber-100 p-3">本月已鎖定，覆核資料僅供查閱；不能修改或重新計薪。</p>}
+        {(locked || inputs?.locked) && <p role="status" className="rounded bg-amber-100 p-3">本月已鎖定，覆核資料僅供查閱；不能修改或重新計薪。</p>}
+        {settling && <p role="status" className="rounded bg-amber-100 p-3">本月正在結算，暫停修改覆核資料。</p>}
         {inputs && <label className="block text-sm">覆核員工<select aria-label="覆核員工" disabled={mutating} className={fieldClass} value={selected} onChange={e => setSelected(e.target.value)}>{inputs.employees.map(e => <option key={e.id} value={e.id}>{e.name}（{e.id}）</option>)}</select></label>}
-        {employee && <EmployeeReviewForm key={`${month}:${employee.id}:${JSON.stringify(inputs.scheduleGaps || [])}`} employee={employee} month={month} gaps={(inputs.scheduleGaps || []).filter(g => g.empId === employee.id)} locked={inputs.locked || mutating} onSaved={refreshed} onBusyChange={mutationBusy} />}
-        {employee && <div className="space-y-3"><h3 className="font-semibold">已核准假單／外勤的逐日時段</h3>{inputs.leaves.filter(l => l.empId === employee.id).map(l => <LeaveAllocationEditor key={`${month}:${l.id}`} leave={l} locked={inputs.locked || mutating} onSaved={refreshed} onBusyChange={mutationBusy} />)}{!inputs.leaves.some(l => l.empId === employee.id) && <p className="text-sm text-gray-600">本月沒有需要分配的已核准假單。</p>}</div>}
+        {notice && <p role="status" className="text-green-700">{notice}</p>}
+        {employee && <EmployeeReviewForm key={`${month}:${employee.id}:${employee.employeeSourceKey}:${JSON.stringify(employee.payrollReview || null)}:${JSON.stringify(inputs.scheduleGaps || [])}`} employee={employee} month={month} gaps={(inputs.scheduleGaps || []).filter(g => g.empId === employee.id)} locked={readOnly || mutating} onSaved={() => refreshed('計薪覆核已儲存，薪資已重新檢查；其餘待覆核項目仍需處理。')} onBusyChange={mutationBusy} />}
+        {employee && <div className="space-y-3"><h3 className="font-semibold">已核准假單／外勤的逐日時段</h3>{inputs.leaves.filter(l => l.empId === employee.id).map(l => <LeaveAllocationEditor key={`${month}:${l.id}`} leave={l} locked={readOnly || mutating} onSaved={() => refreshed('請假時段已儲存，薪資已重新檢查。')} onBusyChange={mutationBusy} />)}{!inputs.leaves.some(l => l.empId === employee.id) && <p className="text-sm text-gray-600">本月沒有需要分配的已核准假單。</p>}</div>}
     </section>;
 };
 

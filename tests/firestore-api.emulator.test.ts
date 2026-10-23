@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PayrollRun } from '../types';
 import { UserRole } from '../types';
-import { card, employee, month, schedule } from './fixtures/payrollV2';
+import { card, employee, month, schedule, review } from './fixtures/payrollV2';
 import { makePayrollRun } from '../netlify/functions/utils/payrollSnapshot';
 
 const emulator = vi.hoisted(() => {
@@ -88,6 +88,31 @@ afterAll(async () => {
 });
 
 describe('actual API against a disposable Firestore emulator', () => {
+    it('retains two month reviews and uses only the selected month for actual settlement', async () => {
+        const nextReview = { ...review, yearMonth: '2026-05', policy: { ...review.policy, version: 'synthetic-may', regularDates: ['2026-05-01'] } };
+        for (const input of [review, nextReview]) {
+            const response = await call('review-payroll-inputs', { empId: employee.id, review: input });
+            expect(response.statusCode, response.body).toBe(200);
+        }
+        expect((await db.collection('payrollReviews').get()).size).toBe(2);
+        const response = await call('get-payroll-review-inputs', { yearMonth: month });
+        expect(response.statusCode, response.body).toBe(200);
+        expect(JSON.parse(response.body).employees.find(e => e.id === employee.id).payrollReview.policy.version).toBe(review.policy.version);
+        const locked = await call('lock-month', { yearMonth: month });
+        expect(locked.statusCode, locked.body).toBe(200);
+        expect((await storedRun()).salaries[0].grossSalary).toBe(1600);
+    });
+
+    it('rejects a stale form basis before writing any monthly review', async () => {
+        const response = await call('get-payroll-review-inputs', { yearMonth: month });
+        const sourceKey = JSON.parse(response.body).employees.find(e => e.id === employee.id).employeeSourceKey;
+        await db.collection('employees').doc(employee.id).update({ hourlyRate: 250 });
+        const saved = await call('review-payroll-inputs', { empId: employee.id, review, expectedEmployeeSourceKey: sourceKey });
+        expect(saved.statusCode, saved.body).toBe(409);
+        expect((await db.collection('payrollReviews').get()).empty).toBe(true);
+        expect((await db.collection('payrollControl').get()).empty).toBe(true);
+    });
+
     it('persists a ready month with omitted v2 schedule fields and a reproducible input hash', async () => {
         // Firestore defaults reject undefined. This persisted source is valid,
         // while normalization previously introduced undefined optional fields.

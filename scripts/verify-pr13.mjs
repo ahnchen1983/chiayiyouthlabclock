@@ -7,10 +7,10 @@ import { execFileSync } from 'node:child_process';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
-const sourcePaths = git('ls-files', '-z', '--', '*.ts', '*.tsx', '*.json', '*.mjs', '*.toml', 'package-lock.json').split('\0').filter(Boolean).sort();
+const sourcePaths = () => [...new Set(git('ls-files', '--cached', '--others', '--exclude-standard', '-z', '--', '*.ts', '*.tsx', '*.js', '*.json', '*.mjs', '*.css', '*.html', '*.toml', '*.rules', '*.yml').split('\0').filter(Boolean))].sort();
 const sourceHash = async () => {
     const hash = createHash('sha256');
-    for (const file of sourcePaths) hash.update(file + '\0').update(await readFile(path.join(root, file)));
+    for (const file of sourcePaths()) hash.update(file + '\0').update(await readFile(path.join(root, file)));
     return hash.digest('hex');
 };
 const runId = new Date().toISOString().replace(/[:.]/g, '-');

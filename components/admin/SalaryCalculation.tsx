@@ -313,7 +313,7 @@ const SalaryCalculation: React.FC = () => {
             </div>
 
             {error && <p role="alert" className="mb-4 rounded bg-red-50 p-3 text-red-700">{error}</p>}
-            {isSuperAdmin && showReview && <PayrollReviewPanel month={month} onSaved={fetchData} onBusyChange={setReviewBusy} />}
+            {isSuperAdmin && showReview && <PayrollReviewPanel key={month} month={month} locked={isLocked} settling={lockBusy} onSaved={fetchData} onBusyChange={setReviewBusy} />}
 
             {/* 統計卡片 */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">

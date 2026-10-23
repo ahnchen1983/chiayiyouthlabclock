@@ -14,7 +14,7 @@ export default defineConfig({
     video: 'retain-on-failure',
   },
   webServer: {
-    command: 'VITE_E2E=true npm run build -- --configLoader runner && npm run preview -- --host 127.0.0.1 --port 5173 --configLoader runner',
+    command: 'VITE_E2E=true npm run build -- --outDir .e2e-dist --configLoader runner && npm run preview -- --host 127.0.0.1 --port 5173 --outDir .e2e-dist --configLoader runner',
     url: 'http://127.0.0.1:5173',
     reuseExistingServer: false,
     timeout: 120_000,

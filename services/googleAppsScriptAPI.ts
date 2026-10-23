@@ -213,7 +213,7 @@ export const apiGetMonthlyReport = async (yearMonth: string): Promise<MonthlyRep
 };
 
 export const apiGetPayrollReviewInputs = (yearMonth: string): Promise<PayrollReviewInputs> => callAPI('get-payroll-review-inputs', { yearMonth });
-export const apiReviewPayrollInputs = (empId: string, review: PayrollReviewSubmission): Promise<boolean> => callAPI('review-payroll-inputs', { empId, review });
+export const apiReviewPayrollInputs = (empId: string, review: PayrollReviewSubmission, expectedEmployeeSourceKey?: string): Promise<boolean> => callAPI('review-payroll-inputs', { empId, review, ...(expectedEmployeeSourceKey ? { expectedEmployeeSourceKey } : {}) });
 export const apiReviewLeaveAllocation = (requestId: string, allocations: NonNullable<LeaveRequest['payrollAllocations']>): Promise<boolean> => callAPI('review-leave-allocation', { requestId, allocations });
 
 // ==================== 稽核日誌 ====================
