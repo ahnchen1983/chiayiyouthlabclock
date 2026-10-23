@@ -81,3 +81,100 @@ describe('public bootstrap fails closed, existing login preserved',()=>{
  it('initialization cannot reset existing account and existing login works',async()=>{const password=randomUUID();const existing={...fake.data.get('employees/ADMIN'),password:hashPassword(password)};fake.data.set('employees/ADMIN',existing);expect((await call('initialize-database')).statusCode).toBe(503);expect(fake.data.get('employees/ADMIN')).toEqual(existing);const response=await call('login',{empId:'ADMIN',password});expect(JSON.parse(response.body).kind).toBe('success');expect(response.body).not.toContain(password);expect(response.body).not.toContain(existing.password);});
  it('login infrastructure errors never echo credential or underlying error',async()=>{const password=randomUUID(),sentinel=randomUUID();fake.data.get('employees/ADMIN').password=hashPassword(password);vi.mocked(adminAuth.createCustomToken).mockRejectedValueOnce(new Error(sentinel));const response=await call('login',{empId:'ADMIN',password});expect(response.statusCode).toBe(500);expect(response.body).not.toContain(sentinel);expect(response.body).not.toContain(password);expect(response.body).toContain('登入服務暫時無法使用');});
 });
+
+describe('payroll review access and explicit input contract', () => {
+ it.each([UserRole.Employee, UserRole.Admin])('limits full review access to SuperAdmin (%s)', async role => {
+  fake.data.get('employees/ADMIN').role = role;
+  expect((await call('get-payroll-review-inputs', { yearMonth: month })).statusCode).toBe(403);
+  expect((await call('review-payroll-inputs', { empId: employee.id, review })).statusCode).toBe(403);
+ });
+ it('returns payroll allowlisted inputs and approved intersecting leaves only, including when locked', async () => {
+  const target = fake.data.get('employees/SYNTH');
+  Object.assign(target, { password: 'private-password', email: 'private-email', phone: 'private-phone', address: 'private-address' });
+  target.payrollReview = { ...structuredClone(review), hiddenContact: 'private-contact' };
+  target.payrollReview.policy.overtimeTiers[0].contact = 'private-tier-contact';
+  fake.data.set('leaveRequests/APPROVED', leave());
+  fake.data.set('leaveRequests/BOUNDARY', { ...leave(), startDate: '2026-03-31T23:00', endDate: '2026-04-01T01:00' });
+  fake.data.set('leaveRequests/PENDING', { ...leave(), status: LeaveStatus.Pending });
+  fake.data.set('leaveRequests/NEXT', leave('2026-05-01'));
+  lock();
+  const response = await call('get-payroll-review-inputs', { yearMonth: month });
+  expect(response.statusCode).toBe(200);
+  const result = JSON.parse(response.body);
+  expect(result.locked).toBe(true);
+  expect(result.employees.find((e: any) => e.id === 'SYNTH')).toMatchObject({ name: employee.name, hourlyRate: 200, payrollReview: { yearMonth: month } });
+  expect(result.employees.find((e: any) => e.id === 'ADMIN').role).toBe(UserRole.SuperAdmin);
+  expect(result.leaves.map((l: any) => l.id).sort()).toEqual(['APPROVED', 'BOUNDARY']);
+  expect(response.body).not.toContain('private-');
+ });
+ it('rejects invalid getter month', async () => { expect((await call('get-payroll-review-inputs', { yearMonth: '2026-13' })).statusCode).toBe(400); });
+ it('keeps review writes locked and leaves review untouched', async () => {
+  lock(); const before = structuredClone(fake.data.get('employees/SYNTH').payrollReview);
+  expect((await call('review-payroll-inputs', { empId: employee.id, review })).statusCode).toBe(423);
+  expect(fake.data.get('employees/SYNTH').payrollReview).toEqual(before);
+ });
+ it('records server reviewer and time while preserving explicitly reviewed zero money', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(new Date('2026-05-02T00:00:00Z'));
+  const payload = { ...structuredClone(review), reviewedBy: 'forged-user', reviewedAt: 'forged-time', password: 'must-not-persist' };
+  expect((await call('review-payroll-inputs', { empId: employee.id, review: payload })).statusCode).toBe(200);
+  const saved = fake.data.get('employees/SYNTH').payrollReview;
+  expect(saved).toMatchObject({ reviewedBy: 'ADMIN', reviewedAt: '2026-05-02T00:00:00.000Z', insurance: { labor: 0, health: 0, pensionSelf: 0 } });
+  expect(saved.password).toBeUndefined();
+ });
+ const invalidInputs: [string, (r: any) => void][] = [
+  ['missing policy', r => { delete r.policy; }],
+  ['empty policy version', r => { r.policy.version = ' '; }],
+  ['estimated hours', r => { r.policy.hoursBasis = 'schedule'; }],
+  ['wrong daily minutes', r => { r.policy.dailyRegularMinutes = 360; }],
+  ['wrong date rule', r => { r.policy.workDateRule = 'clock-out-date'; }],
+  ['unconfirmed money precision', r => { r.policy.moneyDecimals = 1; }],
+  ['nonexistent calendar date', r => { r.policy.regularDates = ['2026-04-31']; }],
+  ['outside month date', r => { r.policy.regularDates = ['2026-05-01']; }],
+  ['duplicate day', r => { r.policy.regularDates = ['2026-04-01', '2026-04-01']; }],
+  ['zero tier minutes', r => { r.policy.overtimeTiers[0].minutes = 0; }],
+  ['zero tier numerator', r => { r.policy.overtimeTiers[0].numerator = 0; }],
+  ['infinite tier denominator', r => { r.policy.overtimeTiers[0].denominator = Infinity; }],
+  ['fraction above one', r => { r.policy.hourlyLeavePaidFraction['特休'] = 1.1; }],
+  ['negative fraction', r => { r.policy.monthlyLeaveDeductionFraction['特休'] = -0.1; }],
+  ['missing fractions', r => { delete r.policy.hourlyLeavePaidFraction; }],
+  ['missing insurance', r => { delete r.insurance; }],
+  ['negative insurance', r => { r.insurance.labor = -1; }],
+  ['string insurance', r => { r.insurance.health = '0'; }],
+  ['infinite insurance', r => { r.insurance.pensionSelf = Infinity; }],
+  ['missing insurance field', r => { delete r.insurance.health; }],
+  ['unknown participation', r => { r.participation = 'employee'; }],
+  ['invalid exception date', r => { r.scheduleExceptions = [{ date: '2026-05-01', reason: '明示理由', sourceKey: 'evidence' }]; }],
+  ['empty exclusion reason', r => { r.participation = 'system-account'; r.participationReason = ' '; }],
+ ];
+ it.each(invalidInputs)('rejects %s without changing the stored review', async (_label, change) => {
+  const before = structuredClone(fake.data.get('employees/SYNTH').payrollReview);
+  const candidate = structuredClone(review); change(candidate);
+  const result = await call('review-payroll-inputs', { empId: employee.id, review: candidate });
+  expect(result.statusCode).toBe(400);
+  expect(fake.data.get('employees/SYNTH').payrollReview).toEqual(before);
+ });
+ it('requires an explicit positive monthly hourly divisor for monthly employees', async () => {
+  fake.data.get('employees/SYNTH').position = '專責人員';
+  const payload = structuredClone(review); delete payload.policy.monthlyHourlyDivisor;
+  expect((await call('review-payroll-inputs', { empId: employee.id, review: payload })).statusCode).toBe(400);
+  payload.policy.monthlyHourlyDivisor = 240;
+  expect((await call('review-payroll-inputs', { empId: employee.id, review: payload })).statusCode).toBe(200);
+ });
+ it('explicit system account exclusion needs a reason and no invented pay policy', async () => {
+  expect((await call('review-payroll-inputs', { empId: 'ADMIN', review: { yearMonth: month, participation: 'system-account', participationReason: '僅登入管理系統' } })).statusCode).toBe(200);
+  const saved = fake.data.get('employees/ADMIN').payrollReview;
+  expect(saved).toMatchObject({ participation: 'system-account', reviewedBy: 'ADMIN' });
+  expect(saved.policy).toBeUndefined(); expect(saved.insurance).toBeUndefined();
+ });
+ it('prevents ordinary employees from reading other employee details or all details', async () => {
+  fake.data.get('employees/ADMIN').role = UserRole.Employee;
+  expect((await call('get-all-employees-detail')).statusCode).toBe(403);
+  expect((await call('get-employee', { empId: 'SYNTH' })).statusCode).toBe(403);
+  expect((await call('get-employee', { empId: 'ADMIN' })).statusCode).toBe(200);
+ });
+ it('allows administrative employee detail access', async () => {
+  fake.data.get('employees/ADMIN').role = UserRole.Admin;
+  expect((await call('get-all-employees-detail')).statusCode).toBe(200);
+  expect((await call('get-employee', { empId: 'SYNTH' })).statusCode).toBe(200);
+ });
+});

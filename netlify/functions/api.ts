@@ -1,8 +1,9 @@
 import { validLeaveAllocations } from './utils/payroll';
+import { validatePayrollReview, payrollReviewFields } from './utils/payrollReviewValidation';
 import { editClock } from './utils/clockMutation';
 import { taipeiDate, taipeiTime, localInstant, validDate, hhmmMinutes, resolveAttendance, resolveClockRecord, clockSourceKey, confirmedWork, sumKnownHours, dailyClockRecord, scheduleMonthKeys, shiftIntervals } from '../../utils/attendance';
 import { runPayrollMutation, monthsInRange, assertTransactionMonths } from './utils/monthGuard';
-import { makePayrollRun, selectSalaryResults, selectPayrollClockEvidence } from './utils/payrollSnapshot';
+import { makePayrollRun, selectSalaryResults, selectPayrollClockEvidence, selectPayrollLeaveEvidence } from './utils/payrollSnapshot';
 import type { PayrollRun } from '../../types';
 import type { Handler } from '@netlify/functions';
 import { FieldValue } from 'firebase-admin/firestore';
@@ -617,8 +618,8 @@ const displayAttendance = async (records: ClockRecord[], month: string): Promise
 };
 
 const employeeInMonth = (e: any, month: string): boolean => e.accountKind !== 'system-account' && !(e.payrollReview?.yearMonth === month && e.payrollReview?.participation === 'system-account' && e.payrollReview?.participationReason?.trim() && e.payrollReview?.reviewedBy && e.payrollReview?.reviewedAt) && (!e.hireDate || e.hireDate.slice(0, 7) <= month) && (!e.resignDate || e.resignDate.slice(0, 7) >= month);
-const payrollEmployee = (e: any) => ({ id: e.id, accountKind: e.accountKind || null, name: e.name, position: e.position, status: e.status,
-    hourlyRate: e.hourlyRate ?? null, monthlySalary: e.monthlySalary ?? null, hireDate: e.hireDate || '', resignDate: e.resignDate || '', payrollReview: e.payrollReview || null });
+const payrollEmployee = (e: any) => ({ id: e.id, accountKind: e.accountKind || null, name: e.name, role: e.role ?? null, position: e.position, status: e.status,
+    hourlyRate: e.hourlyRate ?? null, monthlySalary: e.monthlySalary ?? null, hireDate: e.hireDate || '', resignDate: e.resignDate || '', payrollReview: payrollReviewFields(e.payrollReview) });
 const readSalaryMonth = async (month: string): Promise<SalaryDetail[]> => {
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month || '')) throw new Error('月份無效');
     const lock = await getMonthLock(month);
@@ -974,15 +975,32 @@ export const handler: Handler = async (event) => {
 
             // ==================== 員工管理 ====================
 
+            case 'get-payroll-review-inputs': {
+                if (!isSuperAdmin) return fail(403, '僅最高管理者可查看計薪覆核輸入');
+                const month = data.yearMonth;
+                if (typeof month !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return fail(400, '月份無效');
+                const [employees, leaves, lock] = await Promise.all([
+                    db.collection('employees').get(), db.collection('leaveRequests').get(), getMonthLock(month),
+                ]);
+                const first = `${month}-01T00:00:00+08:00`;
+                const next = new Date(`${month}-01T00:00:00Z`); next.setUTCMonth(next.getUTCMonth() + 1);
+                const end = `${next.toISOString().slice(0, 7)}-01T00:00:00+08:00`;
+                const instant = (value: string) => Date.parse(/(Z|[+-]\d\d:\d\d)$/.test(value || '') ? value : value + '+08:00');
+                return ok({ employees: employees.docs.map(d => payrollEmployee({ ...d.data(), id: d.id })),
+                    leaves: leaves.docs.map(d => ({ ...d.data(), id: d.id } as LeaveRequest)).filter(l => l.status === LeaveStatus.Approved && instant(l.startDate) < Date.parse(end) && instant(l.endDate) > Date.parse(first)),
+                    locked: !!lock && isMonthLocked(lock) });
+            }
             case 'review-payroll-inputs': {
                 if (!isSuperAdmin) return fail(403, '僅最高管理者可覆核計薪規則與保費');
                 const month = data.review?.yearMonth;
-                if (data.review?.participation === 'system-account' && !data.review?.participationReason?.trim()) return fail(400, '排除計薪須明示非員工系統帳號原因');
-                if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month || '')) return fail(400, '月份無效');
+                if (typeof month !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return fail(400, '月份無效');
+                if (typeof data.empId !== 'string' || !data.empId || data.empId.includes('/')) return fail(400, '員工識別無效');
                 await runPayrollMutation(db, [month], async tx => {
                     const ref = db.collection('employees').doc(data.empId);
-                    if (!(await tx.get(ref)).exists) throw new Error('員工不存在');
-                    tx.update(ref, { payrollReview: { ...data.review, reviewedBy: uid, reviewedAt: new Date().toISOString() } });
+                    const employee = await tx.get(ref);
+                    if (!employee.exists) throw new Error('員工不存在');
+                    const review = validatePayrollReview(data.review, employee.data(), uid, new Date().toISOString());
+                    tx.update(ref, { payrollReview: review });
                 });
                 await writeAuditLog(uid, '覆核計薪設定', data.empId, month);
                 return ok(true);
@@ -1011,6 +1029,7 @@ export const handler: Handler = async (event) => {
             }
 
             case 'get-all-employees-detail': {
+                if (!isAdmin) return fail(403, '僅管理者可查看員工完整資料');
                 const snap = await db.collection('employees').get();
                 return ok(snap.docs.map(d => {
                     const { password: _p, ...emp } = d.data();
@@ -1019,6 +1038,7 @@ export const handler: Handler = async (event) => {
             }
 
             case 'get-employee': {
+                if (data.empId !== uid && !isAdmin) return fail(403, '無權查看他人完整資料');
                 const snap = await db.collection('employees').doc(data.empId).get();
                 if (!snap.exists) return ok(null);
                 const { password: _p, ...emp } = snap.data()!;
@@ -1358,9 +1378,9 @@ export const handler: Handler = async (event) => {
                         tx.get(db.collection('employees')), tx.get(db.collection('clockRecords')),
                         tx.get(db.collection('leaveRequests')), tx.get(db.collection('dailySchedule')),
                     ]);
-                    const employees = empSnap.docs.map(d => payrollEmployee(d.data())).filter(e => employeeInMonth(e, yearMonth));
+                    const employees = empSnap.docs.map(d => payrollEmployee({ ...d.data(), id: d.id })).filter(e => employeeInMonth(e, yearMonth));
                     const records = selectPayrollClockEvidence(clockSnap.docs.map(d => ({ id: d.id, ...d.data() } as ClockRecord)), yearMonth, employees.map(e => e.id));
-                    const leaves = leaveSnap.docs.map(d => ({ id: d.id, ...d.data() } as LeaveRequest)).filter(l => l.startDate.slice(0, 7) <= yearMonth && l.endDate.slice(0, 7) >= yearMonth);
+                    const leaves = selectPayrollLeaveEvidence(leaveSnap.docs.map(d => ({ ...d.data(), id: d.id } as LeaveRequest)), yearMonth, employees.map(e => e.id));
                     const schedules = scheduleSnap.docs.filter(d => d.id.startsWith(yearMonth)).map(d => normalizeScheduleDoc(d.data(), d.id, ''));
                     const salaries = employees.map(e => calculateSalaryForEmployee(e, yearMonth, schedules, records, leaves));
                     const createdAt = new Date().toISOString();
@@ -1868,22 +1888,26 @@ export const handler: Handler = async (event) => {
             case 'approve-makeup-request': {
                 if (!isAdmin) return fail(403, '僅管理者可審核補卡');
                 if (!['核准', '駁回'].includes(data.status)) return fail(400, '審核狀態無效');
+                if (typeof data.requestId !== 'string' || !data.requestId || data.requestId.includes('/')) return fail(400, '申請識別無效');
                 const reqRef = db.collection('makeupRequests').doc(data.requestId);
                 const initial = await reqRef.get();
                 if (!initial.exists) return fail(404, '申請不存在');
-                const request = initial.data()!;
-                const end = request.requestedClockOutAt ? taipeiDate(new Date(request.requestedClockOutAt)) : request.date;
-                const changed = await runPayrollMutation(db, monthsInRange(request.date, end), async tx => {
-                    const snap = await tx.get(reqRef); const req = snap.data()!;
+                // Rejection changes only the request. Legacy malformed timestamps or
+                // ambiguous cards must never prevent a reviewer from rejecting it.
+                const reviewRequest = async (tx: any) => {
+                    const snap = await tx.get(reqRef);
+                    if (!snap.exists) throw new Error('申請不存在');
+                    const req = snap.data()!;
                     if (req.status === data.status) return false;
                     if (req.status !== '待審核') throw new Error('申請已審核，請另建更正申請');
-                    const cards = await tx.get(db.collection('clockRecords').where('empId', '==', req.empId).where('date', '==', req.date));
-                    const selected = req.recordId ? cards.docs.find(d => d.id === req.recordId) : (cards.docs.length === 1 ? cards.docs[0] : undefined);
-                    if ((req.recordId && !selected) || (!req.recordId && cards.docs.length > 1)) throw new Error('同日多段打卡，請指定要補正的紀錄');
-                    const ref = selected?.ref || db.collection('clockRecords').doc(`makeup_${data.requestId}`);
-                    const before = selected ? { id: selected.id, ...selected.data() } as ClockRecord : null;
-                    if (before?.clockOutAt && taipeiDate(new Date(before.clockOutAt)) > end) throw new Error('原打卡跨日，請在申請填完整下班日期時間');
                     if (data.status === '核准') {
+                        const cards = await tx.get(db.collection('clockRecords').where('empId', '==', req.empId).where('date', '==', req.date));
+                        const selected = req.recordId ? cards.docs.find(d => d.id === req.recordId) : (cards.docs.length === 1 ? cards.docs[0] : undefined);
+                        if ((req.recordId && !selected) || (!req.recordId && cards.docs.length > 1)) throw new Error('同日多段打卡，請指定要補正的紀錄');
+                        const ref = selected?.ref || db.collection('clockRecords').doc(`makeup_${data.requestId}`);
+                        const before = selected ? { id: selected.id, ...selected.data() } as ClockRecord : null;
+                        const end = req.requestedClockOutAt ? taipeiDate(new Date(req.requestedClockOutAt)) : req.date;
+                        if (before?.clockOutAt && taipeiDate(new Date(before.clockOutAt)) > end) throw new Error('原打卡跨日，請在申請填完整下班日期時間');
                         const patch: any = { note: `補打卡：${req.reason}` };
                         if (req.requestedClockInAt) patch.clockInAt = req.requestedClockInAt;
                         else if (req.requestedClockIn) patch.clockInTime = req.requestedClockIn;
@@ -1896,7 +1920,22 @@ export const handler: Handler = async (event) => {
                     }
                     tx.update(reqRef, { status: data.status, approver: uid, approvalDate: new Date().toISOString(), rejectReason: data.rejectReason || '' });
                     return true;
-                });
+                };
+                let changed: boolean;
+                if (data.status === '駁回') {
+                    try { changed = await db.runTransaction(reviewRequest); }
+                    catch (error: any) { error.statusCode ||= 409; throw error; }
+                }
+                else {
+                    const request = initial.data()!;
+                    if (!validDate(request.date)) return fail(409, '補卡日期無效');
+                    for (const field of ['requestedClockInAt', 'requestedClockOutAt']) {
+                        const stamp = request[field];
+                        if (stamp && (typeof stamp !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(Z|[+-]\d\d:\d\d)$/.test(stamp) || !validDate(stamp.slice(0, 10)) || hhmmMinutes(stamp.slice(11, 16)) === null || !Number.isFinite(Date.parse(stamp)))) return fail(409, '完整時間必須含有效日期與時區');
+                    }
+                    const end = request.requestedClockOutAt ? taipeiDate(new Date(request.requestedClockOutAt)) : request.date;
+                    changed = await runPayrollMutation(db, monthsInRange(request.date, end), reviewRequest);
+                }
                 if (changed) await writeAuditLog(uid, '審核補打卡', data.requestId, data.status);
                 return ok(true);
             }

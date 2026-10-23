@@ -58,3 +58,51 @@ describe('PR 13 makeup rejection with multiple sessions', () => {
         expect({ statusCode: response.statusCode, body: response.body, requestStatus: fake.data.get('makeupRequests/M').status }).toMatchObject({ statusCode: 200, requestStatus: '駁回' });
     });
 });
+
+const call = async (body: any) => await handler({ httpMethod: 'POST', headers: { authorization: 'Bearer synthetic' }, body: JSON.stringify({ action: 'approve-makeup-request', requestId: 'M', ...body }) } as any, {} as any) as any;
+const attendance = () => [...fake.data.entries()].filter(([path]) => /^(clockRecords|attendanceRevisions|payrollControl)\//.test(path));
+
+describe('makeup rejection preserves attendance under legacy invalid input', () => {
+    it.each([
+        { requestedClockOutAt: 'invalid-timestamp' },
+        { requestedClockOutAt: '2026-04-02T06:00:00+08:00', recordId: 'missing-card' },
+        { requestedClockInAt: 'invalid-timestamp', requestedClockOutAt: '2026-04-01T18:00:00' },
+        { requestedClockOut: '25:99', recordId: 'C1' },
+    ])('rejects without reading/changing cards for $requestedClockOutAt', async fields => {
+        Object.assign(fake.data.get('makeupRequests/M'), fields);
+        fake.data.get('clockRecords/C1').clockOutAt = '2026-04-02T06:00:00+08:00';
+        const before = structuredClone(attendance());
+        expect((await call({ status: '駁回', rejectReason: '請重提完整時間' })).statusCode).toBe(200);
+        expect(fake.data.get('makeupRequests/M')).toMatchObject({ status: '駁回', approver: 'ADMIN', rejectReason: '請重提完整時間' });
+        expect(attendance()).toEqual(before);
+    });
+    it('rejects requests on a locked month without any payroll mutation', async () => {
+        fake.data.set('monthLocks/2026-04', { yearMonth: '2026-04', lockedAt: '2026-05-01T00:00:00Z' });
+        expect((await call({ status: '駁回' })).statusCode).toBe(200);
+        expect(fake.data.has('payrollControl/revision')).toBe(false);
+    });
+    it('keeps reviewer role and valid request identity requirements', async () => {
+        fake.data.get('employees/ADMIN').role = UserRole.Employee;
+        expect((await call({ status: '駁回' })).statusCode).toBe(403);
+        expect(fake.data.get('makeupRequests/M').status).toBe('待審核');
+        fake.data.get('employees/ADMIN').role = UserRole.SuperAdmin;
+        expect((await call({ requestId: '', status: '駁回' })).statusCode).toBe(400);
+        expect((await call({ requestId: 'not-found', status: '駁回' })).statusCode).toBe(404);
+        expect((await call({ requestId: 'bad/path', status: '駁回' })).statusCode).toBe(400);
+    });
+    it('rejects an already approved request and remains idempotent after rejection', async () => {
+        fake.data.get('makeupRequests/M').status = '核准';
+        expect((await call({ status: '駁回' })).statusCode).toBe(409);
+        expect(fake.data.get('makeupRequests/M').status).toBe('核准');
+        fake.data.get('makeupRequests/M').status = '待審核';
+        await call({ status: '駁回' }); const before = structuredClone([...fake.data.entries()]);
+        expect((await call({ status: '駁回' })).statusCode).toBe(200);
+        expect([...fake.data.entries()]).toEqual(before);
+    });
+    it.each(['invalid-timestamp', '2026-04-02T06:00:00', '2026-13-02T06:00:00+08:00', '2026-02-31T06:00:00+08:00', '2026-04-02T24:00:00+08:00'])('refuses approval for invalid absolute requested time (%s)', async stamp => {
+        Object.assign(fake.data.get('makeupRequests/M'), { recordId: 'C1', requestedClockOutAt: stamp });
+        const before = structuredClone(attendance());
+        expect((await call({ status: '核准' })).statusCode).toBe(409);
+        expect(fake.data.get('makeupRequests/M').status).toBe('待審核'); expect(attendance()).toEqual(before);
+    });
+});
