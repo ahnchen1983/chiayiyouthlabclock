@@ -70,5 +70,12 @@ export const selectPayrollLeaveEvidence = (leaves: LeaveRequest[], yearMonth: st
     const boundaryEnd = Date.parse(`${next.toISOString().slice(0, 7)}-02T00:00:00+08:00`);
     const instant = (value: string) => Date.parse(/(Z|[+-]\d\d:\d\d)$/.test(value || '') ? value : value + '+08:00');
     const included = new Set(employeeIds);
-    return leaves.filter(l => included.has(l.empId) && l.status === LeaveStatus.Approved && instant(l.startDate) < boundaryEnd && instant(l.endDate) > first);
+    return leaves.filter(l => {
+        if (!included.has(l.empId) || l.status !== LeaveStatus.Approved) return false;
+        // Preserve malformed current-month evidence too: excluding it here would
+        // let the snapshot bypass the calculator's validation of the live inputs.
+        if ((l.startDate || '').slice(0, 7) <= yearMonth && (l.endDate || l.startDate || '').slice(0, 7) >= yearMonth) return true;
+        if (l.payrollAllocations?.some(a => (a.date || '').startsWith(yearMonth + '-'))) return true;
+        return instant(l.startDate) < boundaryEnd && instant(l.endDate) > first;
+    });
 };

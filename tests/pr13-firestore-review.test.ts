@@ -2,8 +2,8 @@ import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
 import { calculateSalaryForEmployee, normalizeScheduleDoc } from '../netlify/functions/utils/calculations';
-import { makePayrollRun, sanitizePayrollSnapshot } from '../netlify/functions/utils/payrollSnapshot';
-import { card, employee, month, review } from './fixtures/payrollV2';
+import { makePayrollRun, sanitizePayrollSnapshot, selectPayrollLeaveEvidence } from '../netlify/functions/utils/payrollSnapshot';
+import { card, employee, month, review, leave } from './fixtures/payrollV2';
 
 const require = createRequire(import.meta.url);
 // Initialize the SDK's module graph before loading its document validator.
@@ -58,5 +58,19 @@ describe('payroll snapshot canonical evidence', () => {
         expect(() => sanitizePayrollSnapshot(cycle)).toThrow('循環');
         let invoked = false; const accessor = Object.defineProperty({}, 'value', { enumerable: true, get() { invoked = true; return 1; } });
         expect(() => sanitizePayrollSnapshot(accessor)).toThrow('動態'); expect(invoked).toBe(false);
+    });
+});
+
+
+describe('snapshot leave evidence matches live payroll relevance', () => {
+    it('retains invalid target-month allocations for validation and full next-day boundary leave', () => {
+        const current = leave();
+        const invalidAllocation = { ...leave('2026-03-20'), id: 'invalid-allocation', payrollAllocations: leave().payrollAllocations };
+        const invalidCurrent = { ...leave(), id: 'invalid-current', startDate: '2026-04-invalid', endDate: '2026-04-invalid' };
+        const boundary = { ...leave('2026-05-01'), id: 'boundary' };
+        const unrelated = { ...leave('2026-05-02'), id: 'unrelated' };
+        const otherEmployee = { ...current, id: 'other-employee', empId: 'OTHER' };
+        expect(selectPayrollLeaveEvidence([current, invalidAllocation, invalidCurrent, boundary, unrelated, otherEmployee], month, [employee.id]).map(l => l.id))
+            .toEqual([current.id, 'invalid-allocation', 'invalid-current', 'boundary']);
     });
 });
