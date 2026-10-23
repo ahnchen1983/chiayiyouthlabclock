@@ -33,6 +33,8 @@ export interface ApiMockOptions {
 }
 
 export const mockApi = async (page: Page, options: ApiMockOptions = {}) => {
+  // Tests must never reach a real identity, messaging, or backend service.
+  await page.route('https://**', route => route.abort());
   const loginUser = options.user || employeeUser;
   const clockStatus: { clockInTime?: string; clockOutTime?: string } = {};
 

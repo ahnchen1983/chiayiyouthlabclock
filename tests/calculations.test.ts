@@ -1,3 +1,5 @@
+import { review as explicitReview } from './fixtures/payrollV2';
+import { clockSourceKey, clockInterval } from '../utils/attendance';
 import { describe, it, expect } from 'vitest';
 import {
     hashPassword,
@@ -108,9 +110,9 @@ describe('determineClockStatus', () => {
         expect(deriveClockRecordDisplayStatus({ clockInTime: '08:30', clockOutTime: '17:30', status: '正常' })).toBe('正常');
     });
 
-    it('出勤紀錄顯示狀態：實際打卡超過 9 小時且原狀態正常 → 加班', () => {
+    it('出勤紀錄顯示狀態：未核實工作時段，不以留場跨度推定加班', () => {
         expect(deriveClockRecordDisplayStatus({ clockInTime: '08:30', clockOutTime: '17:30', status: '正常' })).toBe('正常');
-        expect(deriveClockRecordDisplayStatus({ clockInTime: '08:30', clockOutTime: '17:31', status: '正常' })).toBe('加班');
+        expect(deriveClockRecordDisplayStatus({ clockInTime: '08:30', clockOutTime: '17:31', status: '正常' })).toBe('正常');
         expect(deriveClockRecordDisplayStatus({ clockInTime: '08:30', clockOutTime: '18:30', status: '遲到' })).toBe('遲到');
     });
 
@@ -279,17 +281,18 @@ describe('computeLeaveBalances', () => {
 describe('calculateSalaryForEmployee', () => {
     const fullTimeEmp = {
         id: 'EMP001', name: '小王', position: '專責人員', monthlySalary: 30000, hourlyRate: 0,
+        payrollReview: { ...explicitReview, insurance: { labor: 690, health: 633, pensionSelf: 0 } },
     };
     const partTimeEmp = {
-        id: 'EMP002', name: '小李', position: '兼職人員', hourlyRate: 200,
+        id: 'EMP002', name: '小李', position: '兼職人員', hourlyRate: 200, payrollReview: explicitReview,
     };
 
-    it('專責人員：無打卡 → 底薪即月薪，扣除依配置', () => {
+    it('專責人員：已覆核月薪基準與保費，沒有排班缺卡', () => {
         const result = calculateSalaryForEmployee(fullTimeEmp, '2026-04', [], [], []);
         expect(result.baseSalary).toBe(30000);
         expect(result.overtimePay).toBe(0);
         expect(result.grossSalary).toBe(30000);
-        // 勞保 2.3% + 健保 2.11%；勞退自提預設不扣
+        // 明確覆核的合成保費金額，不從gross比例推定
         expect(result.laborInsurance).toBe(Math.round(30000 * 0.023));
         expect(result.healthInsurance).toBe(Math.round(30000 * 0.0211));
         expect(result.laborPensionSelf).toBe(0);
@@ -309,7 +312,7 @@ describe('calculateSalaryForEmployee', () => {
                 { empId: 'EMP002', name: '小李', role: 'partTime', from: '09:00', to: '13:00' }
             ] },
         ];
-        const result = calculateSalaryForEmployee(partTimeEmp, '2026-04', schedule, clockRecords, []);
+        const result = calculateSalaryForEmployee(partTimeEmp, '2026-04', schedule, clockRecords.map(r => ({ ...r, workIntervals: [clockInterval(r)!], workReview: { sourceKey: clockSourceKey(r), reviewedBy: 'synthetic-reviewer', reviewedAt: explicitReview.reviewedAt } })), []);
         expect(result.totalWorkHours).toBe(8);
         expect(result.overtimeHours).toBe(0);
         expect(result.baseSalary).toBe(8 * 200);
@@ -321,7 +324,7 @@ describe('calculateSalaryForEmployee', () => {
             { id: 'L1', empId: 'EMP001', name: '小王', leaveType: LeaveType.Personal, startDate: '2026-04-05T09:00', endDate: '2026-04-05T17:00', hours: 8, reason: '私事', requestDate: '2026-04-04', status: LeaveStatus.Approved },
             { id: 'L2', empId: 'EMP001', name: '小王', leaveType: LeaveType.Sick, startDate: '2026-04-10T09:00', endDate: '2026-04-10T17:00', hours: 8, reason: '感冒', requestDate: '2026-04-09', status: LeaveStatus.Approved },
         ];
-        const result = calculateSalaryForEmployee(fullTimeEmp, '2026-04', [], [], leaves);
+        const result = calculateSalaryForEmployee(fullTimeEmp, '2026-04', [], [], leaves.map(l => ({ ...l, payrollAllocations: l.startDate.slice(0, 10) === l.endDate.slice(0, 10) ? [{ date: l.startDate.slice(0,10), from: '09:00', to: '17:00', minutes: 480 }] : [{ date: l.startDate.slice(0,10), from: '09:00', to: '17:00', minutes: 480 }, { date: l.endDate.slice(0,10), from: '09:00', to: '17:00', minutes: 480 }] })));
         const hourly = Math.round(30000 / 30 / 8); // = 125
         // 事假 8h 全扣 + 病假 8h 半扣
         const expectedDeduction = 8 * hourly + Math.round(8 * hourly * 0.5);
@@ -335,7 +338,7 @@ describe('calculateSalaryForEmployee', () => {
             { id: 'L2', empId: 'EMP001', name: '小王', leaveType: LeaveType.BusinessTrip, startDate: '2026-04-10T09:00', endDate: '2026-04-11T17:00', hours: 16, reason: '台北出差', requestDate: '2026-04-09', status: LeaveStatus.Approved },
             { id: 'L3', empId: 'EMP001', name: '小王', leaveType: LeaveType.RemoteWork, startDate: '2026-04-15T09:00', endDate: '2026-04-15T17:00', hours: 8, reason: '居家工作', requestDate: '2026-04-14', status: LeaveStatus.Approved },
         ];
-        const result = calculateSalaryForEmployee(fullTimeEmp, '2026-04', [], [], leaves);
+        const result = calculateSalaryForEmployee(fullTimeEmp, '2026-04', [], [], leaves.map(l => ({ ...l, payrollAllocations: l.startDate.slice(0, 10) === l.endDate.slice(0, 10) ? [{ date: l.startDate.slice(0,10), from: '09:00', to: '17:00', minutes: 480 }] : [{ date: l.startDate.slice(0,10), from: '09:00', to: '17:00', minutes: 480 }, { date: l.endDate.slice(0,10), from: '09:00', to: '17:00', minutes: 480 }] })));
         expect(result.leaveDeduction).toBe(0);
         expect(result.totalLeaveHours).toBe(0);
         expect(result.leaveDetails).toEqual([]);
@@ -345,30 +348,30 @@ describe('calculateSalaryForEmployee', () => {
         const leaves: LeaveRequest[] = [
             { id: 'L1', empId: 'EMP001', name: '小王', leaveType: LeaveType.Personal, startDate: '2026-04-05T09:00', endDate: '2026-04-05T17:00', hours: 8, reason: '私事', requestDate: '2026-04-04', status: LeaveStatus.Pending },
         ];
-        const result = calculateSalaryForEmployee(fullTimeEmp, '2026-04', [], [], leaves);
+        const result = calculateSalaryForEmployee(fullTimeEmp, '2026-04', [], [], leaves.map(l => ({ ...l, payrollAllocations: l.startDate.slice(0, 10) === l.endDate.slice(0, 10) ? [{ date: l.startDate.slice(0,10), from: '09:00', to: '17:00', minutes: 480 }] : [{ date: l.startDate.slice(0,10), from: '09:00', to: '17:00', minutes: 480 }, { date: l.endDate.slice(0,10), from: '09:00', to: '17:00', minutes: 480 }] })));
         expect(result.leaveDeduction).toBe(0);
         expect(result.totalLeaveHours).toBe(0);
     });
 
-    it('config 費率可覆寫', () => {
+    it('舊config比例不能覆蓋已覆核保費金額', () => {
         const customConfig = { ...DEFAULT_SYSTEM_CONFIG, laborInsuranceRate: 0.05 };
         const result = calculateSalaryForEmployee(fullTimeEmp, '2026-04', [], [], [], customConfig);
-        expect(result.laborInsurance).toBe(Math.round(30000 * 0.05));
+        expect(result.laborInsurance).toBe(690);
     });
 
-    it('勞退自提可由系統設定開啟為 6%', () => {
+    it('系統自提率不是已覆核月提繳金額', () => {
         const customConfig = { ...DEFAULT_SYSTEM_CONFIG, laborPensionRate: 0.06 };
         const result = calculateSalaryForEmployee(fullTimeEmp, '2026-04', [], [], [], customConfig);
-        expect(result.laborPensionSelf).toBe(Math.round(30000 * 0.06));
+        expect(result.laborPensionSelf).toBe(0);
     });
 
-    it('員工個人勞退自提率優先於系統設定', () => {
+    it('個人自提率不能直接取代已覆核金額', () => {
         const customConfig = { ...DEFAULT_SYSTEM_CONFIG, laborPensionRate: 0 };
         const result = calculateSalaryForEmployee({ ...fullTimeEmp, laborPensionRate: 0.03 }, '2026-04', [], [], [], customConfig);
-        expect(result.laborPensionSelf).toBe(Math.round(30000 * 0.03));
+        expect(result.laborPensionSelf).toBe(0);
     });
 
-    it('PT 計薪工時會扣掉表定前後的無效溢出時間', () => {
+    it('PT 已覆核實際工作不再被班表裁切', () => {
         const clockRecords: ClockRecord[] = [
             { id: 'C1', empId: 'EMP002', name: '小李', date: '2026-04-01', clockInTime: '08:40', clockOutTime: '17:20', verificationMethod: 'IP', verificationData: '1', workHours: 8.7, status: '正常' },
         ];
@@ -377,8 +380,9 @@ describe('calculateSalaryForEmployee', () => {
                 { empId: 'EMP002', name: '小李', role: 'partTime', from: '09:00', to: '17:00' }
             ] },
         ];
-        const result = calculateSalaryForEmployee(partTimeEmp, '2026-04', schedule, clockRecords, []);
-        expect(result.totalWorkHours).toBe(8);
+        const result = calculateSalaryForEmployee(partTimeEmp, '2026-04', schedule, clockRecords.map(r => ({ ...r, workIntervals: [clockInterval(r)!], workReview: { sourceKey: clockSourceKey(r), reviewedBy: 'synthetic-reviewer', reviewedAt: explicitReview.reviewedAt } })), []);
+        expect(result.totalWorkHours).toBeCloseTo(8 + 2 / 3);
+        expect(result.overtimeHours).toBeCloseTo(2 / 3);
         expect(result.baseSalary).toBe(8 * 200);
     });
 
@@ -390,7 +394,7 @@ describe('calculateSalaryForEmployee', () => {
         expect(result.totalWorkDays).toBe(0);
     });
 
-    it('兩頭班：同員工同日多筆 shift 時數加總', () => {
+    it('兩頭班只有班表而無出勤證據，不能假設已工作', () => {
         const schedule: ScheduleEvent[] = [
             { date: '2026-04-15', dayOfWeek: '三', status: '營運', shifts: [
                 { empId: 'EMP001', name: '小王', role: 'staffA', from: '08:30', to: '13:00' },
@@ -398,8 +402,10 @@ describe('calculateSalaryForEmployee', () => {
             ] },
         ];
         const result = calculateSalaryForEmployee(fullTimeEmp, '2026-04', schedule, [], []);
-        expect(result.totalWorkDays).toBe(1);
-        // scheduledHours = 4.5 + 3 = 7.5（但 fullTime 是月薪所以工時只影響加班計算）
+        expect(result.totalWorkDays).toBe(0);
+        expect(result.totalWorkHours).toBeNull();
+        expect(result.netSalary).toBeNull();
+        // 原測試把排班天數當出勤，已改為待覆核。
     });
 });
 
@@ -417,7 +423,7 @@ describe('computePayableClockHours', () => {
     it('遲到與早退仍依實際打卡時間扣除', () => {
         expect(computePayableClockHours('09:10', '16:50', [
             { from: '09:00', to: '17:00' },
-        ])).toBe(7.7);
+        ])).toBeCloseTo(460 / 60);
     });
 
     it('兩頭班分段計算 overlap', () => {

@@ -1,3 +1,4 @@
+import { taipeiDate } from '../../utils/attendance';
 import React, { useEffect, useState } from 'react';
 import { apiSubmitMakeupRequest, apiGetEmployeeMakeupRequests } from '../../services/googleAppsScriptAPI';
 import { ClockMakeupRequest } from '../../types';
@@ -12,7 +13,7 @@ const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
 };
 
 const ClockMakeupForm: React.FC = () => {
-    const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+    const [date, setDate] = useState(taipeiDate());
     const [type, setType] = useState<'上班' | '下班' | '上下班'>('上班');
     const [clockIn, setClockIn] = useState('');
     const [clockOut, setClockOut] = useState('');
@@ -79,7 +80,7 @@ const ClockMakeupForm: React.FC = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">補打卡日期</label>
-                        <input type="date" value={date} onChange={e => setDate(e.target.value)} required className="w-full p-2 border rounded" max={new Date().toISOString().slice(0, 10)} />
+                        <input type="date" value={date} onChange={e => setDate(e.target.value)} required className="w-full p-2 border rounded" max={taipeiDate()} />
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">補打卡類型</label>

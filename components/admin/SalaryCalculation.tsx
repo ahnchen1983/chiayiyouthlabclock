@@ -1,3 +1,6 @@
+import { taipeiDate } from '../../utils/attendance';
+import { formatMoney, formatHours } from '../../utils/format';
+import { PayrollReviewNotice } from '../PayrollReviewNotice';
 
 import React, { useState, useEffect } from 'react';
 import {
@@ -17,9 +20,7 @@ const DownloadIcon: React.FC<{ className?: string }> = ({ className }) => (
     </svg>
 );
 
-const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat('zh-TW', { style: 'currency', currency: 'TWD', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
-};
+const formatCurrency = formatMoney;
 
 // 展開的薪資明細 Modal
 const SalaryDetailModal: React.FC<{ salary: SalaryDetail; onClose: () => void }> = ({ salary, onClose }) => {
@@ -43,7 +44,7 @@ const SalaryDetailModal: React.FC<{ salary: SalaryDetail; onClose: () => void }>
                             </div>
                             <div className="bg-blue-50 rounded-lg p-3">
                                 <p className="text-xs text-gray-500">總工時</p>
-                                <p className="text-lg font-bold text-blue-700">{salary.totalWorkHours} 小時</p>
+                                <p className="text-lg font-bold text-blue-700">{formatHours(salary.totalWorkHours)} 小時</p>
                             </div>
                             <div className="bg-orange-50 rounded-lg p-3">
                                 <p className="text-xs text-gray-500">請假時數</p>
@@ -51,7 +52,7 @@ const SalaryDetailModal: React.FC<{ salary: SalaryDetail; onClose: () => void }>
                             </div>
                             <div className="bg-purple-50 rounded-lg p-3">
                                 <p className="text-xs text-gray-500">加班時數</p>
-                                <p className="text-lg font-bold text-purple-600">{salary.overtimeHours} 小時</p>
+                                <p className="text-lg font-bold text-purple-600">{formatHours(salary.overtimeHours)} 小時</p>
                             </div>
                         </div>
                         {salary.leaveDetails.length > 0 && (
@@ -70,11 +71,11 @@ const SalaryDetailModal: React.FC<{ salary: SalaryDetail; onClose: () => void }>
                         <h4 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">💰 薪資項目</h4>
                         <div className="space-y-2">
                             <div className="flex justify-between py-2 border-b border-gray-100">
-                                <span className="text-gray-600">{salary.position === '專責人員' ? '月薪' : `時薪計算 (${salary.totalWorkHours - salary.overtimeHours}h)`}</span>
+                                <span className="text-gray-600">{salary.position === '專責人員' ? '月薪' : `時薪計算 (${formatHours(salary.totalWorkHours == null || salary.overtimeHours == null ? null : salary.totalWorkHours - salary.overtimeHours)}h)`}</span>
                                 <span className="font-semibold text-gray-800">{formatCurrency(salary.baseSalary)}</span>
                             </div>
                             <div className="flex justify-between py-2 border-b border-gray-100">
-                                <span className="text-gray-600">加班費 ({salary.overtimeHours}h × 1.34倍)</span>
+                                <span className="text-gray-600">加班費 ({formatHours(salary.overtimeHours)}h（依已覆核級距）)</span>
                                 <span className="font-semibold text-gray-800">{formatCurrency(salary.overtimePay)}</span>
                             </div>
                             <div className="flex justify-between py-2 bg-green-50 rounded px-2">
@@ -150,6 +151,7 @@ const SalaryDetailModal: React.FC<{ salary: SalaryDetail; onClose: () => void }>
 
 // 匯出 CSV（Phase 7.7：加入 masked 參數、CSV 警語；薪資數字「不」脫敏，因會計月結用）
 const exportSalaryCSV = (salaries: SalaryDetail[], month: string, masked: boolean) => {
+    if (salaries.some(s => !['ready', 'locked'].includes(s.calculationStatus || ''))) { alert('仍有待覆核薪資，不能匯出結算檔'); return; }
     const headers = ['員工編號', '姓名', '職位', '出勤天數', '總工時', '請假時數', '加班時數', '底薪', '加班費', '應發薪資', '勞保', '健保', '勞退', '請假扣薪', '扣除合計', '實發薪資'];
     const csvContent = [
         headers.join(','),
@@ -185,7 +187,7 @@ const SalaryCalculation: React.FC = () => {
 
     const [salaries, setSalaries] = useState<SalaryDetail[]>([]);
     const [loading, setLoading] = useState(true);
-    const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+    const [month, setMonth] = useState(taipeiDate().slice(0, 7));
     const [selectedSalary, setSelectedSalary] = useState<SalaryDetail | null>(null);
     const [monthLock, setMonthLock] = useState<MonthLock | null>(null);
     const [lockBusy, setLockBusy] = useState(false);
@@ -248,10 +250,10 @@ const SalaryCalculation: React.FC = () => {
         }
     };
 
-    const totalGross = salaries.reduce((sum, s) => sum + s.grossSalary, 0);
-    const totalNet = salaries.reduce((sum, s) => sum + s.netSalary, 0);
-    const totalDeductions = salaries.reduce((sum, s) => sum + s.totalDeductions, 0);
-    const totalWorkHours = salaries.reduce((sum, s) => sum + s.totalWorkHours, 0);
+    const totalGross = salaries.some(s => s.grossSalary == null) ? null : salaries.reduce((sum, s) => sum + s.grossSalary, 0);
+    const totalNet = salaries.some(s => s.netSalary == null) ? null : salaries.reduce((sum, s) => sum + s.netSalary, 0);
+    const totalDeductions = salaries.some(s => s.totalDeductions == null) ? null : salaries.reduce((sum, s) => sum + s.totalDeductions, 0);
+    const totalWorkHours = salaries.some(s => s.totalWorkHours == null) ? null : salaries.reduce((sum, s) => sum + s.totalWorkHours, 0);
 
     return (
         <div className="p-4 bg-white rounded-lg shadow-lg">
@@ -316,7 +318,7 @@ const SalaryCalculation: React.FC = () => {
                     {isSuperAdmin && !isLocked && salaries.length > 0 && (
                         <button
                             onClick={handleLock}
-                            disabled={lockBusy}
+                            disabled={lockBusy || salaries.some(s => s.calculationStatus !== 'ready')}
                             className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 transition-colors"
                         >
                             🔐 結算並鎖定
@@ -325,7 +327,7 @@ const SalaryCalculation: React.FC = () => {
                     {isSuperAdmin && isLocked && (
                         <button
                             onClick={handleUnlock}
-                            disabled={lockBusy}
+                            disabled={lockBusy || salaries.some(s => s.calculationStatus !== 'ready')}
                             className="flex items-center gap-2 px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700 disabled:opacity-50 transition-colors"
                         >
                             🔓 解鎖
@@ -350,7 +352,7 @@ const SalaryCalculation: React.FC = () => {
                 </div>
                 <div className="bg-gradient-to-br from-purple-50 to-fuchsia-50 p-4 rounded-xl border border-purple-100">
                     <p className="text-sm text-gray-500">總工時</p>
-                    <p className="text-xl font-bold text-purple-700">{totalWorkHours.toFixed(1)} 小時</p>
+                    <p className="text-xl font-bold text-purple-700">{formatHours(totalWorkHours)} 小時</p>
                 </div>
             </div>
 
@@ -383,7 +385,7 @@ const SalaryCalculation: React.FC = () => {
                             salaries.map(salary => (
                                 <tr key={salary.empId} className="hover:bg-gray-50 transition-colors">
                                     <td className="py-3 px-4 border-b">
-                                        <p className="text-sm font-medium text-gray-800">{salary.name}</p>
+                                        <p className="text-sm font-medium text-gray-800">{salary.name}</p><PayrollReviewNotice salary={salary} />
                                         <p className="text-xs text-gray-400">{salary.empId}</p>
                                     </td>
                                     <td className="py-3 px-4 border-b text-center">
@@ -393,7 +395,7 @@ const SalaryCalculation: React.FC = () => {
                                         </span>
                                     </td>
                                     <td className="py-3 px-4 border-b text-center text-sm text-gray-600">{salary.totalWorkDays}</td>
-                                    <td className="py-3 px-4 border-b text-center text-sm text-gray-600">{salary.totalWorkHours}h</td>
+                                    <td className="py-3 px-4 border-b text-center text-sm text-gray-600">{formatHours(salary.totalWorkHours)}h</td>
                                     <td className="py-3 px-4 border-b text-center">
                                         <span className={`text-sm ${salary.totalLeaveHours > 0 ? 'text-orange-600 font-medium' : 'text-gray-400'}`}>
                                             {salary.totalLeaveHours}h

@@ -1,3 +1,6 @@
+import { taipeiDate } from '../../utils/attendance';
+import { formatMoney, formatHours } from '../../utils/format';
+import { PayrollReviewNotice } from '../PayrollReviewNotice';
 
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
@@ -6,15 +9,13 @@ import { openPayslipPrintView } from '../../services/payslipPrint';
 import { SalaryDetail } from '../../types';
 import { ChevronLeftIcon, ChevronRightIcon } from '../icons';
 
-const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat('zh-TW', { style: 'currency', currency: 'TWD', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
-};
+const formatCurrency = formatMoney;
 
 const MySalary: React.FC = () => {
     const { user } = useAuth();
     const [salary, setSalary] = useState<SalaryDetail | null>(null);
     const [loading, setLoading] = useState(true);
-    const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+    const [month, setMonth] = useState(taipeiDate().slice(0, 7));
 
     useEffect(() => {
         const fetchSalary = async () => {
@@ -64,6 +65,7 @@ const MySalary: React.FC = () => {
                 </button>
             </div>
 
+            {salary && <PayrollReviewNotice salary={salary} />}
             {!salary ? (
                 <div className="text-center py-20 text-gray-500 bg-white rounded-2xl shadow">
                     <p className="text-xl">📄</p>
@@ -96,7 +98,7 @@ const MySalary: React.FC = () => {
                                 <p className="text-xs text-gray-500 mt-1">出勤天數</p>
                             </div>
                             <div className="bg-blue-50 rounded-xl p-3 text-center">
-                                <p className="text-2xl font-bold text-blue-700">{salary.totalWorkHours}</p>
+                                <p className="text-2xl font-bold text-blue-700">{formatHours(salary.totalWorkHours)}</p>
                                 <p className="text-xs text-gray-500 mt-1">總工時 (小時)</p>
                             </div>
                             <div className="bg-orange-50 rounded-xl p-3 text-center">
@@ -104,7 +106,7 @@ const MySalary: React.FC = () => {
                                 <p className="text-xs text-gray-500 mt-1">請假時數</p>
                             </div>
                             <div className="bg-purple-50 rounded-xl p-3 text-center">
-                                <p className="text-2xl font-bold text-purple-600">{salary.overtimeHours}</p>
+                                <p className="text-2xl font-bold text-purple-600">{formatHours(salary.overtimeHours)}</p>
                                 <p className="text-xs text-gray-500 mt-1">加班時數</p>
                             </div>
                         </div>
@@ -130,7 +132,7 @@ const MySalary: React.FC = () => {
                                 <div>
                                     <p className="text-gray-700">{salary.position === '專責人員' ? '月薪' : '時薪計算'}</p>
                                     {salary.position === '兼職人員' && (
-                                        <p className="text-xs text-gray-400">{salary.totalWorkHours - salary.overtimeHours}h × 時薪</p>
+                                        <p className="text-xs text-gray-400">{formatHours(salary.totalWorkHours == null || salary.overtimeHours == null ? null : salary.totalWorkHours - salary.overtimeHours)}h × 時薪</p>
                                     )}
                                 </div>
                                 <span className="font-semibold text-gray-800">{formatCurrency(salary.baseSalary)}</span>
@@ -139,7 +141,7 @@ const MySalary: React.FC = () => {
                                 <div className="flex justify-between items-center">
                                     <div>
                                         <p className="text-gray-700">加班費</p>
-                                        <p className="text-xs text-gray-400">{salary.overtimeHours}h × 1.34 倍</p>
+                                        <p className="text-xs text-gray-400">{formatHours(salary.overtimeHours)}h（依已覆核級距）</p>
                                     </div>
                                     <span className="font-semibold text-gray-800">+{formatCurrency(salary.overtimePay)}</span>
                                 </div>
@@ -199,7 +201,7 @@ const MySalary: React.FC = () => {
                             <li>勞保費率約 11.5%，勞工自付 20%（約 2.3%）</li>
                             <li>健保費率約 5.17%，被保險人自付 30%（約 2.11%）</li>
                             <li>勞退自提 0~6%，依系統設定計算；預設不自提</li>
-                            <li>加班費: 前 2 小時 × 1.34 倍，第 3 小時起 × 1.67 倍</li>
+                            <li>加班費: 前 2 小時（依已覆核級距），第 3 小時起 × 1.67 倍</li>
                             <li>事假不給薪、病假半薪、特休照給薪</li>
                         </ul>
                     </div>

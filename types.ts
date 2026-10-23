@@ -20,6 +20,14 @@ export interface ClockStatus {
 export type ClockRecordStatus = '正常' | '遲到' | '早退' | '遲到+早退' | '異常' | '加班';
 
 export interface ClockRecord {
+  workIntervals?: { start: number; end: number }[];
+  workReview?: { sourceKey: string; reviewedBy: string; reviewedAt: string };
+  clockInAt?: string | null;
+  clockOutAt?: string | null;
+  rawMinutes?: number | null;
+  payableMinutes?: number | null;
+  reviewReasons?: string[];
+  calculationVersion?: string;
   id: string;
   empId: string;
   name: string;
@@ -48,6 +56,7 @@ export interface ClockRecord {
 export type StaffRole = 'staffA' | 'staffB' | 'partTime' | 'remoteWork' | 'businessTrip';
 
 export interface StaffShift {
+    endDateOffset?: 0 | 1; // Explicit next-day end; legacy overnight is not inferred.
     empId: string;       // 員工編號（必填）
     name: string;        // 姓名（冗餘儲存，方便顯示）
     role: StaffRole;
@@ -117,6 +126,7 @@ export enum LeaveStatus {
 }
 
 export interface LeaveRequest {
+    payrollAllocations?: { date: string; from: string; to: string; minutes: number }[]; // Reviewed working-time allocation, not elapsed duration
     id: string;
     empId: string;
     name: string;
@@ -136,6 +146,8 @@ export interface LeaveRequest {
 export type EmployeeStatus = '在職' | '離職' | '留停';
 
 export interface Employee {
+    accountKind?: 'system-account';
+    payrollReview?: PayrollReview;
     id: string;
     name: string;
     phone: string;
@@ -343,28 +355,33 @@ export interface DashboardStats {
 
 // 薪資明細
 export interface SalaryDetail {
+    calculationVersion?: string;
+    calculationStatus?: "ready" | "needs-review" | "locked" | "legacy-review";
+    reviewReasons?: string[];
+    knownWorkMinutes?: number;
+    policyVersion?: string;
     empId: string;
     name: string;
     position: '專責人員' | '兼職人員';
     yearMonth: string;
     // 出勤統計
     totalWorkDays: number;
-    totalWorkHours: number;
+    totalWorkHours: number | null;
     totalLeaveHours: number;
     leaveDetails: { type: string; hours: number }[];
-    overtimeHours: number;
+    overtimeHours: number | null;
     // 薪資項目
-    baseSalary: number;
-    overtimePay: number;
-    grossSalary: number;
+    baseSalary: number | null;
+    overtimePay: number | null;
+    grossSalary: number | null;
     // 扣除項目（勞基法）
-    laborInsurance: number;
-    healthInsurance: number;
-    laborPensionSelf: number;
-    leaveDeduction: number;
-    totalDeductions: number;
+    laborInsurance: number | null;
+    healthInsurance: number | null;
+    laborPensionSelf: number | null;
+    leaveDeduction: number | null;
+    totalDeductions: number | null;
     // 最終
-    netSalary: number;
+    netSalary: number | null;
 }
 
 export type LoginResult =
@@ -373,6 +390,7 @@ export type LoginResult =
 
 // 月結鎖定（Phase 6.3）
 export interface MonthLock {
+    payrollRunId?: string;
     yearMonth: string;          // "YYYY-MM"（同時也是文件 ID）
     lockedBy: string;           // empId
     lockedByName: string;       // 操作者姓名（冗餘儲存供顯示）
@@ -411,6 +429,7 @@ export interface ScheduleVersion {
 
 // 月結報表（Phase 8.4）
 export interface MonthlyReportData {
+    reviewRequired?: boolean;
     yearMonth: string;
     lock: MonthLock | null;
     summary: {
@@ -449,4 +468,38 @@ export interface MonthlyReportData {
         overtimeHours: number;
         workDays: number;
     }[];
+}
+
+// No production defaults: the payroll reviewer must explicitly confirm a month.
+export interface PayrollReview {
+    participation?: 'system-account';
+    participationReason?: string;
+    scheduleExceptions?: { date: string; reason: string; sourceKey: string }[];
+    yearMonth: string;
+    reviewedBy: string;
+    reviewedAt: string;
+    policy: {
+        version: string;
+        hoursBasis: 'actual';
+        moneyDecimals: 0 | 2; // Explicit settlement rounding, not a statutory default
+        workDateRule: 'clock-in-date';
+        dailyRegularMinutes: number;
+        // This first implementation only supports explicitly reviewed regular days.
+        regularDates: string[];
+        overtimeTiers: { minutes: number; numerator: number; denominator: number }[];
+        hourlyLeavePaidFraction: Partial<Record<LeaveType, number>>;
+        monthlyLeaveDeductionFraction: Partial<Record<LeaveType, number>>;
+        monthlyHourlyDivisor?: number;
+    };
+    insurance: { labor: number; health: number; pensionSelf: number };
+}
+export interface PayrollRun {
+    id: string;
+    yearMonth: string;
+    createdAt: string;
+    calculationVersion: string;
+    salaries: SalaryDetail[];
+    inputHash: string;
+    // Source snapshot retained for reproducibility, without passwords or credentials.
+    inputs: { employees: unknown[]; schedules: ScheduleEvent[]; records: ClockRecord[]; leaves: LeaveRequest[] };
 }

@@ -1,3 +1,5 @@
+import { formatHours } from '../../utils/format';
+import { taipeiDate } from '../../utils/attendance';
 import React, { useEffect, useState } from 'react';
 import { apiGetMonthlyReport } from '../../services/googleAppsScriptAPI';
 import { LeaveType, MonthlyReportData } from '../../types';
@@ -12,6 +14,7 @@ const DownloadIcon: React.FC<{ className?: string }> = ({ className }) => (
 const round1 = (value: number): number => Math.round(value * 10) / 10;
 
 const exportReportCSV = (report: MonthlyReportData) => {
+    if (report.reviewRequired) { alert("報表含待覆核工時，不能匯出結算檔"); return; }
     const locked = report.lock && !report.lock.unlockedAt
         ? `已鎖定（${report.lock.lockedByName} ${report.lock.lockedAt.slice(0, 10)}）`
         : report.lock?.unlockedAt
@@ -25,10 +28,10 @@ const exportReportCSV = (report: MonthlyReportData) => {
     lines.push('"== 摘要 =="');
     lines.push(`"員工數","${report.summary.totalEmployees}"`);
     lines.push(`"總工作天數","${report.summary.totalWorkDays}"`);
-    lines.push(`"總工時","${report.summary.totalWorkHours}"`);
-    lines.push(`"加班總時數","${report.summary.totalOvertimeHours}"`);
+    lines.push(`"總工時","${formatHours(report.summary.totalWorkHours)}"`);
+    lines.push(`"加班總時數","${formatHours(report.summary.totalOvertimeHours)}"`);
     lines.push(`"請假總時數","${report.summary.totalLeaveHours}"`);
-    lines.push(`"平均工時/人","${report.summary.avgWorkHoursPerEmployee}"`);
+    lines.push(`"平均工時/人","${formatHours(report.summary.avgWorkHoursPerEmployee)}"`);
     lines.push('');
     lines.push('"== 請假分布 =="');
     (Object.keys(report.leaveDistribution) as LeaveType[]).forEach(k => {
@@ -45,7 +48,7 @@ const exportReportCSV = (report: MonthlyReportData) => {
     lines.push('"== PT 時數狀況 =="');
     lines.push('"員工編號","姓名","月時數","上限","使用率","狀態"');
     report.partTimeStatus.forEach(pt => {
-        lines.push(`"${pt.empId}","${pt.name}","${pt.monthHours}","${pt.limit}","${pt.usagePercent}%","${pt.overLimit ? '超限' : '正常'}"`);
+        lines.push(`"${pt.empId}","${pt.name}","${formatHours(pt.monthHours)}","${pt.limit}","${pt.usagePercent}%","${pt.overLimit === null ? '待覆核' : pt.overLimit ? '超限' : '正常'}"`);
     });
     lines.push('');
     lines.push('"== 員工工時排名 =="');
@@ -87,7 +90,7 @@ const LeaveBar: React.FC<{ label: string; hours: number; max: number; color: str
 };
 
 const MonthlyReport: React.FC = () => {
-    const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+    const [month, setMonth] = useState(taipeiDate().slice(0, 7));
     const [report, setReport] = useState<MonthlyReportData | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -114,6 +117,7 @@ const MonthlyReport: React.FC = () => {
 
     return (
         <div className="p-4 bg-white rounded-lg shadow-lg">
+            {report?.reviewRequired && <p role="status" className="bg-amber-50 p-3">本月含待覆核資料；工時統計僅供核對，不是完整結算結果。</p>}
             <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4 mb-6">
                 <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
                     <ListIcon className="w-7 h-7 text-blue-500" />
@@ -171,10 +175,10 @@ const MonthlyReport: React.FC = () => {
                     <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
                         <StatCard label="員工數" value={`${report.summary.totalEmployees}`} tone="bg-blue-50 border-blue-100" />
                         <StatCard label="工作天" value={`${report.summary.totalWorkDays}`} tone="bg-emerald-50 border-emerald-100" />
-                        <StatCard label="總工時" value={`${report.summary.totalWorkHours}h`} tone="bg-indigo-50 border-indigo-100" />
-                        <StatCard label="加班" value={`${report.summary.totalOvertimeHours}h`} tone="bg-purple-50 border-purple-100" />
+                        <StatCard label="總工時" value={`${formatHours(report.summary.totalWorkHours)}h`} tone="bg-indigo-50 border-indigo-100" />
+                        <StatCard label="加班" value={`${formatHours(report.summary.totalOvertimeHours)}h`} tone="bg-purple-50 border-purple-100" />
                         <StatCard label="請假" value={`${report.summary.totalLeaveHours}h`} tone="bg-orange-50 border-orange-100" />
-                        <StatCard label="平均工時" value={`${report.summary.avgWorkHoursPerEmployee}h`} tone="bg-slate-50 border-slate-100" />
+                        <StatCard label="平均工時" value={`${formatHours(report.summary.avgWorkHoursPerEmployee)}h`} tone="bg-slate-50 border-slate-100" />
                     </div>
 
                     <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
@@ -219,7 +223,7 @@ const MonthlyReport: React.FC = () => {
                                             <p className="text-sm font-medium text-gray-800">{pt.name}</p>
                                             <p className="text-xs text-gray-400">{pt.empId}</p>
                                         </td>
-                                        <td className="py-3 px-4 border-b text-right text-sm text-gray-700">{pt.monthHours}h</td>
+                                        <td className="py-3 px-4 border-b text-right text-sm text-gray-700">{formatHours(pt.monthHours)}h</td>
                                         <td className="py-3 px-4 border-b text-right text-sm text-gray-700">{pt.limit}h</td>
                                         <td className="py-3 px-4 border-b min-w-48">
                                             <div className="flex items-center gap-2">
@@ -269,8 +273,8 @@ const MonthlyReport: React.FC = () => {
                                             <p className="text-sm font-medium text-gray-800">{employee.name}</p>
                                             <p className="text-xs text-gray-400">{employee.empId}</p>
                                         </td>
-                                        <td className="py-3 px-4 border-b text-right text-sm text-gray-700">{employee.totalHours}h</td>
-                                        <td className="py-3 px-4 border-b text-right text-sm text-purple-600">{employee.overtimeHours}h</td>
+                                        <td className="py-3 px-4 border-b text-right text-sm text-gray-700">{formatHours(employee.totalHours)}h</td>
+                                        <td className="py-3 px-4 border-b text-right text-sm text-purple-600">{formatHours(employee.overtimeHours)}h</td>
                                         <td className="py-3 px-4 border-b text-right text-sm text-gray-700">{employee.workDays}</td>
                                     </tr>
                                 )) : (

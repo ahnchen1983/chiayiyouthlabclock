@@ -1,3 +1,5 @@
+import { formatHours } from '../../utils/format';
+import { taipeiDate } from '../../utils/attendance';
 
 import React, { useState, useEffect } from 'react';
 import { apiGetDashboardStats, apiGetAllPartTimeHours } from '../../services/googleAppsScriptAPI';
@@ -76,7 +78,7 @@ const HoursProgressBar: React.FC<{ info: PartTimeHourInfo }> = ({ info }) => {
                 <span className="text-sm font-medium text-gray-700">{info.name}</span>
                 <div className="flex items-center gap-2">
                     <span className="text-xs text-gray-500">
-                        {info.workedHours.toFixed(1)} / {info.scheduledHours.toFixed(1)} 小時
+                        {formatHours(info.workedHours)} / {info.scheduledHours.toFixed(1)} 小時
                     </span>
                     {isWarning && (
                         <span className="px-2 py-0.5 bg-red-100 text-red-700 text-xs rounded-full">
@@ -115,7 +117,7 @@ const AdminOverview: React.FC = () => {
     useEffect(() => {
         const fetchData = async () => {
             setLoading(true);
-            const currentMonth = new Date().toISOString().slice(0, 7);
+            const currentMonth = taipeiDate().slice(0, 7);
             const [dashboardData, hoursData] = await Promise.all([
                 apiGetDashboardStats(),
                 apiGetAllPartTimeHours(currentMonth)
@@ -165,7 +167,7 @@ const AdminOverview: React.FC = () => {
                 <StatCard
                     icon={<ClockIcon className="w-6 h-6 text-white" />}
                     title="本月總工時"
-                    value={`${stats.monthlyTotalHours.toFixed(1)}`}
+                    value={`${formatHours(stats.monthlyTotalHours)}`}
                     subValue="小時"
                     color="bg-green-500"
                 />

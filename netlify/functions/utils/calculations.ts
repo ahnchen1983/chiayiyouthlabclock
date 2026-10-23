@@ -1,3 +1,4 @@
+import { resolveAttendance, shiftIntervals, intervalMinutes } from '../../../utils/attendance';
 /**
  * 純計算函式集合 — 不依賴 Firebase、HTTP、I/O
  * 抽離以便單元測試（Vitest）
@@ -76,44 +77,13 @@ export const determineClockStatus = (
     return '正常';
 };
 
-export const OVERTIME_STATUS_THRESHOLD_HOURS = 9;
-
-const clockHoursFromHHMM = (clockInTime: string | null | undefined, clockOutTime: string | null | undefined): number => {
-    if (!clockInTime || !clockOutTime || !clockInTime.includes(':') || !clockOutTime.includes(':')) return 0;
-    const [ih, im] = clockInTime.split(':').map(Number);
-    const [oh, om] = clockOutTime.split(':').map(Number);
-    const inMin = ih * 60 + im;
-    const outMin = oh * 60 + om;
-    if (!Number.isFinite(inMin) || !Number.isFinite(outMin) || outMin <= inMin) return 0;
-    return Math.round(((outMin - inMin) / 60) * 10) / 10;
-};
-
-const clockMinutesFromHHMM = (clockInTime: string | null | undefined, clockOutTime: string | null | undefined): number => {
-    if (!clockInTime || !clockOutTime || !clockInTime.includes(':') || !clockOutTime.includes(':')) return 0;
-    const [ih, im] = clockInTime.split(':').map(Number);
-    const [oh, om] = clockOutTime.split(':').map(Number);
-    const inMin = ih * 60 + im;
-    const outMin = oh * 60 + om;
-    if (!Number.isFinite(inMin) || !Number.isFinite(outMin) || outMin <= inMin) return 0;
-    return outMin - inMin;
-};
-
-export const applyOvertimeClockStatus = (
-    status: ClockRecord['status'],
-    clockInTime: string | null | undefined,
-    clockOutTime: string | null | undefined,
-    thresholdHours: number = OVERTIME_STATUS_THRESHOLD_HOURS
-): ClockRecord['status'] => {
-    if (!clockInTime || !clockOutTime || status === '異常') return status;
-    if (status === '正常' && clockMinutesFromHHMM(clockInTime, clockOutTime) > thresholdHours * 60) return '加班';
-    return status;
-};
-
+// Overtime badges use confirmed work minutes, never raw time on site.
 export const deriveClockRecordDisplayStatus = (
-    record: Pick<ClockRecord, 'clockInTime' | 'clockOutTime' | 'status'>
+    record: Pick<ClockRecord, 'clockInTime' | 'clockOutTime' | 'status'> & Partial<Pick<ClockRecord, 'payableMinutes'>>
 ): ClockRecord['status'] => {
     if (!record.clockInTime || !record.clockOutTime) return '異常';
-    return applyOvertimeClockStatus(record.status, record.clockInTime, record.clockOutTime);
+    const original = record.status === '加班' ? '正常' : record.status;
+    return original === '正常' && record.payableMinutes != null && record.payableMinutes > 480 ? '加班' : original;
 };
 
 // ==================== 留停期間（Phase 8.2）====================
@@ -316,11 +286,9 @@ export const getEmployeeShiftsForDay = (event: ScheduleEvent, empId: string, nam
 /**
  * 計算單筆 shift 的時數
  */
-export const shiftHours = (s: { from: string; to: string }): number => {
-    if (!s.from || !s.to) return 0;
-    const [fh, fm] = s.from.split(':').map(Number);
-    const [th, tm] = s.to.split(':').map(Number);
-    return Math.max(0, (th * 60 + tm - fh * 60 - fm) / 60);
+export const shiftHours = (s: { from: string; to: string; endDateOffset?: 0 | 1 }): number => {
+    const ranges = shiftIntervals([s]);
+    return ranges === null ? 0 : intervalMinutes(ranges) / 60;
 };
 
 const minutesFromHHMM = (hhmm: string | null | undefined): number | null => {
@@ -331,7 +299,7 @@ const minutesFromHHMM = (hhmm: string | null | undefined): number | null => {
 };
 
 export const rawClockHours = (clockInTime: string | null | undefined, clockOutTime: string | null | undefined): number => {
-    return clockHoursFromHHMM(clockInTime, clockOutTime);
+    return resolveAttendance({ date: '', clockInTime: clockInTime ?? null, clockOutTime: clockOutTime ?? null }).workHours;
 };
 
 /**
@@ -344,23 +312,8 @@ export const rawClockHours = (clockInTime: string | null | undefined, clockOutTi
 export const computePayableClockHours = (
     clockInTime: string | null | undefined,
     clockOutTime: string | null | undefined,
-    shifts: Pick<StaffShift, 'from' | 'to'>[] = []
-): number => {
-    const clockIn = minutesFromHHMM(clockInTime);
-    const clockOut = minutesFromHHMM(clockOutTime);
-    if (clockIn == null || clockOut == null || clockOut <= clockIn) return 0;
-    if (!shifts.length) return rawClockHours(clockInTime, clockOutTime);
-
-    const totalMinutes = shifts.reduce((sum, s) => {
-        const shiftStart = minutesFromHHMM(s.from);
-        const shiftEnd = minutesFromHHMM(s.to);
-        if (shiftStart == null || shiftEnd == null || shiftEnd <= shiftStart) return sum;
-        const payableStart = Math.max(clockIn, shiftStart);
-        const payableEnd = Math.min(clockOut, shiftEnd);
-        return sum + Math.max(0, payableEnd - payableStart);
-    }, 0);
-    return Math.round((totalMinutes / 60) * 10) / 10;
-};
+    shifts: Pick<StaffShift, 'from' | 'to' | 'endDateOffset'>[] = []
+): number | null => resolveAttendance({ date: '', clockInTime: clockInTime ?? null, clockOutTime: clockOutTime ?? null }, shifts).workHours;
 
 /**
  * 員工該日是否被排班（任何角色、任何時段）
@@ -466,82 +419,7 @@ export const computeCoverageGaps = (event: ScheduleEvent, intervalMin: number = 
 
 // ==================== 薪資計算 ====================
 
-export const calculateSalaryForEmployee = (
-    emp: any,
-    yearMonth: string,
-    scheduleEvents: ScheduleEvent[],
-    clockRecords: ClockRecord[],
-    leaveRequests: LeaveRequest[],
-    config: SystemConfig = DEFAULT_SYSTEM_CONFIG
-): SalaryDetail => {
-    let totalWorkDays = 0;
-    let scheduledHours = 0;
-    for (const event of scheduleEvents) {
-        if (!event || event.status === '休館') continue;
-        const myShifts = getEmployeeShiftsForDay(event, emp.id, emp.name);
-        if (myShifts.length > 0) {
-            totalWorkDays++;
-            for (const s of myShifts) scheduledHours += shiftHours(s);
-        }
-    }
-
-    const scheduleByDate = new Map(scheduleEvents.map(event => [event.date, event]));
-    const empRecords = clockRecords.filter(r => r.empId === emp.id && r.date.startsWith(yearMonth));
-    const totalWorkHours = empRecords.length > 0
-        ? empRecords.reduce((sum, r) => {
-            const event = scheduleByDate.get(r.date);
-            const shifts = event ? getEmployeeShiftsForDay(event, emp.id, emp.name) : [];
-            const payableHours = computePayableClockHours(r.clockInTime, r.clockOutTime, shifts);
-            return sum + (payableHours || r.workHours || 0);
-        }, 0)
-        : scheduledHours;
-
-    // 外勤（公出/出差/遠端工作）不屬於請假：不計入請假時數、不扣薪
-    const empLeaves = leaveRequests.filter(
-        lr => lr.empId === emp.id && lr.status === LeaveStatus.Approved && lr.startDate.slice(0, 7) === yearMonth
-            && !isOutingLeaveType(lr.leaveType)
-    );
-    const totalLeaveHours = empLeaves.reduce((sum, lr) => sum + lr.hours, 0);
-    const leaveDetails = empLeaves.map(lr => ({ type: lr.leaveType, hours: lr.hours }));
-
-    const overtimeHours = Math.max(0, totalWorkHours - totalWorkDays * 8);
-    let baseSalary: number;
-    if (emp.position === '專責人員') {
-        baseSalary = emp.monthlySalary || 30000;
-    } else {
-        baseSalary = Math.round((totalWorkHours - overtimeHours) * emp.hourlyRate);
-    }
-
-    const hourlyForOT = emp.position === '專責人員' ? Math.round((emp.monthlySalary || 30000) / 30 / 8) : emp.hourlyRate;
-    const overtimePay = Math.round(overtimeHours * hourlyForOT * config.overtimeMultiplier);
-    const grossSalary = baseSalary + overtimePay;
-
-    const hourlyWage = emp.position === '專責人員' ? Math.round((emp.monthlySalary || 30000) / 30 / 8) : emp.hourlyRate;
-    let leaveDeduction = 0;
-    empLeaves.forEach(lr => {
-        if (lr.leaveType === LeaveType.Personal) leaveDeduction += lr.hours * hourlyWage;
-        else if (lr.leaveType === LeaveType.Sick) leaveDeduction += Math.round(lr.hours * hourlyWage * 0.5);
-    });
-
-    const laborPensionRate = Number.isFinite(Number(emp.laborPensionRate))
-        ? Math.max(0, Math.min(0.06, Number(emp.laborPensionRate)))
-        : config.laborPensionRate;
-    const laborInsurance = Math.round(grossSalary * config.laborInsuranceRate);
-    const healthInsurance = Math.round(grossSalary * config.healthInsuranceRate);
-    const laborPensionSelf = Math.round(grossSalary * laborPensionRate);
-    const totalDeductions = laborInsurance + healthInsurance + laborPensionSelf + leaveDeduction;
-    const netSalary = grossSalary - totalDeductions;
-
-    return {
-        empId: emp.id, name: emp.name, position: emp.position, yearMonth,
-        totalWorkDays, totalWorkHours: Math.round(totalWorkHours * 10) / 10,
-        totalLeaveHours, leaveDetails,
-        overtimeHours: Math.round(overtimeHours * 10) / 10,
-        baseSalary, overtimePay, grossSalary,
-        laborInsurance, healthInsurance, laborPensionSelf,
-        leaveDeduction, totalDeductions, netSalary,
-    };
-};
+export { calculateSalaryForEmployee } from './payroll';
 
 // ==================== 假別餘額計算（pure 版本，由 api.ts 包裝 DB 讀取） ====================
 

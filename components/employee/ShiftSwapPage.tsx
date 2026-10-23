@@ -1,3 +1,4 @@
+import { taipeiDate } from '../../utils/attendance';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import {
@@ -36,7 +37,7 @@ const shiftOptions = (events: ScheduleEvent[], empId?: string) => events.flatMap
 
 const ShiftSwapPage: React.FC = () => {
     const { user } = useAuth();
-    const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+    const [month, setMonth] = useState(taipeiDate().slice(0, 7));
     const [mySchedule, setMySchedule] = useState<ScheduleEvent[]>([]);
     const [allSchedule, setAllSchedule] = useState<Record<string, ScheduleEvent[]>>({});
     const [employees, setEmployees] = useState<User[]>([]);

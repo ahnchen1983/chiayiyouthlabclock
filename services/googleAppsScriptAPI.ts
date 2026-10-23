@@ -65,7 +65,7 @@ export const apiGetTodayClockStatus = async (empId: string): Promise<ClockStatus
 };
 
 export const apiClockIn = async (empId: string, name: string, verificationMethod: 'IP' | 'GPS', verificationData: string): Promise<boolean> => {
-    return callAPI('clock-in', { empId, name, verificationMethod, verificationData });
+    return callAPI('clock-in', { empId, name, verificationMethod, verificationData, requestId: crypto.randomUUID() });
 };
 
 export const apiClockOut = async (empId: string): Promise<boolean> => {
@@ -240,7 +240,7 @@ export const apiUpdateSystemConfig = async (config: Partial<SystemConfig>): Prom
 
 export const apiUpdateClockRecord = async (
     recordId: string,
-    updates: { clockInTime?: string; clockOutTime?: string; status?: string; note?: string }
+    updates: { clockInTime?: string | null; clockOutTime?: string | null; clockInAt?: string | null; clockOutAt?: string | null; workIntervals?: { start: number; end: number }[]; status?: string; note?: string }
 ): Promise<boolean> => {
     return callAPI('update-clock-record', { recordId, ...updates });
 };

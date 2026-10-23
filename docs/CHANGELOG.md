@@ -302,7 +302,7 @@
 - `initialize-database` 在既有資料庫環境無法建立 SuperAdmin 帳號的問題
   - **原因：** 原邏輯若 `employees` collection 已有任何資料就直接返回「已初始化」，導致升級部署無法補建 ADMIN
   - **修正：** 改為分別檢查 `scheduleTemplate` 和 `employees/ADMIN` 是否存在，各自獨立建立
-  - **附加：** ADMIN 預設密碼改為 `hashPassword('admin1234')` 儲存（原為明文）
+  - **附加：** ADMIN 預設密碼改為 `hashPassword('[已移除的舊預設密碼；禁止使用]')` 儲存（原為明文）
 - Commit: `ba31961`
 
 ---

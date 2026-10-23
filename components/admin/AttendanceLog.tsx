@@ -1,3 +1,6 @@
+import { formatHours } from '../../utils/format';
+import { sumKnownHours } from '../../utils/attendance';
+import { taipeiDate, localInstant, hhmmMinutes } from '../../utils/attendance';
 
 import React, { useState, useEffect } from 'react';
 import { apiGetAllClockRecords, apiGetAllEmployees, apiUpdateClockRecord } from '../../services/googleAppsScriptAPI';
@@ -26,13 +29,23 @@ const EditClockModal: React.FC<EditModalProps> = ({ record, onClose, onSaved }) 
     const [status, setStatus] = useState<ClockRecordStatus>(record.status);
     const [note, setNote] = useState(record.note || '');
     const [saving, setSaving] = useState(false);
+    const [outDate, setOutDate] = useState(record.clockOutAt ? taipeiDate(new Date(record.clockOutAt)) : record.date);
+    const [confirmWork, setConfirmWork] = useState(false);
+    const [workText, setWorkText] = useState('');
 
     const handleSave = async () => {
         setSaving(true);
         try {
+            const workIntervals = confirmWork ? workText.split(',').filter(x => x.trim()).map(part => {
+                const [from, to] = part.trim().split('-');
+                const start = hhmmMinutes(from), end = hhmmMinutes(to?.replace('+1', ''));
+                if (start === null || end === null) throw new Error('工作時段格式：09:00-12:00,14:00-18:00；翌日結束可加 +1');
+                return { start, end: end + (to.endsWith('+1') ? 1440 : 0) };
+            }) : undefined;
             await apiUpdateClockRecord(record.id, {
-                clockInTime: clockInTime || undefined,
-                clockOutTime: clockOutTime || undefined,
+                clockInAt: clockInTime ? localInstant(record.date, clockInTime) : null,
+                clockOutAt: clockOutTime ? localInstant(outDate, clockOutTime) : null,
+                ...(workIntervals ? { workIntervals } : {}),
                 status,
                 note,
             });
@@ -56,7 +69,8 @@ const EditClockModal: React.FC<EditModalProps> = ({ record, onClose, onSaved }) 
                         <input type="time" value={clockInTime} onChange={e => setClockInTime(e.target.value)} className="w-full p-2 border rounded mt-1" />
                     </div>
                     <div>
-                        <label className="text-sm font-medium text-gray-700">下班時間</label>
+                        <label className="text-sm font-medium text-gray-700">下班日期與時間</label>
+                        <input type="date" value={outDate} onChange={e => setOutDate(e.target.value)} className="w-full p-2 border rounded mt-1" />
                         <input type="time" value={clockOutTime} onChange={e => setClockOutTime(e.target.value)} className="w-full p-2 border rounded mt-1" />
                     </div>
                     <div>
@@ -69,6 +83,11 @@ const EditClockModal: React.FC<EditModalProps> = ({ record, onClose, onSaved }) 
                             <option value="異常">異常</option>
                             <option value="加班">加班</option>
                         </select>
+                    </div>
+                    <div className="rounded bg-amber-50 p-2 text-sm">
+                        <label><input type="checkbox" checked={confirmWork} onChange={e => setConfirmWork(e.target.checked)} /> 我已核實以下實際工作時段（排除未工作休息）</label>
+                        {confirmWork && <input aria-label="已核實工作時段" value={workText} onChange={e => setWorkText(e.target.value)} placeholder="09:00-12:00,14:00-18:00" className="w-full p-2 border" />}
+                        <p>翌日結束例：22:00-06:00+1。空白並確認表示本筆無實際工作。未勾選則保存為待覆核。</p>
                     </div>
                     <div>
                         <label className="text-sm font-medium text-gray-700">備註</label>
@@ -134,7 +153,7 @@ const exportToExcel = (records: ClockRecord[], month: string, masked: boolean) =
             record.date,
             record.clockInTime || '',
             record.clockOutTime || '',
-            record.workHours?.toFixed(2) || '',
+            formatHours(record.workHours),
             record.status,
             record.verificationMethod,
             vData,
@@ -170,7 +189,7 @@ const AttendanceLog: React.FC = () => {
     const [filteredRecords, setFilteredRecords] = useState<ClockRecord[]>([]);
     const [employees, setEmployees] = useState<User[]>([]);
     const [loading, setLoading] = useState(true);
-    const [month, setMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
+    const [month, setMonth] = useState(taipeiDate().slice(0, 7)); // YYYY-MM
     const [selectedEmployee, setSelectedEmployee] = useState<string>('all');
     const [selectedStatus, setSelectedStatus] = useState<'all' | ClockRecordStatus>('all');
     const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
@@ -220,7 +239,7 @@ const AttendanceLog: React.FC = () => {
         late: filteredRecords.filter(r => r.status === '遲到').length,
         early: filteredRecords.filter(r => r.status === '早退').length,
         overtime: filteredRecords.filter(r => r.status === '加班').length,
-        totalHours: filteredRecords.reduce((sum, r) => sum + (r.workHours || 0), 0),
+        totalHours: sumKnownHours(filteredRecords),
     };
 
     const handleMaskedExport = () => {
@@ -312,7 +331,7 @@ const AttendanceLog: React.FC = () => {
                     <p className="text-sm text-gray-500">加班</p>
                 </div>
                 <div className="bg-slate-50 p-4 rounded-lg text-center">
-                    <p className="text-2xl font-bold text-blue-600">{stats.totalHours.toFixed(1)}</p>
+                    <p className="text-2xl font-bold text-blue-600">{formatHours(stats.totalHours)}</p>
                     <p className="text-sm text-gray-500">總工時</p>
                 </div>
             </div>
@@ -471,7 +490,7 @@ const AttendanceLog: React.FC = () => {
                                         {record.clockOutTime || '-'}
                                     </td>
                                     <td className="py-3 px-4 border-b text-center text-sm font-medium text-gray-800">
-                                        {record.workHours?.toFixed(2) || '-'}
+                                        {formatHours(record.workHours)}
                                     </td>
                                     <td className="py-3 px-4 border-b text-center">
                                         <StatusBadge status={record.status} />
@@ -511,7 +530,7 @@ const AttendanceLog: React.FC = () => {
                     {(selectedEmployee !== 'all' || selectedStatus !== 'all') && ` (全部 ${records.length} 筆)`}
                 </span>
                 <span>
-                    {month} 總工時: {stats.totalHours.toFixed(1)} 小時
+                    {month} 總工時: {formatHours(stats.totalHours)} 小時
                 </span>
             </div>
 
