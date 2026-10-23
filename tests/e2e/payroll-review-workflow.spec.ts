@@ -15,6 +15,7 @@ const setup = async (page: Page, { locked = false, leave = null as any, role = U
     let reviewBody: any, allocationBody: any;
     let monthLocked = locked;
     let lockHeld = false;
+    let lockRequested = false;
     let releaseLock: (() => void) | undefined;
     const monthlyReviews = new Map<string, any>(savedReview ? [[savedReview.yearMonth, savedReview]] : []);
     let release: (() => void) | undefined;
@@ -24,6 +25,7 @@ const setup = async (page: Page, { locked = false, leave = null as any, role = U
         if (body.action === 'get-all-salary-details') return route.fulfill({ json: [{ ...readySalary, yearMonth: body.yearMonth, calculationStatus: monthLocked ? 'locked' : 'ready' }] });
         if (body.action === 'get-month-lock') return route.fulfill({ json: monthLocked ? { yearMonth: body.yearMonth, lockedByName: '合成覆核者', lockedAt: review.reviewedAt, payrollRunId: 'synthetic' } : null });
         if (body.action === 'lock-month') {
+            lockRequested = true;
             if (lockHeld) await new Promise<void>(resolve => { releaseLock = resolve; });
             monthLocked = true;
             return route.fulfill({ json: { yearMonth: body.yearMonth, lockedByName: '合成覆核者', lockedAt: review.reviewedAt, payrollRunId: 'synthetic' } });
@@ -47,7 +49,7 @@ const setup = async (page: Page, { locked = false, leave = null as any, role = U
         await page.getByRole('button', { name: '薪資計算', exact: true }).click();
         await page.getByLabel('薪資月份').fill(month);
     }
-    return { getReview: () => reviewBody, getAllocation: () => allocationBody, holdSave: () => { hold = true; }, releaseSave: () => release?.(), holdLock: () => { lockHeld = true; }, releaseLock: () => releaseLock?.() };
+    return { getReview: () => reviewBody, getAllocation: () => allocationBody, holdSave: () => { hold = true; }, releaseSave: () => release?.(), holdLock: () => { lockHeld = true; }, getLockRequested: () => lockRequested, releaseLock: () => releaseLock?.() };
 };
 
 test('explicit policy submission preserves cents and blocks month locking during save', async ({ page }) => {
@@ -78,7 +80,9 @@ test('explicit policy submission preserves cents and blocks month locking during
     expect(state.getReview().review).not.toHaveProperty('reviewedBy');
     expect(state.getReview().expectedEmployeeSourceKey).toBe('synthetic-employee-basis');
     await expect(page.getByLabel('薪資月份')).toBeEnabled();
-    await page.getByRole('region', { name: '計薪資料覆核', exact: true }).screenshot({ path: 'test-results/payroll-review-panel.png' });
+    await page.screenshot({ path: 'test-results/payroll-review-panel-bottom.png' });
+    await page.getByRole('heading', { name: `${month} 計薪資料覆核`, exact: true }).scrollIntoViewIfNeeded();
+    await page.screenshot({ path: 'test-results/payroll-review-panel-top.png' });
 });
 
 test('overnight approved leave can be allocated exactly across midnight', async ({ page }) => {
@@ -148,6 +152,7 @@ test('same-page settlement immediately makes the mounted review form read-only',
     state.holdLock();
     page.once('dialog', async dialog => { await dialog.accept(); });
     await page.getByRole('button', { name: /結算並鎖定/ }).click();
+    await expect.poll(() => state.getLockRequested()).toBe(true);
     await expect(page.getByRole('status').filter({ hasText: '本月正在結算' })).toBeVisible();
     await expect(page.getByLabel('政策版本／依據')).toBeDisabled();
     page.once('dialog', async dialog => { await dialog.accept(); });
