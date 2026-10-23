@@ -97,6 +97,7 @@ describe('payroll review access and explicit input contract', () => {
   fake.data.set('leaveRequests/BOUNDARY', { ...leave(), startDate: '2026-03-31T23:00', endDate: '2026-04-01T01:00' });
   fake.data.set('leaveRequests/PENDING', { ...leave(), status: LeaveStatus.Pending });
   fake.data.set('leaveRequests/NEXT', leave('2026-05-01'));
+  fake.data.set('leaveRequests/UNRELATED', leave('2026-05-02'));
   lock();
   const response = await call('get-payroll-review-inputs', { yearMonth: month });
   expect(response.statusCode).toBe(200);
@@ -104,7 +105,7 @@ describe('payroll review access and explicit input contract', () => {
   expect(result.locked).toBe(true);
   expect(result.employees.find((e: any) => e.id === 'SYNTH')).toMatchObject({ name: employee.name, hourlyRate: 200, payrollReview: { yearMonth: month } });
   expect(result.employees.find((e: any) => e.id === 'ADMIN').role).toBe(UserRole.SuperAdmin);
-  expect(result.leaves.map((l: any) => l.id).sort()).toEqual(['APPROVED', 'BOUNDARY']);
+  expect(result.leaves.map((l: any) => l.id).sort()).toEqual(['APPROVED', 'BOUNDARY', 'NEXT']);
   expect(response.body).not.toContain('private-');
  });
  it('rejects invalid getter month', async () => { expect((await call('get-payroll-review-inputs', { yearMonth: '2026-13' })).statusCode).toBe(400); });
@@ -176,5 +177,30 @@ describe('payroll review access and explicit input contract', () => {
   fake.data.get('employees/ADMIN').role = UserRole.Admin;
   expect((await call('get-all-employees-detail')).statusCode).toBe(200);
   expect((await call('get-employee', { empId: 'SYNTH' })).statusCode).toBe(200);
+ });
+});
+
+
+describe('leave allocation review locks and explicit payload', () => {
+ it.each([{}, { requestId: '' }, { requestId: 'bad/path' }, { requestId: 'L', allocations: [] }, { requestId: 'L', allocations: { length: 1 } }, { requestId: 'L', allocations: [null] }])('rejects malformed allocation request (%j)', async payload => {
+  fake.data.set('leaveRequests/L', leave());
+  expect((await call('review-leave-allocation', payload)).statusCode).toBe(400);
+ });
+ it('protects old allocation months even when new approved bounds belong elsewhere', async () => {
+  lock();
+  const current = leave('2026-05-01');
+  fake.data.set('leaveRequests/L', { ...current, payrollAllocations: leave().payrollAllocations });
+  expect((await call('review-leave-allocation', { requestId: 'L', allocations: current.payrollAllocations })).statusCode).toBe(423);
+  expect(fake.data.get('leaveRequests/L').payrollAllocations).toEqual(leave().payrollAllocations);
+ });
+ it('rechecks latest approved bounds after a concurrent source change', async () => {
+  const current = leave('2026-05-01');
+  fake.data.set('leaveRequests/L', leave()); lock('2026-05');
+  const transaction = fake.db.runTransaction;
+  fake.db.runTransaction = async (work: any) => { fake.data.set('leaveRequests/L', current); return transaction(work); };
+  try {
+   expect((await call('review-leave-allocation', { requestId: 'L', allocations: current.payrollAllocations })).statusCode).toBe(423);
+   expect(fake.data.get('leaveRequests/L').payrollReviewedBy).toBeUndefined();
+  } finally { fake.db.runTransaction = transaction; }
  });
 });

@@ -982,12 +982,9 @@ export const handler: Handler = async (event) => {
                 const [employees, leaves, lock] = await Promise.all([
                     db.collection('employees').get(), db.collection('leaveRequests').get(), getMonthLock(month),
                 ]);
-                const first = `${month}-01T00:00:00+08:00`;
-                const next = new Date(`${month}-01T00:00:00Z`); next.setUTCMonth(next.getUTCMonth() + 1);
-                const end = `${next.toISOString().slice(0, 7)}-01T00:00:00+08:00`;
-                const instant = (value: string) => Date.parse(/(Z|[+-]\d\d:\d\d)$/.test(value || '') ? value : value + '+08:00');
-                return ok({ employees: employees.docs.map(d => payrollEmployee({ ...d.data(), id: d.id })),
-                    leaves: leaves.docs.map(d => ({ ...d.data(), id: d.id } as LeaveRequest)).filter(l => l.status === LeaveStatus.Approved && instant(l.startDate) < Date.parse(end) && instant(l.endDate) > Date.parse(first)),
+                const payrollEmployees = employees.docs.map(d => payrollEmployee({ ...d.data(), id: d.id }));
+                return ok({ employees: payrollEmployees,
+                    leaves: selectPayrollLeaveEvidence(leaves.docs.map(d => ({ ...d.data(), id: d.id } as LeaveRequest)), month, payrollEmployees.map(e => e.id)),
                     locked: !!lock && isMonthLocked(lock) });
             }
             case 'review-payroll-inputs': {
@@ -1007,15 +1004,23 @@ export const handler: Handler = async (event) => {
             }
             case 'review-leave-allocation': {
                 if (!isAdmin) return fail(403, '僅管理者可覆核請假工作時段');
+                if (typeof data.requestId !== 'string' || !data.requestId || data.requestId.includes('/')) return fail(400, '假單識別無效');
+                if (!Array.isArray(data.allocations) || !data.allocations.length || data.allocations.some((a: any) => !a || typeof a !== 'object' || Array.isArray(a))) return fail(400, '須明示請假分配時段陣列');
                 const ref = db.collection('leaveRequests').doc(data.requestId);
                 const initial = await ref.get();
                 if (!initial.exists) return fail(404, '假單不存在');
                 const lr = initial.data()!;
                 await runPayrollMutation(db, monthsInRange(lr.startDate, lr.endDate), async tx => {
                     const fresh = await tx.get(ref);
-                    if (fresh.data()?.status !== LeaveStatus.Approved) throw new Error('只能覆核已核准假單');
-                    if (!validLeaveAllocations(fresh.data() as LeaveRequest, data.allocations)) throw new Error('請假分配超出核准區間/時數或重疊');
-                    tx.update(ref, { payrollAllocations: data.allocations, payrollReviewedBy: uid, payrollReviewedAt: new Date().toISOString() });
+                    const current = fresh.data() as LeaveRequest | undefined;
+                    if (current?.status !== LeaveStatus.Approved) throw new Error('只能覆核已核准假單');
+                    if (!validLeaveAllocations(current, data.allocations)) throw new Error('請假分配超出核准區間/時數或重疊');
+                    // The source may change after the preliminary read or on retry.
+                    // Protect both the latest approved range and allocations being replaced.
+                    const oldAllocations = Array.isArray(current.payrollAllocations) ? current.payrollAllocations : [];
+                    const allocationMonths = [...oldAllocations, ...data.allocations].flatMap(a => validDate(a?.date) ? [a.date.slice(0, 7)] : []);
+                    await assertTransactionMonths(db, tx, [...monthsInRange(current.startDate, current.endDate), ...allocationMonths]);
+                    tx.update(ref, { payrollAllocations: data.allocations.map((a: any) => ({ date: a.date, from: a.from, to: a.to, minutes: a.minutes })), payrollReviewedBy: uid, payrollReviewedAt: new Date().toISOString() });
                 });
                 return ok(true);
             }
@@ -1374,10 +1379,13 @@ export const handler: Handler = async (event) => {
                 const lock = await runPayrollMutation(db, [yearMonth], async tx => {
                     const prior = await tx.get(db.collection('monthLocks').doc(yearMonth));
                     if (prior.exists) throw new Error('已有歷史月結，請另建差額覆核，不能覆寫');
-                    const [empSnap, clockSnap, leaveSnap, scheduleSnap] = await Promise.all([
-                        tx.get(db.collection('employees')), tx.get(db.collection('clockRecords')),
-                        tx.get(db.collection('leaveRequests')), tx.get(db.collection('dailySchedule')),
-                    ]);
+                    // Keep query streams sequential inside this transaction. If contention
+                    // aborts one read, another in-flight stream can report an already-closed
+                    // transaction instead of the retryable conflict from the first read.
+                    const empSnap = await tx.get(db.collection('employees'));
+                    const clockSnap = await tx.get(db.collection('clockRecords'));
+                    const leaveSnap = await tx.get(db.collection('leaveRequests'));
+                    const scheduleSnap = await tx.get(db.collection('dailySchedule'));
                     const employees = empSnap.docs.map(d => payrollEmployee({ ...d.data(), id: d.id })).filter(e => employeeInMonth(e, yearMonth));
                     const records = selectPayrollClockEvidence(clockSnap.docs.map(d => ({ id: d.id, ...d.data() } as ClockRecord)), yearMonth, employees.map(e => e.id));
                     const leaves = selectPayrollLeaveEvidence(leaveSnap.docs.map(d => ({ ...d.data(), id: d.id } as LeaveRequest)), yearMonth, employees.map(e => e.id));
