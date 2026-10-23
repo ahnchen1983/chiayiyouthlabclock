@@ -631,7 +631,7 @@ const readSalaryMonth = async (month: string): Promise<SalaryDetail[]> => {
     const [schedules, employees, cards, leaves] = await Promise.all([getMonthlyDailySchedule(month), db.collection('employees').get(), db.collection('clockRecords').get(), db.collection('leaveRequests').get()]);
     const reviewedEmployees = await loadMonthlyPayrollEmployees(employees.docs.map(d => ({ ...d.data(), id: d.id })), month, db);
     const salaries = reviewedEmployees.filter(e => employeeInMonth(e, month)).map(e => calculateSalaryForEmployee(e, month, schedules,
-        cards.docs.map(d => ({ id: d.id, ...d.data() } as ClockRecord)), leaves.docs.map(d => ({ id: d.id, ...d.data() } as LeaveRequest))));
+        cards.docs.map(d => ({ ...d.data(), id: d.id } as ClockRecord)), leaves.docs.map(d => ({ ...d.data(), id: d.id } as LeaveRequest))));
     return selectSalaryResults(salaries, lock);
 };
 
@@ -1399,7 +1399,7 @@ export const handler: Handler = async (event) => {
                     const scheduleSnap = await tx.get(db.collection('dailySchedule'));
                     const reviewedEmployees = await loadMonthlyPayrollEmployees(empSnap.docs.map(d => ({ ...d.data(), id: d.id })), yearMonth, db, tx);
                     const employees = reviewedEmployees.map(payrollEmployee).filter(e => employeeInMonth(e, yearMonth));
-                    const records = selectPayrollClockEvidence(clockSnap.docs.map(d => ({ id: d.id, ...d.data() } as ClockRecord)), yearMonth, employees.map(e => e.id));
+                    const records = selectPayrollClockEvidence(clockSnap.docs.map(d => ({ ...d.data(), id: d.id } as ClockRecord)), yearMonth, employees.map(e => e.id));
                     const leaves = selectPayrollLeaveEvidence(leaveSnap.docs.map(d => ({ ...d.data(), id: d.id } as LeaveRequest)), yearMonth, employees.map(e => e.id));
                     const schedules = scheduleSnap.docs.filter(d => d.id.startsWith(yearMonth)).map(d => normalizeScheduleDoc(d.data(), d.id, ''));
                     const salaries = employees.map(e => calculateSalaryForEmployee(e, yearMonth, schedules, records, leaves));

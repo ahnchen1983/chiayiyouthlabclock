@@ -71,7 +71,7 @@ describe('absolute time conflicts at settlement boundary',()=>{
 });
 
 describe('bounded payroll snapshot evidence',()=>{
- it('unrelated historical cards do not exhaust monthly snapshot capacity or get deleted',async()=>{for(let i=0;i<1000;i++)fake.data.set('clockRecords/OLD'+i,{...card('2025-01-01'),id:'OLD'+i,empId:i%2?'OTHER':'SYNTH',notes:'x'.repeat(800)});const response=await call('lock-month',{yearMonth:month});expect(response.statusCode).toBe(200);const run=fake.data.get('payrollRuns/'+JSON.parse(response.body).payrollRunId);expect(run.salaries[0].grossSalary).toBe(1600);expect(run.inputs.records.map(r=>r.id)).toEqual([card().id]);expect(fake.data.has('clockRecords/OLD999')).toBe(true);});
+ it('unrelated historical cards do not exhaust monthly snapshot capacity or get deleted',async()=>{for(let i=0;i<1000;i++)fake.data.set('clockRecords/OLD'+i,{...card('2025-01-01'),id:'OLD'+i,empId:i%2?'OTHER':'SYNTH',notes:'x'.repeat(800)});const response=await call('lock-month',{yearMonth:month});expect(response.statusCode).toBe(200);const run=fake.data.get('payrollRuns/'+JSON.parse(response.body).payrollRunId);expect(run.salaries[0].grossSalary).toBe(1600);expect(run.inputs.records.map(r=>r.id)).toEqual(['C1']);expect(fake.data.has('clockRecords/OLD999')).toBe(true);});
  it('retains complete adjacent-month evidence for included employees only',async()=>{fake.data.set('clockRecords/PREV',{...card('2026-03-31'),notes:'boundary evidence'});fake.data.set('clockRecords/NEXT',card('2026-05-01'));fake.data.set('clockRecords/OTHER',{...card('2026-03-31'),empId:'OTHER'});const response=await call('lock-month',{yearMonth:month});expect(response.statusCode).toBe(200);const run=fake.data.get('payrollRuns/'+JSON.parse(response.body).payrollRunId);expect(run.inputs.records.map(r=>r.date).sort()).toEqual(['2026-03-31','2026-04-01','2026-05-01']);expect(run.inputs.records.find(r=>r.date==='2026-03-31').notes).toBe('boundary evidence');expect(run.salaries[0].grossSalary).toBe(1600);});
  it('genuinely oversized relevant evidence fails atomically',async()=>{fake.data.get('clockRecords/C1').notes='x'.repeat(810000);const response=await call('lock-month',{yearMonth:month});expect(response.statusCode).toBe(409);expect(response.body).toContain('快照過大');expect([...fake.data.keys()].some(k=>k.startsWith('monthLocks/')||k.startsWith('payrollRuns/')||k.startsWith('payrollControl/'))).toBe(false);expect(fake.data.get('clockRecords/C1').notes.length).toBe(810000);});
 });
@@ -288,5 +288,21 @@ describe('review form evidence read/save contract', () => {
   const response = await call('review-payroll-inputs', { empId: employee.id, review, expectedEmployeeSourceKey: sourceKey });
   expect(response.statusCode).toBe(409); expect(response.body).toContain('重新載入');
   expect(fake.data.has('payrollReviews/SYNTH_' + month)).toBe(false);
+ });
+});
+
+
+describe('schedule gap record identity stays consistent from preview through settlement', () => {
+ it('can review a partial-session gap even when a legacy embedded card id differs from the document id', async () => {
+  fake.data.set('clockRecords/C1', card('2026-04-01', '09:00', '12:00'));
+  const event = schedule(); fake.data.set('dailySchedule/' + event.date, event);
+  const result = JSON.parse((await call('get-payroll-review-inputs', { yearMonth: month })).body);
+  expect(result.scheduleGaps).toEqual([expect.objectContaining({ empId: employee.id, date: event.date, scheduledMinutes: 480, coveredMinutes: 180 })]);
+  const candidate = structuredClone(review); candidate.scheduleExceptions = [{ date: event.date, reason: '核實提早離場，剩餘班次取消', sourceKey: result.scheduleGaps[0].sourceKey }];
+  expect((await call('review-payroll-inputs', { empId: employee.id, review: candidate })).statusCode).toBe(200);
+  expect(JSON.parse((await call('get-employee-salary', { empId: employee.id, yearMonth: month })).body)).toMatchObject({ calculationStatus: 'ready', grossSalary: 600 });
+  const response = await call('lock-month', { yearMonth: month }); expect(response.statusCode).toBe(200);
+  const run = fake.data.get('payrollRuns/' + JSON.parse(response.body).payrollRunId);
+  expect(run.inputs.records[0].id).toBe('C1'); expect(run.salaries[0]).toMatchObject({ calculationStatus: 'locked', grossSalary: 600 });
  });
 });
