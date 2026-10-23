@@ -32,7 +32,7 @@ for (const [name, args] of steps) {
     const logPath = path.join(evidence, `${name}.log`);
     const log = await open(logPath, 'w');
     process.stdout.write(`開始驗證：${name}\n`);
-    const child = spawn('npm', args, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn('npm', args, { cwd: root, env: name === 'production-build' ? { ...process.env, VITE_E2E: 'false' } : process.env, stdio: ['ignore', 'pipe', 'pipe'] });
     child.stdout.on('data', chunk => log.write(chunk));
     child.stderr.on('data', chunk => log.write(chunk));
     const exitCode = await new Promise(resolve => {
