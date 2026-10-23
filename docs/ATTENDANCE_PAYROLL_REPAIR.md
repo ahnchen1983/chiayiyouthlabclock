@@ -1,5 +1,7 @@
 # 本機修復交接（2026-10-23）
 
+> 本檔以下保留原 PR 發布時的交接紀錄；覆核 UI、月份保存與檢測流程已於後續修復更新。最新狀態以 `docs/PR13_REPAIR_LOOP.md` 及 `docs/PR13_VERIFICATION_2026-10-23.md` 為準。原有測試數字與尚未實作描述不是最新結論。
+
 ## 工作位置與邊界
 
 這是原系統的獨立本機 clone：`<repair-checkout>`，分支 `fix/attendance-payroll-consistency`，基於遠端 main `84091c6108bbc6d55f47bca5455fc944b9a7f0cd`。不是原 checkout 的 worktree，因此原 repo 的 `git worktree list` 不會列出這裡。本機原 checkout HEAD 仍為 `8f4a2ff4fb030f0ebcf3866cc048684621e3355f`，乾淨；其 `new/` 與展示 repo 未修改。

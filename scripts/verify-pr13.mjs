@@ -19,6 +19,7 @@ await mkdir(evidence, { recursive: true });
 const initialHash = await sourceHash();
 const manifest = { startedAt: new Date().toISOString(), commit: git('rev-parse', 'HEAD'), sourceHash: initialHash, status: 'running', steps: [] };
 const steps = [
+    ['production-dependency-audit', ['run', 'audit:prod']],
     ['typecheck', ['run', 'typecheck']],
     ['unit-api', ['test', '--', '--configLoader', 'runner']],
     ['firestore-emulator', ['run', 'test:emulator:start']],
