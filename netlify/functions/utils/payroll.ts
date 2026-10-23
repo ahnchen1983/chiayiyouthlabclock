@@ -1,24 +1,67 @@
 import type { ClockRecord, LeaveRequest, ScheduleEvent, SalaryDetail, SystemConfig, PayrollReview } from '../../../types';
 import { LeaveStatus, isOutingLeaveType } from '../../../types';
-import { clockInterval, confirmedWork, resolveAttendance, shiftIntervals, intervalMinutes, hhmmMinutes, validDate, clockSourceKey } from '../../../utils/attendance';
+import { clockInterval, confirmedWork, shiftIntervals, intervalMinutes, hhmmMinutes, leaveEndMinutes, validDate, clockSourceKey } from '../../../utils/attendance';
 import { roundMoney } from '../../../utils/format';
 
 const leaveInstant = (value: string): number => Date.parse(/(Z|[+-]\d\d:\d\d)$/.test(value || '') ? value : value + '+08:00');
 const overlaps = (a: { start: number; end: number }, b: { start: number; end: number }): boolean => Math.min(a.end, b.end) > Math.max(a.start, b.start);
 
 export const validLeaveAllocations = (leave: LeaveRequest, allocations = leave.payrollAllocations): boolean => {
+    if (typeof leave.startDate !== 'string' || typeof leave.endDate !== 'string' || !Array.isArray(allocations)) return false;
     const from = leaveInstant(leave.startDate), to = leaveInstant(leave.endDate);
-    if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from || !Number.isFinite(leave.hours) || leave.hours < 0 || !allocations?.length) return false;
+    if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from || !Number.isFinite(leave.hours) || leave.hours < 0 || !allocations.length) return false;
     const ranges = [];
     for (const a of allocations) {
+        if (!a || typeof a !== 'object' || typeof a.date !== 'string' || typeof a.from !== 'string' || typeof a.to !== 'string') return false;
         const start = leaveInstant(`${a.date}T${a.from}`), end = leaveInstant(`${a.date}T${a.to}`);
-        if (!validDate(a.date) || hhmmMinutes(a.from) === null || hhmmMinutes(a.to) === null || !Number.isInteger(a.minutes) || a.minutes <= 0 || end - start !== a.minutes * 60000 || start < from || end > to) return false;
+        if (!validDate(a.date) || hhmmMinutes(a.from) === null || leaveEndMinutes(a.to) === null || !Number.isInteger(a.minutes) || a.minutes <= 0 || end - start !== a.minutes * 60000 || start < from || end > to) return false;
         ranges.push({start: start / 60000, end: end / 60000});
     }
     const total = allocations.reduce((n, a) => n + a.minutes, 0);
     return total <= leave.hours * 60 && intervalMinutes(ranges) === total;
 };
 export const scheduleEvidenceKey = (shifts: any[], records: ClockRecord[], leaves: any[]) => JSON.stringify([shifts, records.map(r => [r.id, clockSourceKey(r)]), leaves]);
+type DayLeave = { start: number; end: number; type: string; minutes: number };
+const allocationRange = (leave: LeaveRequest, allocation: NonNullable<LeaveRequest['payrollAllocations']>[number]): DayLeave | null => {
+    const start = hhmmMinutes(allocation.from), end = leaveEndMinutes(allocation.to);
+    if (!validDate(allocation.date) || allocation.date < leave.startDate.slice(0, 10) || allocation.date > leave.endDate.slice(0, 10) || start === null || end === null || end <= start || allocation.minutes !== end - start) return null;
+    return { start, end, type: leave.leaveType, minutes: allocation.minutes };
+};
+const employeeSchedule = (emp: any, yearMonth: string, events: ScheduleEvent[]) => new Map(events.filter(e => e.date.startsWith(yearMonth)).map(e => [e.date, e.shifts.filter(s => s.empId ? s.empId === emp.id : s.name === emp.name)]));
+const scheduleCoverage = (shifts: ScheduleEvent['shifts'], records: ClockRecord[], leaves: DayLeave[]) => {
+    const ranges = shiftIntervals(shifts);
+    if (!ranges) return null;
+    const cards = records.flatMap(r => { const span = clockInterval(r); return span ? [span] : []; });
+    const coveredMinutes = intervalMinutes(ranges.flatMap(s => [...leaves, ...cards].map(l => ({ start: Math.max(s.start, l.start), end: Math.min(s.end, l.end) }))));
+    return { scheduledMinutes: intervalMinutes(ranges), coveredMinutes };
+};
+const scheduleLeaves = (date: string, shifts: ScheduleEvent['shifts'], byDate: Map<string, DayLeave[]>): DayLeave[] => {
+    const own = byDate.get(date) || [];
+    const ranges = shiftIntervals(shifts);
+    if (!ranges?.some(r => r.end > 1440)) return own;
+    const next = new Date(`${date}T00:00:00Z`); next.setUTCDate(next.getUTCDate() + 1);
+    const following = (byDate.get(next.toISOString().slice(0, 10)) || []).map(l => ({ ...l, start: l.start + 1440, end: l.end + 1440 })).filter(l => ranges.some(r => overlaps(r, l)));
+    return [...own, ...following];
+};
+// Return every uncovered schedule, including an already resolved gap. The caller
+// can display the existing exception only when it still binds to this evidence.
+export const getScheduleReviewGaps = (emp: any, yearMonth: string, events: ScheduleEvent[], records: ClockRecord[], leaves: LeaveRequest[]): { date: string; sourceKey: string; scheduledMinutes: number; coveredMinutes: number }[] => {
+    const dayLeaves = new Map<string, DayLeave[]>();
+    for (const leave of leaves) {
+        if (leave.empId !== emp.id || leave.status !== LeaveStatus.Approved || !validLeaveAllocations(leave)) continue;
+        for (const allocation of leave.payrollAllocations!) {
+            const range = allocationRange(leave, allocation);
+            if (!range) continue;
+            dayLeaves.set(allocation.date, [...(dayLeaves.get(allocation.date) || []), range]);
+        }
+    }
+    return [...employeeSchedule(emp, yearMonth, events)].flatMap(([date, shifts]) => {
+        const cards = records.filter(r => r.empId === emp.id && r.date === date);
+        const allocations = scheduleLeaves(date, shifts, dayLeaves);
+        const coverage = scheduleCoverage(shifts, cards, allocations);
+        return coverage && coverage.coveredMinutes < coverage.scheduledMinutes ? [{ date, sourceKey: scheduleEvidenceKey(shifts, cards, allocations), ...coverage }] : [];
+    });
+};
 export const PAYROLL_VERSION = 'payroll-v2-review';
 export const calculateSalaryForEmployee = (
     emp: any, yearMonth: string, scheduleEvents: ScheduleEvent[], clockRecords: ClockRecord[],
@@ -33,7 +76,7 @@ export const calculateSalaryForEmployee = (
     if (policy && (policy.workDateRule !== 'clock-in-date' || policy.hoursBasis !== 'actual' || !Number.isFinite(policy.dailyRegularMinutes) || policy.dailyRegularMinutes !== 480 || !Array.isArray(policy.regularDates) || !Array.isArray(policy.overtimeTiers))) reasons.add('工時政策無效');
     if (policy && policy.moneyDecimals !== 0 && policy.moneyDecimals !== 2) reasons.add('結算金額精度待確認');
     const money = (value: number) => roundMoney(value, policy?.moneyDecimals ?? 2);
-    const scheduled = new Map(scheduleEvents.filter(e => e.date.startsWith(yearMonth)).map(e => [e.date, e.shifts.filter(s => s.empId ? s.empId === emp.id : s.name === emp.name)]));
+    const scheduled = employeeSchedule(emp, yearMonth, scheduleEvents);
     const allEmployeeRecords = clockRecords.filter(r => r.empId === emp.id);
     const absolute = (r: Pick<ClockRecord, 'date'>, range: {start:number;end:number}) => { const base = Date.parse(r.date + 'T00:00:00+08:00') / 60000; return {start: base + range.start, end: base + range.end}; };
     let crossDateConflict = false;
@@ -45,18 +88,19 @@ export const calculateSalaryForEmployee = (
     }
     const records = clockRecords.filter(r => r.empId === emp.id && r.date.startsWith(yearMonth));
     const currentCardRanges = records.flatMap(r => { const span = clockInterval(r); return span ? [absolute(r, span)] : []; });
+    const currentScheduleRanges = [...scheduled].flatMap(([date, shifts]) => (shiftIntervals(shifts) || []).map(r => absolute({ date }, r)));
     const workEvidence = allEmployeeRecords.map(r => ({ record: r, span: clockInterval(r), work: confirmedWork(r) }));
     const dates = new Set([...scheduled.entries()].filter(([, s]) => s.length).map(([d]) => d));
     records.forEach(r => dates.add(r.date));
-    const leaveByDate = new Map<string, { start: number; end: number; type: string; minutes: number }[]>();
+    const leaveByDate = new Map<string, DayLeave[]>();
     const leaves = leaveRequests.filter(l => {
         if (l.empId !== emp.id || l.status !== LeaveStatus.Approved) return false;
         if ((l.startDate || '').slice(0, 7) <= yearMonth && (l.endDate || l.startDate || '').slice(0, 7) >= yearMonth) return true;
-        if (l.payrollAllocations?.some(a => a.date.startsWith(yearMonth))) return true;
+        if (Array.isArray(l.payrollAllocations) && l.payrollAllocations.some(a => typeof a?.date === 'string' && a.date.startsWith(yearMonth))) return true;
         // Last-day overnight work belongs to this month but can conflict with next month's leave.
         // Boundary evidence only affects this calculation if its approved span touches our cards.
         const span = { start: leaveInstant(l.startDate) / 60000, end: leaveInstant(l.endDate) / 60000 };
-        return currentCardRanges.some(r => overlaps(r, span));
+        return [...currentCardRanges, ...currentScheduleRanges].some(r => overlaps(r, span));
     });
     const leaveDetails: { type: string; hours: number }[] = [];
     let boundaryAttendanceUnknown = false;
@@ -66,9 +110,9 @@ export const calculateSalaryForEmployee = (
         if (!validLeaveAllocations(l)) { reasons.add(`請假 ${l.id} 分配超出核准區間/時數或重疊`); continue; }
         let minutes = 0;
         for (const a of l.payrollAllocations) {
-            const start = hhmmMinutes(a.from), end = hhmmMinutes(a.to);
-            if (!validDate(a.date) || a.date < l.startDate.slice(0, 10) || a.date > l.endDate.slice(0, 10) || start === null || end === null || end <= start || a.minutes !== end - start) { reasons.add(`請假 ${l.id} 分配資料無效`); continue; }
-            const allocation = absolute(a, { start, end });
+            const range = allocationRange(l, a);
+            if (!range) { reasons.add(`請假 ${l.id} 分配資料無效`); continue; }
+            const allocation = absolute(a, range);
             for (const evidence of workEvidence) {
                 if (!a.date.startsWith(yearMonth) && !evidence.record.date.startsWith(yearMonth)) continue;
                 if (evidence.work === null) {
@@ -82,11 +126,11 @@ export const calculateSalaryForEmployee = (
                     reasons.add(`${a.date} 出勤與請假時段重疊待核實`);
                 }
             }
+            const entries = leaveByDate.get(a.date) || [];
+            entries.push(range);
+            leaveByDate.set(a.date, entries);
             if (!a.date.startsWith(yearMonth)) continue;
             dates.add(a.date);
-            const entries = leaveByDate.get(a.date) || [];
-            entries.push({ start, end, type: l.leaveType, minutes: a.minutes });
-            leaveByDate.set(a.date, entries);
             minutes += a.minutes;
         }
         if (!isOutingLeaveType(l.leaveType)) leaveDetails.push({ type: l.leaveType, hours: minutes / 60 });
@@ -121,9 +165,10 @@ export const calculateSalaryForEmployee = (
             else hourlyLeavePay += l.minutes / 60 * hourly * fraction;
         }
         if (ranges?.length) {
-            const covered = intervalMinutes(ranges.flatMap(s => [...dayLeaves, ...completeRanges].map(l => ({ start: Math.max(s.start, l.start), end: Math.min(s.end, l.end) }))));
-            const exception = review?.scheduleExceptions?.find(x => x.date === date && x.reason?.trim() && x.sourceKey === scheduleEvidenceKey(shifts, dayRecords, dayLeaves));
-            if (covered < intervalMinutes(ranges) && !exception) { reasons.add(`${date} 排班未有完整出勤或核准假證據`); incompleteAttendance = true; }
+            const allocationEvidence = scheduleLeaves(date, shifts, leaveByDate);
+            const coverage = scheduleCoverage(shifts, dayRecords, allocationEvidence)!;
+            const exception = review?.scheduleExceptions?.find(x => x.date === date && x.reason?.trim() && x.sourceKey === scheduleEvidenceKey(shifts, dayRecords, allocationEvidence));
+            if (coverage.coveredMinutes < coverage.scheduledMinutes && !exception) { reasons.add(`${date} 排班未有完整出勤或核准假證據`); incompleteAttendance = true; }
         }
         if (completeRanges.length) attendedDays++;
         // Summation only after union; no per-record 0.1-hour rounding.
