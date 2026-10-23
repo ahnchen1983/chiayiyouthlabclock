@@ -20,7 +20,11 @@ export const validLeaveAllocations = (leave: LeaveRequest, allocations = leave.p
     const total = allocations.reduce((n, a) => n + a.minutes, 0);
     return total <= leave.hours * 60 && intervalMinutes(ranges) === total;
 };
-export const scheduleEvidenceKey = (shifts: any[], records: ClockRecord[], leaves: any[]) => JSON.stringify([shifts, records.map(r => [r.id, clockSourceKey(r)]), leaves]);
+const canonicalEvidence = (value: any): any => Array.isArray(value) ? value.map(canonicalEvidence)
+    : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonicalEvidence(value[key])])) : value;
+// Snapshots and Firestore may reorder object fields. Bind exceptions to the same
+// values after replay while preserving the order of shifts, sessions and leave rows.
+export const scheduleEvidenceKey = (shifts: any[], records: ClockRecord[], leaves: any[]) => JSON.stringify(canonicalEvidence([shifts, records.map(r => [r.id, clockSourceKey(r)]), leaves]));
 type DayLeave = { start: number; end: number; type: string; minutes: number };
 const allocationRange = (leave: LeaveRequest, allocation: NonNullable<LeaveRequest['payrollAllocations']>[number]): DayLeave | null => {
     const start = hhmmMinutes(allocation.from), end = leaveEndMinutes(allocation.to);

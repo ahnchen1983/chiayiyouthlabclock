@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { calculateSalaryForEmployee, getScheduleReviewGaps, validLeaveAllocations } from '../netlify/functions/utils/payroll';
+import { calculateSalaryForEmployee, getScheduleReviewGaps, scheduleEvidenceKey, validLeaveAllocations } from '../netlify/functions/utils/payroll';
+import { makePayrollRun, sanitizePayrollSnapshot } from '../netlify/functions/utils/payrollSnapshot';
 import { clockSourceKey } from '../utils/attendance';
 import { LeaveType } from '../types';
 import { employee, card, leave, month, review, schedule } from './fixtures/payrollV2';
@@ -152,6 +153,28 @@ describe('canonical midnight leave allocation', () => {
 });
 
 describe('schedule review gap evidence', () => {
+    it('replays a ready salary with an exception after snapshot keys are canonicalized', () => {
+        const day = schedule(), record = card('2026-04-01', '09:00', '12:00'), approved = paidLeave('2026-04-01', '13:00', '17:00');
+        const [gap] = getScheduleReviewGaps(employee, month, [day], [record], [approved]);
+        const reviewed = { ...employee, payrollReview: { ...review, scheduleExceptions: [{ date: gap.date, sourceKey: gap.sourceKey, reason: '核實午間一小時未出勤，不補算班表工時' }] } };
+        const salary = calculateSalaryForEmployee(reviewed, month, [day], [record], [approved]);
+        expect(salary.calculationStatus).toBe('ready');
+        expect(salary.netSalary).toBe(1400);
+        const inputs = { employees: [reviewed], schedules: [day], records: [record], leaves: [approved] };
+        const canonical = sanitizePayrollSnapshot(inputs);
+        expect(Object.keys(canonical.schedules[0].shifts[0])).not.toEqual(Object.keys(day.shifts[0]));
+        const run = makePayrollRun('canonical-replay', month, review.reviewedAt, [salary], inputs);
+        const replay = calculateSalaryForEmployee(run.inputs.employees[0], month, run.inputs.schedules, run.inputs.records, run.inputs.leaves);
+        expect(replay).toEqual(salary);
+        expect(getScheduleReviewGaps(run.inputs.employees[0], month, run.inputs.schedules, run.inputs.records, run.inputs.leaves)[0].sourceKey).toBe(gap.sourceKey);
+    });
+    it('ignores object insertion order while preserving evidence array order', () => {
+        const a = { name: '合成員工', nested: { to: '17:00', from: '09:00' } };
+        const reordered = { nested: { from: '09:00', to: '17:00' }, name: '合成員工' };
+        const b = { name: '第二時段', nested: { to: '20:00', from: '18:00' } };
+        expect(scheduleEvidenceKey([a, b], [], [])).toBe(scheduleEvidenceKey([reordered, b], [], []));
+        expect(scheduleEvidenceKey([a, b], [], [])).not.toBe(scheduleEvidenceKey([b, a], [], []));
+    });
     it('settles only when the current gap key has an explicit reason', () => {
         const day = schedule(), record = card('2026-04-01', '09:00', '12:00');
         const gaps = getScheduleReviewGaps(employee, month, [day], [record], []);
