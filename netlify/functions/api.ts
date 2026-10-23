@@ -1,5 +1,6 @@
-import { validLeaveAllocations } from './utils/payroll';
+import { validLeaveAllocations, getScheduleReviewGaps } from './utils/payroll';
 import { validatePayrollReview, payrollReviewFields } from './utils/payrollReviewValidation';
+import { loadMonthlyPayrollEmployees, makeStoredPayrollReview, payrollReviewDocumentId, employeePayrollSourceKey } from './utils/payrollReviewStorage';
 import { editClock } from './utils/clockMutation';
 import { taipeiDate, taipeiTime, localInstant, validDate, hhmmMinutes, resolveAttendance, resolveClockRecord, clockSourceKey, confirmedWork, sumKnownHours, dailyClockRecord, scheduleMonthKeys, shiftIntervals } from '../../utils/attendance';
 import { runPayrollMutation, monthsInRange, assertTransactionMonths } from './utils/monthGuard';
@@ -619,7 +620,7 @@ const displayAttendance = async (records: ClockRecord[], month: string): Promise
 
 const employeeInMonth = (e: any, month: string): boolean => e.accountKind !== 'system-account' && !(e.payrollReview?.yearMonth === month && e.payrollReview?.participation === 'system-account' && e.payrollReview?.participationReason?.trim() && e.payrollReview?.reviewedBy && e.payrollReview?.reviewedAt) && (!e.hireDate || e.hireDate.slice(0, 7) <= month) && (!e.resignDate || e.resignDate.slice(0, 7) >= month);
 const payrollEmployee = (e: any) => ({ id: e.id, accountKind: e.accountKind || null, name: e.name, role: e.role ?? null, position: e.position, status: e.status,
-    hourlyRate: e.hourlyRate ?? null, monthlySalary: e.monthlySalary ?? null, hireDate: e.hireDate || '', resignDate: e.resignDate || '', payrollReview: payrollReviewFields(e.payrollReview) });
+    hourlyRate: e.hourlyRate ?? null, monthlySalary: e.monthlySalary ?? null, hireDate: e.hireDate || '', resignDate: e.resignDate || '', leaveOfAbsenceStart: e.leaveOfAbsenceStart || '', leaveOfAbsenceEnd: e.leaveOfAbsenceEnd || '', payrollReview: payrollReviewFields(e.payrollReview) });
 const readSalaryMonth = async (month: string): Promise<SalaryDetail[]> => {
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month || '')) throw new Error('月份無效');
     const lock = await getMonthLock(month);
@@ -628,7 +629,8 @@ const readSalaryMonth = async (month: string): Promise<SalaryDetail[]> => {
         if (run.exists && run.data()?.id === lock.payrollRunId && run.data()?.yearMonth === month) return selectSalaryResults([], lock, run.data() as PayrollRun);
     }
     const [schedules, employees, cards, leaves] = await Promise.all([getMonthlyDailySchedule(month), db.collection('employees').get(), db.collection('clockRecords').get(), db.collection('leaveRequests').get()]);
-    const salaries = employees.docs.map(d => d.data()).filter(e => employeeInMonth(e, month)).map(e => calculateSalaryForEmployee(e, month, schedules,
+    const reviewedEmployees = await loadMonthlyPayrollEmployees(employees.docs.map(d => ({ ...d.data(), id: d.id })), month, db);
+    const salaries = reviewedEmployees.filter(e => employeeInMonth(e, month)).map(e => calculateSalaryForEmployee(e, month, schedules,
         cards.docs.map(d => ({ id: d.id, ...d.data() } as ClockRecord)), leaves.docs.map(d => ({ id: d.id, ...d.data() } as LeaveRequest))));
     return selectSalaryResults(salaries, lock);
 };
@@ -979,12 +981,16 @@ export const handler: Handler = async (event) => {
                 if (!isSuperAdmin) return fail(403, '僅最高管理者可查看計薪覆核輸入');
                 const month = data.yearMonth;
                 if (typeof month !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return fail(400, '月份無效');
-                const [employees, leaves, lock] = await Promise.all([
+                const [employees, leaves, lock, schedules, cards] = await Promise.all([
                     db.collection('employees').get(), db.collection('leaveRequests').get(), getMonthLock(month),
+                    getMonthlyDailySchedule(month), db.collection('clockRecords').get(),
                 ]);
-                const payrollEmployees = employees.docs.map(d => payrollEmployee({ ...d.data(), id: d.id }));
-                return ok({ employees: payrollEmployees,
-                    leaves: selectPayrollLeaveEvidence(leaves.docs.map(d => ({ ...d.data(), id: d.id } as LeaveRequest)), month, payrollEmployees.map(e => e.id)),
+                const reviewedEmployees = await loadMonthlyPayrollEmployees(employees.docs.map(d => ({ ...d.data(), id: d.id })), month, db);
+                const payrollEmployees = reviewedEmployees.map(e => ({ ...payrollEmployee(e), employeeSourceKey: employeePayrollSourceKey(e) }));
+                const payrollLeaves = selectPayrollLeaveEvidence(leaves.docs.map(d => ({ ...d.data(), id: d.id } as LeaveRequest)), month, payrollEmployees.map(e => e.id));
+                const records = cards.docs.map(d => ({ ...d.data(), id: d.id } as ClockRecord));
+                return ok({ employees: payrollEmployees, leaves: payrollLeaves,
+                    scheduleGaps: reviewedEmployees.filter(e => employeeInMonth(e, month)).flatMap(e => getScheduleReviewGaps(e, month, schedules, records, payrollLeaves).map(gap => ({ empId: e.id, ...gap }))),
                     locked: !!lock && isMonthLocked(lock) });
             }
             case 'review-payroll-inputs': {
@@ -996,8 +1002,13 @@ export const handler: Handler = async (event) => {
                     const ref = db.collection('employees').doc(data.empId);
                     const employee = await tx.get(ref);
                     if (!employee.exists) throw new Error('員工不存在');
-                    const review = validatePayrollReview(data.review, employee.data(), uid, new Date().toISOString());
-                    tx.update(ref, { payrollReview: review });
+                    const current = { ...employee.data(), id: employee.id };
+                    if (data.expectedEmployeeSourceKey !== undefined && data.expectedEmployeeSourceKey !== employeePayrollSourceKey(current)) {
+                        const error: any = new Error('員工薪資或任職資料已變動，請重新載入後覆核'); error.statusCode = 409; throw error;
+                    }
+                    const review = validatePayrollReview(data.review, current, uid, new Date().toISOString());
+                    const stored = makeStoredPayrollReview(current, review);
+                    tx.set(db.collection('payrollReviews').doc(payrollReviewDocumentId(employee.id, month)), stored);
                 });
                 await writeAuditLog(uid, '覆核計薪設定', data.empId, month);
                 return ok(true);
@@ -1386,7 +1397,8 @@ export const handler: Handler = async (event) => {
                     const clockSnap = await tx.get(db.collection('clockRecords'));
                     const leaveSnap = await tx.get(db.collection('leaveRequests'));
                     const scheduleSnap = await tx.get(db.collection('dailySchedule'));
-                    const employees = empSnap.docs.map(d => payrollEmployee({ ...d.data(), id: d.id })).filter(e => employeeInMonth(e, yearMonth));
+                    const reviewedEmployees = await loadMonthlyPayrollEmployees(empSnap.docs.map(d => ({ ...d.data(), id: d.id })), yearMonth, db, tx);
+                    const employees = reviewedEmployees.map(payrollEmployee).filter(e => employeeInMonth(e, yearMonth));
                     const records = selectPayrollClockEvidence(clockSnap.docs.map(d => ({ id: d.id, ...d.data() } as ClockRecord)), yearMonth, employees.map(e => e.id));
                     const leaves = selectPayrollLeaveEvidence(leaveSnap.docs.map(d => ({ ...d.data(), id: d.id } as LeaveRequest)), yearMonth, employees.map(e => e.id));
                     const schedules = scheduleSnap.docs.filter(d => d.id.startsWith(yearMonth)).map(d => normalizeScheduleDoc(d.data(), d.id, ''));

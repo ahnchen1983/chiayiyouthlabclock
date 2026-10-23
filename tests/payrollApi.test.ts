@@ -22,7 +22,7 @@ const fake = vi.hoisted(() => {
         limit:(value:number)=>collection(path,filters,value),
         orderBy:()=>collection(path,filters,limit),
         async add(value:any){ const ref=doc(path+`/AUTO${++sequence}`);await ref.set(value);return ref; },
-        async get(){const docs=[...data.keys()].filter(k=>k.startsWith(path+'/')&&k.split('/').length===path.split('/').length+1).map(snapshot).filter(d=>filters.every(([f,op,v])=>op==='=='?d.data()[f]===v:op==='>='?d.data()[f]>=v:op==='<='?d.data()[f]<=v:false)).slice(0,limit);return {docs,empty:!docs.length,size:docs.length};}
+        async get(){const docs=[...data.keys()].filter(k=>k.startsWith(path+'/')&&k.split('/').length===path.split('/').length+1).map(snapshot).filter(d=>filters.every(([f,op,v])=>op==='in'?v.includes(f==='__name__'?d.id:d.data()[f]):op==='=='?d.data()[f]===v:op==='>='?d.data()[f]>=v:op==='<='?d.data()[f]<=v:false)).slice(0,limit);return {docs,empty:!docs.length,size:docs.length};}
     });
     const db:any={collection,async runTransaction(fn:any){const writes:any[]=[];let wrote=false;const tx:any={get:async(ref:any)=>{if(wrote)throw Error('read after write');return ref.get();}};for(const method of ['set','update','delete','create'])tx[method]=(ref:any,value:any)=>{wrote=true;writes.push([method,ref,value]);};const result=await fn(tx);for(const [method,ref,value]of writes){if(method==='create'){if(data.has(ref.path))throw Error('exists');await ref.set(value);}else await ref[method](value);}return result;}};
     return {data,db};
@@ -118,7 +118,7 @@ describe('payroll review access and explicit input contract', () => {
   vi.useFakeTimers(); vi.setSystemTime(new Date('2026-05-02T00:00:00Z'));
   const payload = { ...structuredClone(review), reviewedBy: 'forged-user', reviewedAt: 'forged-time', password: 'must-not-persist' };
   expect((await call('review-payroll-inputs', { empId: employee.id, review: payload })).statusCode).toBe(200);
-  const saved = fake.data.get('employees/SYNTH').payrollReview;
+  const saved = fake.data.get('payrollReviews/SYNTH_' + month).review;
   expect(saved).toMatchObject({ reviewedBy: 'ADMIN', reviewedAt: '2026-05-02T00:00:00.000Z', insurance: { labor: 0, health: 0, pensionSelf: 0 } });
   expect(saved.password).toBeUndefined();
  });
@@ -163,7 +163,7 @@ describe('payroll review access and explicit input contract', () => {
  });
  it('explicit system account exclusion needs a reason and no invented pay policy', async () => {
   expect((await call('review-payroll-inputs', { empId: 'ADMIN', review: { yearMonth: month, participation: 'system-account', participationReason: '僅登入管理系統' } })).statusCode).toBe(200);
-  const saved = fake.data.get('employees/ADMIN').payrollReview;
+  const saved = fake.data.get('payrollReviews/ADMIN_' + month).review;
   expect(saved).toMatchObject({ participation: 'system-account', reviewedBy: 'ADMIN' });
   expect(saved.policy).toBeUndefined(); expect(saved.insurance).toBeUndefined();
  });
@@ -202,5 +202,91 @@ describe('leave allocation review locks and explicit payload', () => {
    expect((await call('review-leave-allocation', { requestId: 'L', allocations: current.payrollAllocations })).statusCode).toBe(423);
    expect(fake.data.get('leaveRequests/L').payrollReviewedBy).toBeUndefined();
   } finally { fake.db.runTransaction = transaction; }
+ });
+});
+
+
+describe('month-scoped payroll reviews preserve prior decisions and basis', () => {
+ const reviewFor = (selectedMonth: string) => {
+  const candidate = structuredClone(review); candidate.yearMonth = selectedMonth; candidate.policy.version = 'review-' + selectedMonth;
+  const days = new Date(Number(selectedMonth.slice(0, 4)), Number(selectedMonth.slice(5, 7)), 0).getDate();
+  candidate.policy.regularDates = Array.from({ length: days }, (_, i) => `${selectedMonth}-${String(i + 1).padStart(2, '0')}`);
+  return candidate;
+ };
+ it('retains two months when reviewed before either month locks', async () => {
+  fake.data.set('clockRecords/MAY', card('2026-05-01'));
+  for (const selectedMonth of [month, '2026-05']) expect((await call('review-payroll-inputs', { empId: employee.id, review: reviewFor(selectedMonth) })).statusCode).toBe(200);
+  for (const selectedMonth of [month, '2026-05']) {
+   const details = JSON.parse((await call('get-employee-salary', { empId: employee.id, yearMonth: selectedMonth })).body);
+   expect(details).toMatchObject({ calculationStatus: 'ready', grossSalary: 1600, policyVersion: 'review-' + selectedMonth });
+   const inputs = JSON.parse((await call('get-payroll-review-inputs', { yearMonth: selectedMonth })).body);
+   expect(inputs.employees.find((e: any) => e.id === employee.id).payrollReview.yearMonth).toBe(selectedMonth);
+   expect((await call('lock-month', { yearMonth: selectedMonth })).statusCode).toBe(200);
+  }
+  expect(fake.data.get('payrollReviews/SYNTH_2026-04')).toMatchObject({ empId: employee.id, yearMonth: month, review: { yearMonth: month, reviewedBy: 'ADMIN' } });
+  expect(fake.data.get('payrollReviews/SYNTH_2026-05').review.policy.version).toBe('review-2026-05');
+ });
+ it('invalidates a scoped review after rate changes and never falls back to the legacy review', async () => {
+  await call('review-payroll-inputs', { empId: employee.id, review });
+  const priorKey = fake.data.get('payrollReviews/SYNTH_' + month).employeeSourceKey;
+  expect((await call('update-employee', { empId: employee.id, updates: { hourlyRate: 250 } })).statusCode).toBe(200);
+  // Even a legacy value matching this month cannot rescue the stale scoped document.
+  fake.data.get('employees/SYNTH').payrollReview = structuredClone(review);
+  const inputs = JSON.parse((await call('get-payroll-review-inputs', { yearMonth: month })).body);
+  expect(inputs.employees.find((e: any) => e.id === employee.id).payrollReview).toBeNull();
+  expect(JSON.parse((await call('get-employee-salary', { empId: employee.id, yearMonth: month })).body).calculationStatus).toBe('needs-review');
+  expect((await call('lock-month', { yearMonth: month })).statusCode).toBe(409);
+  expect(fake.data.has('monthLocks/' + month)).toBe(false);
+  expect((await call('review-payroll-inputs', { empId: employee.id, review })).statusCode).toBe(200);
+  expect(fake.data.get('payrollReviews/SYNTH_' + month).employeeSourceKey).not.toBe(priorKey);
+  expect(JSON.parse((await call('get-employee-salary', { empId: employee.id, yearMonth: month })).body)).toMatchObject({ calculationStatus: 'ready', grossSalary: 2000 });
+ });
+ it.each([
+  { monthlySalary: 35000 }, { position: '專責人員' }, { status: '留停' }, { hireDate: '2026-02-01' },
+  { resignDate: '2026-04-30' }, { leaveOfAbsenceStart: '2026-04-10' }, { leaveOfAbsenceEnd: '2026-04-20' }, { laborPensionRate: 0.03 },
+ ])('invalidates review if employment/pay basis changes (%j)', async updates => {
+  await call('review-payroll-inputs', { empId: employee.id, review }); Object.assign(fake.data.get('employees/SYNTH'), updates);
+  const inputs = JSON.parse((await call('get-payroll-review-inputs', { yearMonth: month })).body);
+  expect(inputs.employees.find((e: any) => e.id === employee.id).payrollReview).toBeNull();
+ });
+ it('keeps a review valid after contact/name edits', async () => {
+  await call('review-payroll-inputs', { empId: employee.id, review });
+  Object.assign(fake.data.get('employees/SYNTH'), { name: '新名字', email: 'new@example.invalid', phone: 'new-contact' });
+  const inputs = JSON.parse((await call('get-payroll-review-inputs', { yearMonth: month })).body);
+  expect(inputs.employees.find((e: any) => e.id === employee.id).payrollReview).toMatchObject({ yearMonth: month, reviewedBy: 'ADMIN' });
+ });
+ it('preserves frozen scoped-review salary after later source changes', async () => {
+  await call('review-payroll-inputs', { empId: employee.id, review });
+  expect((await call('lock-month', { yearMonth: month })).statusCode).toBe(200);
+  fake.data.get('employees/SYNTH').hourlyRate = 999;
+  expect(JSON.parse((await call('get-employee-salary', { empId: employee.id, yearMonth: month })).body)).toMatchObject({ calculationStatus: 'locked', grossSalary: 1600 });
+ });
+ it('does not fallback from a present invalid month document', async () => {
+  await call('review-payroll-inputs', { empId: employee.id, review });
+  fake.data.get('payrollReviews/SYNTH_' + month).empId = 'OTHER';
+  const inputs = JSON.parse((await call('get-payroll-review-inputs', { yearMonth: month })).body);
+  expect(inputs.employees.find((e: any) => e.id === employee.id).payrollReview).toBeNull();
+ });
+});
+
+
+describe('review form evidence read/save contract', () => {
+ it('returns uncovered schedule evidence with employee identity for explicit exceptions', async () => {
+  const event = schedule('2026-04-02'); fake.data.set('dailySchedule/' + event.date, event);
+  const result = JSON.parse((await call('get-payroll-review-inputs', { yearMonth: month })).body);
+  expect(result.scheduleGaps).toEqual([expect.objectContaining({ empId: employee.id, date: event.date, scheduledMinutes: 480, coveredMinutes: 0, sourceKey: expect.any(String) })]);
+  const target = result.employees.find((e: any) => e.id === employee.id);
+  expect(target.employeeSourceKey).toMatch(/^[a-f0-9]{64}$/);
+  const candidate = structuredClone(review); candidate.scheduleExceptions = [{ date: event.date, reason: '當日班次取消，已核實', sourceKey: result.scheduleGaps[0].sourceKey }];
+  expect((await call('review-payroll-inputs', { empId: employee.id, review: candidate, expectedEmployeeSourceKey: target.employeeSourceKey })).statusCode).toBe(200);
+  expect(JSON.parse((await call('get-employee-salary', { empId: employee.id, yearMonth: month })).body)).toMatchObject({ calculationStatus: 'ready', grossSalary: 1600 });
+ });
+ it('rejects a stale form basis without persisting a new monthly review', async () => {
+  const result = JSON.parse((await call('get-payroll-review-inputs', { yearMonth: month })).body);
+  const sourceKey = result.employees.find((e: any) => e.id === employee.id).employeeSourceKey;
+  fake.data.get('employees/SYNTH').hourlyRate = 300;
+  const response = await call('review-payroll-inputs', { empId: employee.id, review, expectedEmployeeSourceKey: sourceKey });
+  expect(response.statusCode).toBe(409); expect(response.body).toContain('重新載入');
+  expect(fake.data.has('payrollReviews/SYNTH_' + month)).toBe(false);
  });
 });
