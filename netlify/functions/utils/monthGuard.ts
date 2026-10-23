@@ -14,6 +14,7 @@ export const monthsInRange = (start: string, end: string = start): string[] => {
 // All attendance/payroll mutations and month locking share this document in the
 // same Firestore transaction. A concurrent lock/mutation retries on conflict.
 export const runPayrollMutation = async <T>(db: any, months: string[], work: (tx: any) => Promise<T>): Promise<T> => db.runTransaction(async (tx: any) => {
+    try {
     const gate = db.collection('payrollControl').doc('revision');
     const revision = await tx.get(gate);
     for (const month of [...new Set(months)].sort()) {
@@ -27,6 +28,16 @@ export const runPayrollMutation = async <T>(db: any, months: string[], work: (tx
     try { result = await work(tx); } catch (error: any) { error.statusCode ||= 409; throw error; }
     tx.set(gate, { revision: (revision.data()?.revision || 0) + 1 });
     return result;
+    } catch (error: any) {
+        // The emulator can surface a contention-aborted query as INVALID_ARGUMENT
+        // with this exact status. Let Firestore's bounded native retry handle it;
+        // unrelated invalid arguments and business validation remain failures.
+        if (error?.code === 3 && error.details === 'Transaction is invalid or closed.') {
+            error.transactionRetryOriginalCode = error.code;
+            error.code = 10; // ABORTED; preserve original message/details/stack for logs.
+        }
+        throw error;
+    }
 });
 
 export const assertTransactionMonths = async (db: any, tx: any, months: string[]): Promise<void> => {
