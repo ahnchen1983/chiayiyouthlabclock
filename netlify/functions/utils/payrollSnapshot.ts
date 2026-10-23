@@ -75,7 +75,7 @@ export const selectPayrollLeaveEvidence = (leaves: LeaveRequest[], yearMonth: st
         // Preserve malformed current-month evidence too: excluding it here would
         // let the snapshot bypass the calculator's validation of the live inputs.
         if ((l.startDate || '').slice(0, 7) <= yearMonth && (l.endDate || l.startDate || '').slice(0, 7) >= yearMonth) return true;
-        if (l.payrollAllocations?.some(a => (a.date || '').startsWith(yearMonth + '-'))) return true;
+        if (Array.isArray(l.payrollAllocations) && l.payrollAllocations.some(a => typeof a?.date === 'string' && a.date.startsWith(yearMonth + '-'))) return true;
         return instant(l.startDate) < boundaryEnd && instant(l.endDate) > first;
     });
 };

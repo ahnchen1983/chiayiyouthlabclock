@@ -74,3 +74,13 @@ describe('snapshot leave evidence matches live payroll relevance', () => {
             .toEqual([current.id, 'invalid-allocation', 'invalid-current', 'boundary']);
     });
 });
+
+
+describe('malformed leave allocation evidence is selected without unsafe iteration', () => {
+    it.each([{ length: 1 }, [null], [{ date: 123 }]])('keeps relevant evidence and ignores unrelated dates without throwing (%j)', allocations => {
+        const current = { ...leave(), id: 'current', payrollAllocations: allocations } as any;
+        const boundary = { ...leave('2026-05-01'), id: 'boundary', payrollAllocations: allocations } as any;
+        const unrelated = { ...leave('2026-07-01'), id: 'unrelated', payrollAllocations: allocations } as any;
+        expect(selectPayrollLeaveEvidence([current, boundary, unrelated], month, [employee.id]).map(l => l.id)).toEqual(['current', 'boundary']);
+    });
+});
