@@ -84,7 +84,12 @@ export const calculateSalaryForEmployee = (
     if (policy && policy.moneyDecimals !== 0 && policy.moneyDecimals !== 2) reasons.add('結算金額精度待確認');
     const money = (value: number) => roundMoney(value, policy?.moneyDecimals ?? 2);
     const scheduled = employeeSchedule(emp, yearMonth, scheduleEvents);
-    const allEmployeeRecords = clockRecords.filter(r => r.empId === emp.id);
+    const employeeRecords = clockRecords.filter(r => r.empId === emp.id);
+    const invalidCardDates = employeeRecords.filter(r => typeof r.date !== 'string' || !validDate(r.date));
+    for (const r of invalidCardDates) reasons.add(`打卡日期無效或缺失，無法核定月份 ${r.id}`);
+    // Unknown dates cannot be treated as unrelated to this payroll month. Keep
+    // the issue visible, while only valid dates enter absolute-time arithmetic.
+    const allEmployeeRecords = employeeRecords.filter(r => typeof r.date === 'string' && validDate(r.date));
     const absolute = (r: Pick<ClockRecord, 'date'>, range: {start:number;end:number}) => { const base = Date.parse(r.date + 'T00:00:00+08:00') / 60000; return {start: base + range.start, end: base + range.end}; };
     let crossDateConflict = false;
     for (let i = 0; i < allEmployeeRecords.length; i++) for (let j = i + 1; j < allEmployeeRecords.length; j++) {
@@ -93,7 +98,7 @@ export const calculateSalaryForEmployee = (
         const x = absolute(a, ar), y = absolute(b, br);
         if (Math.min(x.end, y.end) > Math.max(x.start, y.start)) { crossDateConflict = true; reasons.add('跨日/跨月打卡重疊，須先核實日歸屬'); }
     }
-    const records = clockRecords.filter(r => r.empId === emp.id && r.date.startsWith(yearMonth));
+    const records = allEmployeeRecords.filter(r => r.date.startsWith(yearMonth));
     const currentCardRanges = records.flatMap(r => { const span = clockInterval(r); return span ? [absolute(r, span)] : []; });
     const currentScheduleRanges = [...scheduled].flatMap(([date, shifts]) => (shiftIntervals(shifts) || []).map(r => absolute({ date }, r)));
     const workEvidence = allEmployeeRecords.map(r => ({ record: r, span: clockInterval(r), work: confirmedWork(r) }));
@@ -102,6 +107,12 @@ export const calculateSalaryForEmployee = (
     const leaveByDate = new Map<string, DayLeave[]>();
     const leaves = leaveRequests.filter(l => {
         if (l.empId !== emp.id || l.status !== LeaveStatus.Approved) return false;
+        if (typeof l.startDate !== 'string' || typeof l.endDate !== 'string' ||
+            !validDate(l.startDate.slice(0, 10)) || !validDate(l.endDate.slice(0, 10)) ||
+            !Number.isFinite(leaveInstant(l.startDate)) || !Number.isFinite(leaveInstant(l.endDate)) || leaveInstant(l.endDate) <= leaveInstant(l.startDate)) {
+            reasons.add(`請假日期無效或倒置，無法核定月份 ${l.id}`);
+            return true;
+        }
         if ((l.startDate || '').slice(0, 7) <= yearMonth && (l.endDate || l.startDate || '').slice(0, 7) >= yearMonth) return true;
         if (Array.isArray(l.payrollAllocations) && l.payrollAllocations.some(a => typeof a?.date === 'string' && a.date.startsWith(yearMonth))) return true;
         // Last-day overnight work belongs to this month but can conflict with next month's leave.
@@ -143,7 +154,7 @@ export const calculateSalaryForEmployee = (
         if (!isOutingLeaveType(l.leaveType)) leaveDetails.push({ type: l.leaveType, hours: minutes / 60 });
     }
     let knownMinutes = 0, otMinutes = 0, otMoney = 0, hourlyLeavePay = 0, monthlyDeduction = 0, attendedDays = 0;
-    let incompleteAttendance = crossDateConflict || boundaryAttendanceUnknown;
+    let incompleteAttendance = invalidCardDates.length > 0 || crossDateConflict || boundaryAttendanceUnknown;
     const legacyReviewed=review?.yearMonth===yearMonth&&review.reviewedBy&&review.reviewedAt&&policy?.version;
     const basisCandidate=emp.effectiveMasterVersion?emp.payBasis:(legacyReviewed?review?.payBasis:null);
     const confirmedBasis=['monthly','hourly','daily'].includes(basisCandidate)?basisCandidate:null;
