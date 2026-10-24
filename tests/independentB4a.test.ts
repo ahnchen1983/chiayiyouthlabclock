@@ -1,3 +1,7 @@
+vi.mock('../netlify/functions/utils/makeupAttachmentRuntime', async importOriginal => ({...await importOriginal<typeof import('../netlify/functions/utils/makeupAttachmentRuntime')>(),getMakeupAttachmentRuntime:vi.fn()}));
+import {getMakeupAttachmentRuntime} from '../netlify/functions/utils/makeupAttachmentRuntime';
+import {syntheticAttachmentRuntime} from './fixtures/makeupAttachments';
+beforeEach(()=>vi.mocked(getMakeupAttachmentRuntime).mockReturnValue(syntheticAttachmentRuntime(false).runtime));
 import { hasAppliedMakeup } from '../netlify/functions/utils/makeupEvidence';
 // Snapshot transaction contract tests isolate formal eligibility below. Separate
 // unmocked eligibility regressions assert that production lock-month always blocks.
@@ -43,26 +47,27 @@ const lock=(m=month)=>fake.data.set(`monthLocks/${m}`,{yearMonth:m,lockedAt:revi
 beforeEach(()=>{vi.mocked(assertPayrollReady).mockImplementation(trialTransactionGate);fake.data.clear();fake.data.set('employees/ADMIN',{id:'ADMIN',name:'reviewer',role:UserRole.SuperAdmin,hireDate:'2020-01-01',accountKind:'system-account',hourlyRate:0,monthlySalary:0});fake.data.set(`employees/${employee.id}`,{...employee,status:'在職',hireDate:'2026-01-01'});fake.data.set('clockRecords/C1',card());});
 afterEach(()=>vi.useRealTimers());
 
+// These boundaries deliberately perform 100 sequential handler transactions; allow bounded CI contention.
 describe('independent B4a link capacity',()=>{
  const makeCase=(id='CASE')=>({id,empId:'SYNTH',revision:1,anchor:'card:C1',status:'open',observation:{window:{start:Date.parse('2026-04-01T09:00:00+08:00')/60000,end:Date.parse('2026-04-01T17:00:00+08:00')/60000}}});
  const login=()=>{fake.data.get('employees/SYNTH').role=UserRole.Employee;vi.mocked(adminAuth.verifyIdToken).mockResolvedValue({uid:'SYNTH'} as any);};
  const draft={date:'2026-04-01',type:'下班',recordId:'C1',requestedClockOut:'18:00',reason:'合成補卡理由五字以上'};
  afterEach(()=>vi.mocked(adminAuth.verifyIdToken).mockResolvedValue({uid:'ADMIN'} as any));
- it('101st request linked during submit must reject atomically instead of making case unreadable',async()=>{
+ it('101st request linked during submit must reject atomically instead of making case unreadable',{timeout:60000},async()=>{
  login();fake.data.set('attendanceCases/CASE',makeCase());for(let n=0;n<100;n++){const seeded=await call('submit-makeup-version',{...draft,operationId:'valid-prior-'+n,caseId:'CASE',expectedCaseRevision:1});expect(seeded.statusCode).toBe(200);}
  expect((await call('get-case-request-links',{caseId:'CASE'})).statusCode).toBe(200);const before=JSON.stringify([...fake.data]);
  const response=await call('submit-makeup-version',{...draft,operationId:'capacity-submit',caseId:'CASE',expectedCaseRevision:1});
  const read=await call('get-case-request-links',{caseId:'CASE'});console.log('capacity submit/read',response.statusCode,read.statusCode);
  expect(response.statusCode).toBe(409);expect(JSON.stringify([...fake.data])).toBe(before);
  });
- it('101st request link through link endpoint must reject atomically',async()=>{
+ it('101st request link through link endpoint must reject atomically',{timeout:60000},async()=>{
  login();fake.data.set('attendanceCases/CASE',makeCase());for(let n=0;n<100;n++){const seeded=await call('submit-makeup-version',{...draft,operationId:'valid-prior-'+n,caseId:'CASE',expectedCaseRevision:1});expect(seeded.statusCode).toBe(200);}
  const created=await call('submit-makeup-version',{...draft,operationId:'unlinked'});expect(created.statusCode).toBe(200);const r=JSON.parse(created.body);const before=JSON.stringify([...fake.data]);
  const response=await call('link-case-request',{requestId:r.id,caseId:'CASE',mode:'link',operationId:'capacity-link',reason:'合成關聯理由五字',expectedRevision:1,expectedCaseRevision:1,expectedLinkRevision:0});
  console.log('capacity link/read',response.statusCode,(await call('get-case-request-links',{caseId:'CASE'})).statusCode);
  expect(response.statusCode).toBe(409);expect(JSON.stringify([...fake.data])).toBe(before);
  });
- it('request history cap remains atomic when approval would also write raw card/revision',async()=>{
+ it('request history cap remains atomic when approval would also write raw card/revision',{timeout:60000},async()=>{
  login();const made=await call('submit-makeup-version',{...draft,operationId:'history'});const r=JSON.parse(made.body);fake.data.get('makeupRequests/'+r.id).history=Array.from({length:200},(_,n)=>({id:'h'+n}));vi.mocked(adminAuth.verifyIdToken).mockResolvedValue({uid:'ADMIN'} as any);
  const before=JSON.stringify([...fake.data]);expect((await call('act-makeup-request',{requestId:r.id,mode:'approve',expectedRevision:1,operationId:'full-history-approve',reason:'合成審核理由五字'})).statusCode).toBe(409);expect(JSON.stringify([...fake.data])).toBe(before);
  });

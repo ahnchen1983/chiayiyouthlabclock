@@ -1,3 +1,8 @@
+vi.mock('../netlify/functions/utils/makeupAttachmentRuntime', async importOriginal => ({...await importOriginal<typeof import('../netlify/functions/utils/makeupAttachmentRuntime')>(),getMakeupAttachmentRuntime:vi.fn()}));
+import {getMakeupAttachmentRuntime} from '../netlify/functions/utils/makeupAttachmentRuntime';
+import {syntheticAttachmentRuntime,syntheticPdf} from './fixtures/makeupAttachments';
+let attachmentFixture:ReturnType<typeof syntheticAttachmentRuntime>;
+beforeEach(()=>{attachmentFixture=syntheticAttachmentRuntime(false);vi.mocked(getMakeupAttachmentRuntime).mockReturnValue(attachmentFixture.runtime);});
 // Snapshot transaction contract tests isolate formal eligibility below. Separate
 // unmocked eligibility regressions assert that production lock-month always blocks.
 vi.mock('../netlify/functions/utils/payrollPreflight', async importOriginal => {
@@ -419,4 +424,22 @@ it('B4a capacity guard serializes two contenders for the last retained case slot
  const draft={date:'2026-04-01',type:'下班',recordId:'C1',requestedClockOut:'18:00',reason:'合成最後名額競爭',caseId:id,expectedCaseRevision:1};
  const responses=await Promise.all(['one','two'].map(operationId=>call('submit-makeup-version',{...draft,operationId},'synthetic-employee')));expect(responses.map(r=>r.statusCode).sort()).toEqual([200,409]);expect((await db.collection('caseRequestLinks').where('caseId','==',id).get()).size).toBe(100);expect((await db.collection('makeupRequests').get()).size).toBe(1);expect((await db.collection('makeupRequestEvents').get()).size).toBe(1);expect((await db.collection('caseRequestLinkEvents').get()).size).toBe(1);
  expect((await call('get-case-request-links',{caseId:id},'synthetic-employee')).statusCode).toBe(200);
+});
+describe('B4b metadata transactions with fake private storage/scanner (not a storage emulator)',()=>{
+ const employeeCall=(action:string,data:any)=>call(action,data,'synthetic-employee');
+ const draft=async()=>{await db.collection('employees').doc(employee.id).update({role:UserRole.Employee});const r=await employeeCall('create-makeup-attachment-draft',{date:'2026-04-01',operationId:'draft'});expect(r.statusCode,r.body).toBe(200);return JSON.parse(r.body);};
+ const upload=(d:any,extra:any={})=>employeeCall('upload-makeup-attachment',{draftId:d.id,expectedDraftRevision:d.revision,operationId:'upload',name:'synthetic.pdf',mime:'application/pdf',contentBase64:syntheticPdf,...extra});
+ const submit=(d:any,rev:number)=>employeeCall('submit-makeup-version',{date:d.date,type:'下班',recordId:'C1',requestedClockOut:'18:00',reason:'合成附件交易核對',operationId:'submit',attachmentDraftId:d.id,expectedAttachmentDraftRevision:rev});
+ it('duplicate concurrent upload creates one immutable object and metadata history',async()=>{const d=await draft();const results=await Promise.all([upload(d),upload(d)]);expect(results.map(r=>r.statusCode)).toEqual([200,200]);expect(attachmentFixture.writes).toBe(1);expect((await db.collection('makeupAttachments').get()).size).toBe(1);expect((await db.collection('makeupAttachmentEvents').get()).size).toBe(2);expect((await db.collection('makeupAttachmentDrafts').doc(d.id).get()).data()?.revision).toBe(2);});
+ it('competing uploads at one-file policy create only one reserved object',async()=>{attachmentFixture.runtime.policy!.maxFiles=1;const d=await draft();const results=await Promise.all([upload(d),upload(d,{operationId:'second'})]);expect(results.map(r=>r.statusCode).sort()).toEqual([200,409]);expect((await db.collection('makeupAttachments').get()).size).toBe(1);expect(attachmentFixture.objects.size).toBe(1);});
+ it('pending scanner blocks submission; completion binds atomically once and preserves private source',async()=>{
+  const d=await draft();let release!:()=>void,started!:()=>void;const entered=new Promise<void>(r=>started=r),wait=new Promise<void>(r=>release=r);attachmentFixture.runtime.scanner={async scan(){started();await wait;return {verdict:'clean',mime:'application/pdf',engine:'synthetic-only',version:'v1'};}};
+  const uploading=upload(d);await entered;expect((await submit(d,2)).statusCode).toBe(409);expect((await db.collection('makeupRequests').get()).size).toBe(0);release();expect((await uploading).statusCode).toBe(200);
+  const results=await Promise.all([submit(d,2),submit(d,2)]);expect(results.map(r=>r.statusCode)).toEqual([200,200]);expect((await db.collection('makeupRequests').get()).size).toBe(1);const r=JSON.parse(results[0].body),m=(await db.collection('makeupAttachments').get()).docs[0].data();expect(m.requestId).toBe(r.id);expect((await db.collection('makeupAttachmentDrafts').doc(d.id).get()).data()?.status).toBe('submitted');expect((await db.collection('makeupAttachmentEvents').get()).size).toBe(3);
+ });
+ it('withdraw during scanning cannot resurrect metadata or expose retained bytes',async()=>{
+  const d=await draft();let release!:()=>void,started!:()=>void;const entered=new Promise<void>(r=>started=r),wait=new Promise<void>(r=>release=r);attachmentFixture.runtime.scanner={async scan(){started();await wait;return {verdict:'clean',mime:'application/pdf',engine:'synthetic-only',version:'v1'};}};
+  const uploading=upload(d);await entered;const m=(await db.collection('makeupAttachments').get()).docs[0];expect((await employeeCall('withdraw-makeup-attachment',{attachmentId:m.id,expectedRevision:1,expectedDraftRevision:2,operationId:'withdraw',reason:'合成撤除進行中上傳'})).statusCode).toBe(200);release();expect((await uploading).statusCode).toBe(409);expect((await m.ref.get()).data()?.status).toBe('removed');expect((await employeeCall('issue-makeup-attachment-access',{attachmentId:m.id})).statusCode).toBe(409);expect(attachmentFixture.objects.size).toBe(1);
+ });
+ it('one-use download access serializes two consumers and denies other principals',async()=>{const d=await draft(),m=JSON.parse((await upload(d)).body);await submit(d,2);const grant=JSON.parse((await employeeCall('issue-makeup-attachment-access',{attachmentId:m.id})).body);expect((await call('download-makeup-attachment',grant)).statusCode).toBe(403);const results=await Promise.all([employeeCall('download-makeup-attachment',grant),employeeCall('download-makeup-attachment',grant)]);expect(results.map(r=>r.statusCode).sort()).toEqual([200,403]);expect(JSON.parse(results.find(r=>r.statusCode===200)!.body).contentBase64).toBe(syntheticPdf);});
 });

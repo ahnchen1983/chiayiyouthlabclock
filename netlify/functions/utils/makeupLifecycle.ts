@@ -1,3 +1,4 @@
+import {prepareAttachmentSubmission,assertRequestAttachmentEvidence} from './makeupAttachments';
 import { requestAffectsMonth } from './payrollPreflight';
 import { isMonthLocked } from './monthLock';
 import { normalizeScheduleDoc } from './calculations';
@@ -75,7 +76,7 @@ const assertLinkCapacity=async(db:any,tx:any,pairs:{caseId:string;requestId:stri
 const linkValue=(c:any,r:any,uid:string,at:string,reason:string)=>({id:linkId(c.id,r.id),schemaVersion:'case-request-link-v1',caseId:c.id,requestId:r.id,empId:r.empId,kind:'makeupRequests',state:'active',revision:1,caseRevision:c.revision,requestRevision:revision(r),requestSourceKey:makeupSourceKey(r),actor:uid,at,reason});
 const saveLink=(db:any,tx:any,l:any,op:string)=>{tx.set(db.collection('caseRequestLinks').doc(l.id),l);tx.create(db.collection('caseRequestLinkEvents').doc(evidenceHash([l.id,l.revision,op])),{...l,operationId:op});};
 export async function handleMakeupAction(db:any,uid:string,action:string,data:any){
- if(['actor','at','proof','appliedEvidence','status','empId','approver','history','revision'].some(k=>k in data))fail(400,'不得提交伺服器擁有的欄位');
+ if(['actor','at','proof','appliedEvidence','status','empId','approver','history','revision','attachments','attachmentPolicyVersion'].some(k=>k in data))fail(400,'不得提交伺服器擁有的欄位');
  if(action==='get-case-request-links'){
   const a=await actor(db,uid),{value:c}=await read(db,null,'attendanceCases',data.caseId);scope(a,c.empId);
   const snap=await db.collection('caseRequestLinks').where('caseId','==',c.id).limit(101).get();if(snap.size>100)fail(409,'關聯需分頁歸檔');
@@ -94,9 +95,10 @@ export async function handleMakeupAction(db:any,uid:string,action:string,data:an
    const r={...payload(data,a,at),id:'makeup_'+evidenceHash([uid,data.operationId]),supersedesRequestId:null};const months=[...requestMonths(r),...await checkCard(db,tx,r)];let c:any;
    if(data.caseId){c=(await read(db,tx,'attendanceCases',data.caseId)).value;owned(a,c.empId);if(c.revision!==data.expectedCaseRevision)fail(409,'案件已更新');match(c,r);months.push(...caseMonths(c));}
    if(c)await assertLinkCapacity(db,tx,[{caseId:c.id,requestId:r.id}]);
+   const attachments=await prepareAttachmentSubmission(db,tx,uid,data,r.id,r.date);Object.assign(r,attachments.fields);
    await assertMakeupRequestLocks(db,tx,[r]);await assertTransactionMonths(db,tx,months);
    result=saveRequest(db,tx,r,event(r,uid,at,data.operationId,data.reason,null),true);
-   if(c)saveLink(db,tx,linkValue(c,r,uid,at,data.reason),data.operationId);
+   if(c)saveLink(db,tx,linkValue(c,r,uid,at,data.reason),data.operationId);attachments.commit();
   }else{
    const {value:r}=await read(db,tx,'makeupRequests',data.requestId);scope(a,r.empId);await read(db,tx,'employees',r.empId);if(revision(r)!==data.expectedRevision)fail(409,'申請已更新，請重新載入');
    const nonApplying=action==='act-makeup-request'&&['cancel','return','reject'].includes(data.mode);
@@ -119,14 +121,16 @@ export async function handleMakeupAction(db:any,uid:string,action:string,data:an
      const emp=(await read(db,tx,'employees',r.empId)).value;const next={...payload({...data.patch,reason:data.reason},emp,at),id:'makeup_'+evidenceHash([uid,data.operationId]),supersedesRequestId:r.id};
      months.push(...requestMonths(next),...await checkCard(db,tx,next));for(const {l,c} of related)if(l.state==='active')match(c,next);
      await assertLinkCapacity(db,tx,related.filter(({l})=>l.state==='active').map(({c})=>({caseId:c.id,requestId:next.id})));
+     const attachments=await prepareAttachmentSubmission(db,tx,uid,data.patch||{},next.id,next.date);Object.assign(next,attachments.fields);
      await assertMakeupRequestLocks(db,tx,[r,next]);await assertTransactionMonths(db,tx,months);
      const prior={...r,status:'已取代',revision:revision(r)+1,supersededByRequestId:next.id};saveRequest(db,tx,prior,event(prior,uid,at,data.operationId,data.reason,r.status));
      result=saveRequest(db,tx,next,event(next,uid,at,data.operationId,data.reason,null),true);
-     for(const {l,c} of related)if(l.state==='active')saveLink(db,tx,linkValue(c,next,uid,at,data.reason),data.operationId);
+     for(const {l,c} of related)if(l.state==='active')saveLink(db,tx,linkValue(c,next,uid,at,data.reason),data.operationId);attachments.commit();
     }else{
      if(data.mode==='cancel'?!['待審核','待補件'].includes(r.status):r.status!=='待審核')fail(409,'此狀態不可執行；核准後須另建更正，不能取消');
      const status={cancel:'已取消',return:'待補件',approve:'核准',reject:'駁回'}[data.mode];let applied:any=null,cardWrite:any=null;
      if(data.mode==='approve'){
+      await assertRequestAttachmentEvidence(db,tx,r);
       payload(r,{id:r.empId,name:r.name},r.requestDate||at);
       const cards=await tx.get(db.collection('clockRecords').where('empId','==',r.empId).where('date','==',r.date));
       const selected=r.recordId?cards.docs.find((d:any)=>d.id===r.recordId):(cards.docs.length===1?cards.docs[0]:undefined);

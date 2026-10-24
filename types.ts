@@ -187,6 +187,8 @@ export type MakeupRequestStatus = '待審核' | '核准' | '駁回' | '待補件
 
 export interface ClockMakeupRequest {
     schemaVersion?: 'makeup-request-v1';
+    attachmentPolicyVersion?: string;
+    attachments?: {id:string;revision:number;sha256:string;mime:string;size:number}[];
     revision?: number;
     recordId?: string | null;
     requestedClockInAt?: string | null;

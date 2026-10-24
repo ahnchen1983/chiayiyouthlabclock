@@ -1,3 +1,4 @@
+import {ATTACHMENT_ACTIONS,handleMakeupAttachmentAction,prepareAttachmentSubmission,assertRequestAttachmentEvidence} from './utils/makeupAttachments';
 import { MAKEUP_ACTIONS, handleMakeupAction, assertMakeupRequestLocks } from './utils/makeupLifecycle';
 import { CASE_ACTIONS, handleAttendanceCaseAction } from './utils/attendanceCaseService';
 import { makeupSourceKey } from './utils/makeupEvidence';
@@ -657,6 +658,10 @@ const createPendingPayrollRequest = async (kind: RequestKind, value: any, ref = 
                 }
             }
         }
+        if(kind==='makeupRequests'){
+            const attachments=await prepareAttachmentSubmission(db,tx,value.empId,{},ref.id,value.date);
+            Object.assign(value,attachments.fields);attachments.commit();
+        }
         tx.set(ref, value);
     });
     return ref;
@@ -766,6 +771,10 @@ export const handler: Handler = async (event) => {
     const isAdmin = currentUserRole === UserRole.Admin || isSuperAdmin;
 
     try {
+        if (ATTACHMENT_ACTIONS.includes(action as any)) {
+            const response=ok(await handleMakeupAttachmentAction(db,uid,action,data));
+            return {...response,headers:{...response.headers,'Cache-Control':'no-store','Pragma':'no-cache','X-Content-Type-Options':'nosniff'}};
+        }
         if (MAKEUP_ACTIONS.includes(action as any)) return ok(await handleMakeupAction(db, uid, action, data));
         if (CASE_ACTIONS.includes(action as any)) return ok(await handleAttendanceCaseAction(db, uid, action, data));
         switch (action) {
@@ -1926,6 +1935,7 @@ export const handler: Handler = async (event) => {
             // ==================== 補打卡申請（Phase 3.3）====================
 
             case 'submit-makeup-request': {
+                if(data.attachmentDraftId||data.attachments) return fail(409,'附件必須透過版本化補卡入口提交');
                 const empSnap = await db.collection('employees').doc(uid).get();
                 if (!empSnap.exists) return fail(404, '員工不存在');
                 const name = empSnap.data()!.name;
@@ -1974,6 +1984,7 @@ export const handler: Handler = async (event) => {
                     if (!snap.exists) throw new Error('申請不存在');
                     const req = snap.data()!;
                     if (req.schemaVersion === 'makeup-request-v1') return failVersionedMakeup();
+                    if(data.status==='核准') await assertRequestAttachmentEvidence(db,tx,{...req,id:data.requestId});
                     await assertMakeupRequestLocks(db, tx, [{...req,id:data.requestId}]);
                     const freshActor = await tx.get(db.collection('employees').doc(uid));
                     if (![UserRole.Admin, UserRole.SuperAdmin].includes(freshActor.data()?.role) || req.empId === uid) { const e: any = new Error('不可自行審核或無管理權限'); e.statusCode = 403; throw e; }

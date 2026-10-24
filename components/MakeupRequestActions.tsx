@@ -1,3 +1,4 @@
+import MakeupAttachmentPanel from './MakeupAttachmentPanel';
 import { useMakeupOperation } from '../hooks/useMakeupOperation';
 import React, { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
@@ -35,6 +36,7 @@ export default function MakeupRequestActions({request,onChanged,onResubmit}:{req
    <button disabled={busy} onClick={()=>void refresh()}>重新載入申請</button>
   </div>
   {manager&&own&&<p>本人申請不可自行審核；指定主管政策仍待設定。</p>}
+  {!!r.attachments?.length&&<MakeupAttachmentPanel requestId={r.id}/>}
   <details><summary>申請歷程</summary>{r.history?.length?r.history.map(h=><p key={h.id}>{h.at} · {h.actor} · {h.from||'建立'} → {h.to}：{h.reason}</p>):<p>舊資料無版本歷程，不捏造還原。</p>}</details>
  </section>;
 }

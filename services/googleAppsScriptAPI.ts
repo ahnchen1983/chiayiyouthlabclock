@@ -466,7 +466,7 @@ export const apiListAttendanceCases = (query: import('./attendanceCaseContract')
 export const apiGetAttendanceCase = (caseId: string): Promise<import('./attendanceCaseContract').CaseDetail> => callAPI('get-attendance-case', {caseId});
 export const apiActAttendanceCase = (command: import('./attendanceCaseContract').CaseCommand): Promise<{id:string;revision:number;status:string}> => callAPI('act-attendance-case', {...command});
 
-export interface MakeupDraft {date:string;type:'上班'|'下班'|'上下班';reason:string;recordId?:string;requestedClockIn?:string;requestedClockOut?:string;requestedClockInAt?:string;requestedClockOutAt?:string}
+export interface MakeupDraft {attachmentDraftId?:string;expectedAttachmentDraftRevision?:number;date:string;type:'上班'|'下班'|'上下班';reason:string;recordId?:string;requestedClockIn?:string;requestedClockOut?:string;requestedClockInAt?:string;requestedClockOutAt?:string}
 export interface MakeupCaseContext {history?:{requestId:string;revision:number;state:string;actor:string;at:string;reason:string}[];historyComplete?:boolean;caseId:string;empId:string;caseRevision:number;window:{start:number;end:number};recordId:string|null;links:CaseRequestLink[];workflowPolicyStatus:'needs-configuration'}
 export interface CaseRequestLink {id:string;caseId:string;requestId:string;empId:string;state:'active'|'inactive';revision:number;requestRevision:number;caseRevision:number;reason:string;actor:string;at:string}
 export const apiSubmitMakeupVersion=(request:MakeupDraft & {operationId:string;caseId?:string;expectedCaseRevision?:number}):Promise<ClockMakeupRequest>=>callAPI('submit-makeup-version',{...request});
@@ -474,3 +474,13 @@ export const apiActMakeupRequest=(command:{requestId:string;mode:'cancel'|'retur
 export const apiGetMakeupRequestDetail=(requestId:string):Promise<ClockMakeupRequest>=>callAPI('get-makeup-request-detail',{requestId});
 export const apiGetCaseRequestLinks=(caseId:string):Promise<MakeupCaseContext>=>callAPI('get-case-request-links',{caseId});
 export const apiLinkCaseRequest=(command:{caseId:string;requestId:string;mode:'link'|'unlink';expectedRevision:number;expectedCaseRevision:number;expectedLinkRevision:number;operationId:string;reason:string}):Promise<CaseRequestLink>=>callAPI('link-case-request',{...command});
+
+export interface MakeupAttachment {id:string;draftId:string;requestId:string|null;owner:string;name:string;mime:string;size:number;sha256:string;status:string;uploadComplete:boolean;scan:{verdict:string;engine:string;version:string}|null;revision:number;createdAt:string;updatedAt:string}
+export interface MakeupAttachmentCapability {enabled:boolean;mode:string;reason:string;productionConfigured:false;policy:{version:string;required:boolean;maxFiles:number;maxBytes:number;allowedMime:string[]}|null;technicalLimits:{bytes:number;files:number;grantSeconds:number}}
+export const apiAttachmentCapability=():Promise<MakeupAttachmentCapability>=>callAPI('get-makeup-attachment-capability');
+export const apiAttachmentDraft=(date:string,operationId:string):Promise<{id:string;date:string;revision:number;status:string}>=>callAPI('create-makeup-attachment-draft',{date,operationId});
+export const apiListAttachments=(query:{draftId?:string;makeupRequestId?:string}):Promise<{draft?:{id:string;date:string;status:string;revision:number};items:MakeupAttachment[];legacyUnverified?:boolean}>=>callAPI('list-makeup-attachments',{...query});
+export const apiUploadAttachment=(command:{draftId:string;expectedDraftRevision:number;operationId:string;name:string;mime:string;contentBase64:string}):Promise<MakeupAttachment>=>callAPI('upload-makeup-attachment',{...command});
+export const apiWithdrawAttachment=(command:{attachmentId:string;expectedRevision:number;expectedDraftRevision:number;operationId:string;reason:string}):Promise<MakeupAttachment>=>callAPI('withdraw-makeup-attachment',{...command});
+export const apiAttachmentAccess=(attachmentId:string):Promise<{accessToken:string;expiresAt:number}>=>callAPI('issue-makeup-attachment-access',{attachmentId});
+export const apiDownloadAttachment=(accessToken:string):Promise<{name:string;mime:string;size:number;contentBase64:string;disposition:string}>=>callAPI('download-makeup-attachment',{accessToken});

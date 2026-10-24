@@ -282,3 +282,10 @@
 - 2.2 **未實作／待政策**：附件儲存、指定主管配置、期限、真通知與跨裝置 receipt 恢復；不是完整申請驗收。
 - 2.3／2.4／4.4 未因此完成：異常說明／追溯假單完整流程、OTcomp 與帳本仍另批。
 - 6.1／6.3 正式 gate 保持 BLOCKED；取消／解除關聯不消除未解案件，不直接更正已鎖月份。8.1／8.3 仍未核正式資料、部署或 effectiveMonth；2026-08 全員回溯核對範圍不代表改寫結算授權。
+
+
+### B4b 增量（可測程式；正式 storage/scanner 未配置）
+
+2.2 **部分／待政策／待正式設定**：新增本人draft-bound附件metadata、上傳掃描契約、原子request綁定、私有授權短效下載、草稿邏輯撤除與稽核，接既有補卡UI。伺服器重算hash與內容型別，不信任client scan；缺adapter或政策fail closed，新版及舊提交入口皆不能繞過必附。測試只用合成bytes、fake storage/scanner及真Firestore metadata emulator；不宣稱已配置正式儲存或病毒掃描。技術硬上限不是公司已核數量／容量／保存期限。詳見 PR13_BATCH_B4B.md。
+
+6.1／8.1／8.3：正式月結仍BLOCKED；真附件、正式IAM／儲存與掃描、保留期限、2026-08全體人員對帳均未驗收。B4c／B5未混入本批。僅發布至既有 Draft PR 供審查，未部署／寫production／發真通知，原正式站未改。
