@@ -1,3 +1,5 @@
+import {employmentWindowStates} from '../../../utils/employmentAuthority';
+import {normalPayPreview} from './normalPayPreview';
 import type { ClockRecord, LeaveRequest, ScheduleEvent, SalaryDetail, SystemConfig, PayrollReview } from '../../../types';
 import { LeaveStatus, isOutingLeaveType } from '../../../types';
 import { clockInterval, confirmedWork, shiftIntervals, intervalMinutes, hhmmMinutes, leaveEndMinutes, validDate, clockSourceKey } from '../../../utils/attendance';
@@ -71,7 +73,8 @@ export const calculateSalaryForEmployee = (
     emp: any, yearMonth: string, scheduleEvents: ScheduleEvent[], clockRecords: ClockRecord[],
     leaveRequests: LeaveRequest[], _legacyConfig?: SystemConfig,
 ): SalaryDetail => {
-    const reasons = new Set<string>();
+    const reasons = new Set<string>(emp.masterAssessment?.issues||[]);
+    if(emp.employmentAuthority){const start=Date.parse(yearMonth+'-01T00:00:00+08:00')/60000,end=start+new Date(Date.UTC(Number(yearMonth.slice(0,4)),Number(yearMonth.slice(5)),0)).getUTCDate()*1440;if(employmentWindowStates(emp,start,end).includes('unknown'))reasons.add('有效任職主檔未涵蓋本月，需覆核');}
     const review = emp.payrollReview as PayrollReview | undefined;
     const rawPolicy = review?.policy;
     const policy = rawPolicy && Array.isArray(rawPolicy.regularDates) && Array.isArray(rawPolicy.overtimeTiers) ? rawPolicy : undefined;
@@ -141,7 +144,15 @@ export const calculateSalaryForEmployee = (
     }
     let knownMinutes = 0, otMinutes = 0, otMoney = 0, hourlyLeavePay = 0, monthlyDeduction = 0, attendedDays = 0;
     let incompleteAttendance = crossDateConflict || boundaryAttendanceUnknown;
-    const monthly = emp.position === '專責人員';
+    const legacyReviewed=review?.yearMonth===yearMonth&&review.reviewedBy&&review.reviewedAt&&policy?.version;
+    const basisCandidate=emp.effectiveMasterVersion?emp.payBasis:(legacyReviewed?review?.payBasis:null);
+    const confirmedBasis=['monthly','hourly','daily'].includes(basisCandidate)?basisCandidate:null;
+    if(!['monthly','hourly','daily'].includes(confirmedBasis))reasons.add('薪制未明示核定，不依職稱或人員類別推定');
+    const monthly = confirmedBasis==='monthly';
+    if(confirmedBasis&&!['monthly','hourly','daily'].includes(confirmedBasis))reasons.add('薪制值無效');
+    if(confirmedBasis==='daily')reasons.add('日薪計算待核');
+    const first=yearMonth+'-01',last=new Date(Date.UTC(Number(yearMonth.slice(0,4)),Number(yearMonth.slice(5)),0)).toISOString().slice(0,10);
+    if(monthly&&!emp.effectiveMasterVersion&&((emp.hireDate&&emp.hireDate>first&&emp.hireDate<=last)||(emp.resignDate&&emp.resignDate>=first&&emp.resignDate<last)||(emp.leaveOfAbsenceStart&&emp.leaveOfAbsenceStart<=last&&(!emp.leaveOfAbsenceEnd||emp.leaveOfAbsenceEnd>=first))))reasons.add('部分月到離職／留停折算待C2，不能直接給整月月薪');
     const baseRate = monthly ? Number(emp.monthlySalary) : Number(emp.hourlyRate);
     if (!Number.isFinite(baseRate) || baseRate <= 0) reasons.add('薪資設定缺漏或無效');
     const divisor = policy?.monthlyHourlyDivisor;
@@ -192,6 +203,8 @@ export const calculateSalaryForEmployee = (
     knownMinutes = intervalMinutes(records.flatMap(r => (confirmedWork(r) || []).map(range => absolute(r, range))));
     const insurance = review?.insurance;
     if (!insurance || [insurance.labor, insurance.health, insurance.pensionSelf].some(n => !Number.isFinite(n) || n < 0)) reasons.add('本月投保級距/身分及自付金額待覆核');
+    const normalPreview = emp.normalPayDays ? normalPayPreview(emp,yearMonth,clockRecords,leaveRequests,validLeaveAllocations,[...reasons].filter(r=>/卡|重疊|排班|實際工作|請假|外勤/.test(r))) : undefined;
+    if(normalPreview){reasons.delete('多段雇用／留停／調薪或部分月折算待C2');reasons.delete('部分月到離職／留停折算待C2，不能直接給整月月薪');reasons.add('C2a僅正常薪資分段試算；完整加班／扣項整合待C2b/C3，不可當結算薪資');for(const issue of normalPreview.issues)reasons.add(issue);}
     const ready = reasons.size === 0;
     const base = money(monthly ? baseRate : (knownMinutes - otMinutes) / 60 * hourly + hourlyLeavePay);
     const overtimePay = money(otMoney);
@@ -199,7 +212,9 @@ export const calculateSalaryForEmployee = (
     const deduction = money(monthlyDeduction);
     const totalDeductions = money((insurance?.labor || 0) + (insurance?.health || 0) + (insurance?.pensionSelf || 0) + deduction);
     return {
+        ...(normalPreview?{normalPayPreview:normalPreview}:{}),
         empId: emp.id, name: emp.name, position: emp.position, yearMonth,
+        payBasis:confirmedBasis||null,employmentType:emp.employmentType||null,effectiveMasterVersion:emp.effectiveMasterVersion||null,
         calculationVersion: PAYROLL_VERSION, calculationStatus: ready ? 'ready' : 'needs-review', reviewReasons: [...reasons],
         policyVersion: policy?.version || '', knownWorkMinutes: knownMinutes,
         totalWorkDays: attendedDays, totalWorkHours: incompleteAttendance ? null : knownMinutes / 60,

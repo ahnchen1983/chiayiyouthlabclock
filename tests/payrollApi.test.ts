@@ -170,7 +170,7 @@ describe('payroll review access and explicit input contract', () => {
  });
  it('requires an explicit positive monthly hourly divisor for monthly employees', async () => {
   fake.data.get('employees/SYNTH').position = '專責人員';
-  const payload = structuredClone(review); delete payload.policy.monthlyHourlyDivisor;
+  const payload = structuredClone(review); payload.payBasis='monthly'; delete payload.policy.monthlyHourlyDivisor;
   expect((await call('review-payroll-inputs', { empId: employee.id, review: payload })).statusCode).toBe(400);
   payload.policy.monthlyHourlyDivisor = 240;
   expect((await call('review-payroll-inputs', { empId: employee.id, review: payload })).statusCode).toBe(200);
@@ -243,7 +243,10 @@ describe('month-scoped payroll reviews preserve prior decisions and basis', () =
  it('invalidates a scoped review after rate changes and never falls back to the legacy review', async () => {
   await call('review-payroll-inputs', { empId: employee.id, review });
   const priorKey = fake.data.get('payrollReviews/SYNTH_' + month).employeeSourceKey;
-  expect((await call('update-employee', { empId: employee.id, updates: { hourlyRate: 250 } })).statusCode).toBe(200);
+  // C1 makes legacy salary writes read-only; simulate an out-of-band source change
+  // to retain the original stale-source protection regression.
+  expect((await call('update-employee', { empId: employee.id, updates: { hourlyRate: 250 } })).statusCode).toBe(409);
+  fake.data.get('employees/SYNTH').hourlyRate = 250;
   // Even a legacy value matching this month cannot rescue the stale scoped document.
   fake.data.get('employees/SYNTH').payrollReview = structuredClone(review);
   const inputs = JSON.parse((await call('get-payroll-review-inputs', { yearMonth: month })).body);

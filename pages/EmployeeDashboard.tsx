@@ -1,3 +1,4 @@
+import PayrollMasterTimeline from '../components/PayrollMasterTimeline';
 import CompWorkflow from '../components/CompWorkflow';
 import OvertimeWorkflow from '../components/OvertimeWorkflow';
 // FIX: Correctly import React and the useState hook.
@@ -42,7 +43,7 @@ const KeyIcon: React.FC<{ className?: string }> = ({ className }) => (
   </svg>
 );
 
-type View = 'comp' | 'overtime' | 'cases' | 'clock' | 'schedule' | 'records' | 'leave' | 'fullSchedule' | 'salary' | 'makeup' | 'leaveBalance' | 'preferences' | 'openShifts' | 'leaveOfAbsence' | 'shiftSwap';
+type View = 'master' | 'comp' | 'overtime' | 'cases' | 'clock' | 'schedule' | 'records' | 'leave' | 'fullSchedule' | 'salary' | 'makeup' | 'leaveBalance' | 'preferences' | 'openShifts' | 'leaveOfAbsence' | 'shiftSwap';
 
 const EmployeeDashboard: React.FC = () => {
   const { user, logout } = useAuth();
@@ -51,6 +52,7 @@ const EmployeeDashboard: React.FC = () => {
 
   const renderView = () => {
     switch (currentView) {
+      case 'master': return <PayrollMasterTimeline />;
       case 'comp': return <CompWorkflow />;
       case 'overtime': return <OvertimeWorkflow />;
       case 'cases': return <AttendanceCaseCenter />;
@@ -143,6 +145,7 @@ const EmployeeDashboard: React.FC = () => {
         <NavItem view="shiftSwap" icon={<CalendarIcon className="w-6 h-6" />} label="換班" />
         <NavItem view="cases" icon={<ListIcon className="w-6 h-6" />} label="異常待辦" />
         <NavItem view="records" icon={<ListIcon className="w-6 h-6" />} label="打卡紀錄" />
+        <NavItem view="master" icon={<SendIcon className="w-6 h-6" />} label="薪資有效期主檔" />
         <NavItem view="comp" icon={<SendIcon className="w-6 h-6" />} label="補休帳本" />
         <NavItem view="overtime" icon={<SendIcon className="w-6 h-6" />} label="加班申請" />
         <NavItem view="leave" icon={<SendIcon className="w-6 h-6" />} label="請假/外勤" />

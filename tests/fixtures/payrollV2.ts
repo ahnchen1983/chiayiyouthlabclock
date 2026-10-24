@@ -2,7 +2,7 @@ import type { ClockRecord, PayrollReview, ScheduleEvent, LeaveRequest } from '..
 import { LeaveType, LeaveStatus } from '../../types';
 import { clockSourceKey, clockInterval } from '../../utils/attendance';
 export const month = '2026-04';
-export const review: PayrollReview = { yearMonth: month, reviewedBy: 'SYNTH-reviewer', reviewedAt: '2026-05-01T00:00:00Z', policy: {
+export const review: PayrollReview = { payBasis:'hourly', yearMonth: month, reviewedBy: 'SYNTH-reviewer', reviewedAt: '2026-05-01T00:00:00Z', policy: {
     version: 'fixture-regular-day-8h-actual-v1', hoursBasis: 'actual', moneyDecimals: 2, workDateRule: 'clock-in-date', dailyRegularMinutes: 480,
     regularDates: Array.from({length:30},(_,i)=>`2026-04-${String(i+1).padStart(2,'0')}`),
     overtimeTiers: [{minutes:120,numerator:4,denominator:3},{minutes:120,numerator:5,denominator:3}],

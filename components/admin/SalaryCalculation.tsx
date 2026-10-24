@@ -1,3 +1,5 @@
+import TerminationSettlementReview from '../TerminationSettlementReview';
+import NormalPayPreview from '../NormalPayPreview';
 import { taipeiDate } from '../../utils/attendance';
 import { formatMoney, formatHours } from '../../utils/format';
 import { PayrollReviewNotice } from '../PayrollReviewNotice';
@@ -57,7 +59,7 @@ const SalaryDetailModal: React.FC<{ salary: SalaryDetail; onClose: () => void }>
                                 <p className="text-lg font-bold text-purple-600">{formatHours(salary.overtimeHours)} 小時</p>
                             </div>
                         </div>
-                        {salary.leaveDetails.length > 0 && (
+                        <NormalPayPreview result={salary.normalPayPreview}/><TerminationSettlementReview empId={salary.empId} month={salary.yearMonth}/>{salary.leaveDetails.length > 0 && (
                             <div className="mt-2 text-xs text-gray-500">
                                 請假明細：{salary.leaveDetails.map((ld, i) => (
                                     <span key={i} className="inline-block bg-gray-100 rounded px-2 py-0.5 mr-1 mt-1">
@@ -73,7 +75,7 @@ const SalaryDetailModal: React.FC<{ salary: SalaryDetail; onClose: () => void }>
                         <h4 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">💰 薪資項目</h4>
                         <div className="space-y-2">
                             <div className="flex justify-between py-2 border-b border-gray-100">
-                                <span className="text-gray-600">{salary.position === '專責人員' ? '月薪' : `時薪計算 (${formatHours(salary.totalWorkHours == null || salary.overtimeHours == null ? null : salary.totalWorkHours - salary.overtimeHours)}h)`}</span>
+                                <span className="text-gray-600">{salary.payBasis===null?'薪制待核':salary.payBasis==='daily'?'日薪待核':(salary.payBasis==='monthly'||(!salary.payBasis&&salary.position==='專責人員')) ? '月薪' : `時薪計算 (${formatHours(salary.totalWorkHours == null || salary.overtimeHours == null ? null : salary.totalWorkHours - salary.overtimeHours)}h)`}</span>
                                 <span className="font-semibold text-gray-800">{formatCurrency(salary.baseSalary)}</span>
                             </div>
                             <div className="flex justify-between py-2 border-b border-gray-100">

@@ -24,7 +24,7 @@ const steps = [
     ['unit-api', ['test', '--', '--configLoader', 'runner']],
     ['firestore-emulator', ['run', 'test:emulator:start']],
     ['browser', ['run', 'test:e2e', '--', '--workers=2']],
-    ['production-build', ['run', 'build', '--', '--configLoader', 'runner']],
+    ['production-build', ['run', 'build']],
 ];
 let interrupted = false;
 for (const [name, args] of steps) {

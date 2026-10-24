@@ -215,7 +215,7 @@ export const apiGetMonthlyReport = async (yearMonth: string): Promise<MonthlyRep
 };
 
 export const apiGetPayrollReviewInputs = (yearMonth: string): Promise<PayrollReviewInputs> => callAPI('get-payroll-review-inputs', { yearMonth });
-export const apiReviewPayrollInputs = (empId: string, review: PayrollReviewSubmission, expectedEmployeeSourceKey?: string): Promise<boolean> => callAPI('review-payroll-inputs', { empId, review, ...(expectedEmployeeSourceKey ? { expectedEmployeeSourceKey } : {}) });
+export const apiReviewPayrollInputs = (empId: string, review: PayrollReviewSubmission, expectedEmployeeSourceKey?: string, expectedMasterVersion?: string|null): Promise<boolean> => callAPI('review-payroll-inputs', { empId, review, ...(expectedMasterVersion?{expectedMasterVersion}:{}), ...(expectedEmployeeSourceKey ? { expectedEmployeeSourceKey } : {}) });
 export const apiReviewLeaveAllocation = (requestId: string, allocations: NonNullable<LeaveRequest['payrollAllocations']>, expectedRevision?:number): Promise<boolean> => callAPI('review-leave-allocation', { requestId, allocations,...(expectedRevision===undefined?{}:{expectedRevision}) });
 
 // ==================== 稽核日誌 ====================
@@ -493,7 +493,7 @@ export const apiActExplanation=(command:ExplanationCommand):Promise<import('../n
 export const apiSubmitCaseLeave=(command:ExplanationCommand & {leaveType:LeaveType;startDate:string;endDate:string}):Promise<LeaveRequest>=>callAPI('submit-case-leave',{...command});
 export const apiLinkCaseLeave=(command:ExplanationCommand & {leaveRequestId:string}):Promise<unknown>=>callAPI('link-case-leave',{...command});
 export const apiReviewCaseLeave=(command:Omit<ExplanationCommand,'mode'> & {leaveRequestId:string;mode:'approve'|'reject'}):Promise<LeaveRequest>=>callAPI('review-case-leave',{...command});
-export type AnomalyMutationAction='submit-comp-request'|'act-comp-request'|'scan-comp-settlement'|'submit-overtime-request'|'act-overtime-request'|'act-leave-version'|'submit-anomaly-explanation'|'act-anomaly-explanation'|'submit-case-leave'|'link-case-leave'|'review-case-leave';
+export type AnomalyMutationAction='open-termination-adjustment'| 'save-termination-draft'|'submit-termination-draft'|'review-termination-draft'|'propose-payroll-master'|'review-payroll-master'|'submit-comp-request'|'act-comp-request'|'scan-comp-settlement'|'submit-overtime-request'|'act-overtime-request'|'act-leave-version'|'submit-anomaly-explanation'|'act-anomaly-explanation'|'submit-case-leave'|'link-case-leave'|'review-case-leave';
 export const apiAnomalyMutation=(action:AnomalyMutationAction,command:Record<string,unknown>):Promise<any>=>callAPI(action,command);
 
 export const apiLeaveWorkflow=(requestId:string):Promise<{request:LeaveRequest;sourceVersion:string;caseRevision?:number;caseEvidenceVersion?:string;policyStatus:string}>=>callAPI('get-leave-workflow',{requestId});
@@ -512,3 +512,9 @@ export const subjectAttachmentAPI=(subject:'makeup'|'leave')=>{
 export const apiOvertimeWorkflow=(empId:string):Promise<{empId:string;requests:any[];workflowPolicy:any;settlementEligibility:'BLOCKED'}>=>callAPI('get-overtime-workflow',{empId});
 
 export const apiCompWorkflow=(empId:string):Promise<{empId:string;requests:any[];ledger:any[];tasks:any[];balance:any;issues:string[];policy:any;settlementEligibility:'BLOCKED'}>=>callAPI('get-comp-workflow',{empId});
+
+export const apiPayrollMaster=(empId:string):Promise<any>=>callAPI('get-payroll-master',{empId});
+
+export const apiTerminationSettlement=(empId:string,month:string,exitDate?:string):Promise<any>=>callAPI('get-termination-settlement',{empId,month,...(exitDate?{exitDate}:{})});
+
+export const apiTerminationSettlementVersion=(empId:string,month:string,draftId:string,revision:number):Promise<any>=>callAPI('get-termination-settlement-version',{empId,month,draftId,revision});

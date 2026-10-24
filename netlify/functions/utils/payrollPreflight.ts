@@ -4,17 +4,17 @@ import { clockInterval, shiftIntervals, validDate, hhmmMinutes } from '../../../
 import { calculateSalaryForEmployee } from './payroll';
 
 export const PREFLIGHT_GAPS = ['OT_COMP_REQUEST_MODEL', 'PAYROLL_ITEM_REQUIREMENTS', 'MANUAL_DIFF_APPROVAL', 'ATTENDANCE_CASE_WORKFLOW', 'PRODUCTION_RECONCILIATION'] as const;
-export type RequestKind = 'compRequests' | 'compSettlementTasks' | 'overtimeRequests' | 'anomalyExplanations' | 'leaveRequests' | 'makeupRequests' | 'leaveOfAbsenceRequests' | 'shiftSwapRequests';
+export type RequestKind = 'terminationSettlementDrafts' | 'terminationAdjustmentCases' | 'compRequests' | 'compSettlementTasks' | 'overtimeRequests' | 'anomalyExplanations' | 'leaveRequests' | 'makeupRequests' | 'leaveOfAbsenceRequests' | 'shiftSwapRequests';
 export type RequestEvidence = Record<string, any> & { id: string };
 export type PendingSources = Record<RequestKind, RequestEvidence[]>;
-const kinds: RequestKind[] = ['compRequests','compSettlementTasks','overtimeRequests','anomalyExplanations','leaveRequests', 'makeupRequests', 'leaveOfAbsenceRequests', 'shiftSwapRequests'];
-const labels: Record<RequestKind, string> = {compRequests:'補休申請／帳本',compSettlementTasks:'補休待結清',overtimeRequests:'加班申請',anomalyExplanations:'異常說明', leaveRequests: '假單/外勤', makeupRequests: '補卡', leaveOfAbsenceRequests: '留停', shiftSwapRequests: '換班' };
-const finalStates: Record<RequestKind, string[]> = {compRequests:['approved','cancelled','rejected','superseded'],compSettlementTasks:[],overtimeRequests:['approved','partial-approved','rejected','cancelled','superseded'],
+const kinds: RequestKind[] = ['terminationSettlementDrafts','terminationAdjustmentCases','compRequests','compSettlementTasks','overtimeRequests','anomalyExplanations','leaveRequests', 'makeupRequests', 'leaveOfAbsenceRequests', 'shiftSwapRequests'];
+const labels: Record<RequestKind, string> = {terminationSettlementDrafts:'人工離職薪資覆核',terminationAdjustmentCases:'離職歷史差額案件',compRequests:'補休申請／帳本',compSettlementTasks:'補休待結清',overtimeRequests:'加班申請',anomalyExplanations:'異常說明', leaveRequests: '假單/外勤', makeupRequests: '補卡', leaveOfAbsenceRequests: '留停', shiftSwapRequests: '換班' };
+const finalStates: Record<RequestKind, string[]> = {terminationSettlementDrafts:[],terminationAdjustmentCases:[],compRequests:['approved','cancelled','rejected','superseded'],compSettlementTasks:[],overtimeRequests:['approved','partial-approved','rejected','cancelled','superseded'],
     anomalyExplanations:['accepted','rejected','cancelled','superseded'],
     leaveRequests: ['核准', '駁回', '已取消', '已取代'], makeupRequests: ['核准', '駁回', '已取消', '已取代'], leaveOfAbsenceRequests: ['核准', '駁回'],
     shiftSwapRequests: ['approved', 'rejected-by-peer', 'rejected-by-admin', 'cancelled'],
 };
-const pendingStates: Record<RequestKind, string[]> = {compRequests:['submitted','pending-policy','needs-info'],compSettlementTasks:['pending-payroll'],overtimeRequests:['submitted','needs-info','preauthorized'],
+const pendingStates: Record<RequestKind, string[]> = {terminationSettlementDrafts:['draft','pending','approved','rejected'],terminationAdjustmentCases:['pending-review'],compRequests:['submitted','pending-policy','needs-info'],compSettlementTasks:['pending-payroll'],overtimeRequests:['submitted','needs-info','preauthorized'],
     anomalyExplanations:['submitted','needs-info'],
     leaveRequests: ['待審核','待補件'], makeupRequests: ['待審核', '待補件'], leaveOfAbsenceRequests: ['待審核'], shiftSwapRequests: ['awaiting-peer', 'awaiting-admin'],
 };
@@ -29,6 +29,7 @@ export const requestEmployeeIds = (kind: RequestKind, r: RequestEvidence): strin
 // Use the selected calendar month PLUS its actual overnight evidence. Merely
 // being in an adjacent month is not sufficient to block an unrelated request.
 export const requestAffectsMonth = (kind: RequestKind, r: RequestEvidence, month: string, employeeId: string, records: ClockRecord[], schedules: ScheduleEvent[]): boolean => {
+    if(kind==='terminationSettlementDrafts'||kind==='terminationAdjustmentCases')return typeof r.month!=='string'||!/^\d{4}-(0[1-9]|1[0-2])$/.test(r.month)||r.month===month;
     const first = month + '-01';
     const next = new Date(first + 'T00:00:00Z'); next.setUTCMonth(next.getUTCMonth() + 1);
     const evidence = [{ start: minute(first), end: minute(next.toISOString().slice(0, 10)) }];

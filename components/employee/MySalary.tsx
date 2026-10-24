@@ -1,3 +1,5 @@
+import TerminationSettlementReview from '../TerminationSettlementReview';
+import NormalPayPreview from '../NormalPayPreview';
 import { taipeiDate } from '../../utils/attendance';
 import { formatMoney, formatHours } from '../../utils/format';
 import { PayrollReviewNotice } from '../PayrollReviewNotice';
@@ -110,7 +112,7 @@ const MySalary: React.FC = () => {
                                 <p className="text-xs text-gray-500 mt-1">加班時數</p>
                             </div>
                         </div>
-                        {salary.leaveDetails.length > 0 && (
+                        <NormalPayPreview result={salary.normalPayPreview}/><TerminationSettlementReview empId={salary.empId} month={salary.yearMonth}/>{salary.leaveDetails.length > 0 && (
                             <div className="mt-3 border-t pt-3">
                                 <p className="text-xs text-gray-500 mb-2">請假明細：</p>
                                 <div className="flex flex-wrap gap-1">
@@ -130,7 +132,7 @@ const MySalary: React.FC = () => {
                         <div className="space-y-3">
                             <div className="flex justify-between items-center">
                                 <div>
-                                    <p className="text-gray-700">{salary.position === '專責人員' ? '月薪' : '時薪計算'}</p>
+                                    <p className="text-gray-700">{salary.payBasis===null?'薪制待核':salary.payBasis==='daily'?'日薪待核':(salary.payBasis==='monthly'||(!salary.payBasis&&salary.position==='專責人員')) ? '月薪' : '時薪計算'}</p>
                                     {salary.position === '兼職人員' && (
                                         <p className="text-xs text-gray-400">{formatHours(salary.totalWorkHours == null || salary.overtimeHours == null ? null : salary.totalWorkHours - salary.overtimeHours)}h × 時薪</p>
                                     )}

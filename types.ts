@@ -400,6 +400,10 @@ export interface PayrollPreflight {
     gaps: string[];
 }
 export interface SalaryDetail {
+    normalPayPreview?: import('./utils/payroll/normalPay').NormalPayResult;
+    payBasis?: 'monthly'|'hourly'|'daily'|null;
+    employmentType?: string|null;
+    effectiveMasterVersion?: string|null;
     preflight?: PayrollPreflight;
     calculationVersion?: string;
     calculationStatus?: "ready" | "needs-review" | "locked" | "legacy-review";
@@ -518,6 +522,7 @@ export interface MonthlyReportData {
 
 // No production defaults: the payroll reviewer must explicitly confirm a month.
 export interface PayrollReview {
+    payBasis?: 'hourly'|'monthly'|'daily';
     participation?: 'system-account';
     participationReason?: string;
     scheduleExceptions?: { date: string; reason: string; sourceKey: string }[];
@@ -550,7 +555,7 @@ export interface PayrollRun {
     inputs: { employees: unknown[]; schedules: ScheduleEvent[]; records: ClockRecord[]; leaves: LeaveRequest[] };
 }
 
-export type PayrollReviewEmployee = Pick<Employee, 'id' | 'name' | 'role' | 'position' | 'status' | 'hourlyRate' | 'monthlySalary' | 'hireDate' | 'resignDate' | 'accountKind' | 'payrollReview'> & { employeeSourceKey?: string };
+export type PayrollReviewEmployee = Pick<Employee, 'id' | 'name' | 'role' | 'position' | 'status' | 'hourlyRate' | 'monthlySalary' | 'hireDate' | 'resignDate' | 'accountKind' | 'payrollReview'> & { employeeSourceKey?: string; effectiveMasterVersion?: string|null; payBasis?: string|null; employmentType?: string|null; masterAssessment?: any };
 export interface PayrollReviewInputs {
     employees: PayrollReviewEmployee[];
     leaves: LeaveRequest[];

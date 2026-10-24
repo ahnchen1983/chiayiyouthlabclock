@@ -48,7 +48,7 @@ const loadInput=async(db:any,tx:any,empId:string,month:string,at:string):Promise
  const swaps=(await rows(db,tx,'shiftSwapRequests')).filter((r:any)=>r.fromEmpId===empId||r.toEmpId===empId);
  const revisions=(await rows(db,tx,'attendanceRevisions')).filter((r:any)=>r.before?.empId===empId||r.after?.empId===empId);
  const review=e.payrollReview, p=review?.policy;
- return { employee:{id:empId,hireDate:e.hireDate||'',...(e.resignDate?{resignDate:e.resignDate}:{}),...(e.leaveOfAbsenceStart?{leaveOfAbsenceStart:e.leaveOfAbsenceStart}:{}),...(e.leaveOfAbsenceEnd?{leaveOfAbsenceEnd:e.leaveOfAbsenceEnd}:{})},
+ return { employee:{...(e.employmentAuthority?{employmentAuthority:e.employmentAuthority}:{}),id:empId,hireDate:e.hireDate||'',...(e.resignDate?{resignDate:e.resignDate}:{}),...(e.leaveOfAbsenceStart?{leaveOfAbsenceStart:e.leaveOfAbsenceStart}:{}),...(e.leaveOfAbsenceEnd?{leaveOfAbsenceEnd:e.leaveOfAbsenceEnd}:{})},
  window:monthWindow(month),asOf:Date.parse(at)/60000,records,schedules,leaves,makeups,comps,overtimes,absences,swaps,revisions,
  coverage:{records:'complete',schedules:schedules.some((d:any)=>d.shifts.some((s:any)=>!s.empId))?'unknown':'complete',requests:'complete',employment:'complete',revisions:'complete',explanations:'unknown'},
  // Existing payroll policy does not attest attendance grace/close/break targets.

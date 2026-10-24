@@ -1,3 +1,4 @@
+import PayrollMasterTimeline from '../components/PayrollMasterTimeline';
 import CompWorkflow from '../components/CompWorkflow';
 import OvertimeWorkflow from '../components/OvertimeWorkflow';
 
@@ -61,7 +62,7 @@ const CompareIcon: React.FC<{ className?: string }> = ({ className }) => (
   </svg>
 );
 
-type AdminView = 'comp' | 'overtime' | 'cases' | 'overview' | 'schedule' | 'attendance' | 'leave' | 'employees' | 'monthlyReport' | 'comparison' | 'salary' | 'auditLog' | 'systemSettings' | 'makeupApproval' | 'openShifts' | 'loaApproval' | 'shiftSwapApproval' | 'myClock' | 'myLeave' | 'myRecords' | 'mySalary' | 'myMakeup' | 'myLeaveBalance' | 'myPreferences' | 'myOpenShifts' | 'myLeaveOfAbsence';
+type AdminView = 'master' | 'comp' | 'overtime' | 'cases' | 'overview' | 'schedule' | 'attendance' | 'leave' | 'employees' | 'monthlyReport' | 'comparison' | 'salary' | 'auditLog' | 'systemSettings' | 'makeupApproval' | 'openShifts' | 'loaApproval' | 'shiftSwapApproval' | 'myClock' | 'myLeave' | 'myRecords' | 'mySalary' | 'myMakeup' | 'myLeaveBalance' | 'myPreferences' | 'myOpenShifts' | 'myLeaveOfAbsence';
 
 const AdminDashboard: React.FC = () => {
   const { user, logout } = useAuth();
@@ -72,6 +73,7 @@ const AdminDashboard: React.FC = () => {
 
   const renderView = () => {
     switch (currentView) {
+      case 'master': return <PayrollMasterTimeline />;
       case 'comp': return <CompWorkflow />;
       case 'overtime': return <OvertimeWorkflow />;
       case 'cases': return <AttendanceCaseCenter />;
@@ -142,7 +144,8 @@ const AdminDashboard: React.FC = () => {
             <NavItem view="comparison" icon={<CompareIcon className="w-6 h-6" />} label="排班對照表" />
             <NavItem view="cases" icon={<ListIcon className="w-6 h-6" />} label="異常待辦" />
             <NavItem view="attendance" icon={<ListIcon className="w-6 h-6" />} label="出勤紀錄" />
-            <NavItem view="comp" icon={<SendIcon className="w-6 h-6" />} label="補休帳本" />
+            <NavItem view="master" icon={<SendIcon className="w-6 h-6" />} label="薪資有效期主檔" />
+        <NavItem view="comp" icon={<SendIcon className="w-6 h-6" />} label="補休帳本" />
         <NavItem view="overtime" icon={<SendIcon className="w-6 h-6" />} label="加班申請" />
         <NavItem view="leave" icon={<CheckSquareIcon className="w-6 h-6" />} label="請假/外勤審核" />
             <NavItem view="shiftSwapApproval" icon={<CalendarIcon className="w-6 h-6" />} label="換班審核" />

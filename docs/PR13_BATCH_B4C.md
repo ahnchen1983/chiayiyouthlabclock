@@ -48,10 +48,3 @@
 ## 獨立 review 後來源修復
 
 採納說明現在保存 server-generated acceptedSource（來源版本、涵蓋期間、refs hash、說明 revision、核准者與時間及 hash）；假單建立與核准都在同一交易核對目前來源與完整涵蓋時段，並保留 explanationSource 鏈。09–17採納後卡改為09–18且重新掃描，舊採納說明不能為17–18假單背書；缺採納證據的舊資料也需明確重新覆核，不補造證據。此修復針對來源關聯完整性，並非修補正式發薪 gate bypass；正式 gate 原本即 BLOCKED。
-
-
-## 發布前獨立複驗
-
-原過期採納來源 finding 已關閉：建立及核准均檢查 retained source hash/version、涵蓋期間與最新 server detector 證據；過期、缺證據或竄改 hash 拒絕且零部分寫入。新增明確採納新來源可建立新期間假單，舊採納紀錄保持不變。
-
-隔離修復版完整574 unit/API（567來源＋7獨立案例）、50真實Firestore emulator/rules、typecheck/build通過；補充正例後另跑8個獨立定向案例全過。定向曾因並跑超過原5秒timeout，保留斷言以60秒上限重跑通過，未跳過測試；重疊runs不加總。完整52 Chromium E2E使用synthetic API，非正式後端驗收。僅B4c＋4374b15修復增量供Draft PR審查，未含B4d；正式月結仍BLOCKED／NO GO。

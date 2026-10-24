@@ -1,15 +1,15 @@
 # PR #13 第一階段：需求矩陣、資料流與分批計畫
 
-盤點日期：2026-10-24。此文件是規格與現況差距，不是新功能完成報告或正式發薪許可。未修改業務程式、推送、合併、部署、建立credential、傳送通知或讀取正式人事資料；不得將下列合成結果當正式核對。
+本文件前半保留43251f0的第一階段盤點快照；後續A/B/C批次增量章節才是各批的新狀態，不能將基線「未實作／本輪未改程式」當成後續批次結論。C2m目前範圍與測試見PR13_BATCH_C2M.md。
 
-> 最新發布狀態：批次 A 已完成兩項 P1 修正與獨立複驗。正式資格固定 BLOCKED，試算完整度另以 trialStatus 表示。以下盤點與早期批次狀態保留作歷史證據；最新結果以 PR13_PREFLIGHT_BATCH_A.md 及 PR13_BATCH_A_PUBLICATION.md 為準。
+盤點日期：2026-10-24。此文件是規格與現況差距，不是新功能完成報告或正式發薪許可。未修改業務程式、推送、合併、部署、建立credential、傳送通知或讀取正式人事資料；不得將下列合成結果當正式核對。
 
 ## 版本與證據界線
 
-- 實際文件工作目錄：隔離盤點副本；本機 HEAD `09e075fc0148a410d3f3b325f73729a787c41086`，tree `5d268d20b7da788eca689adc221d2154ecb44c04`。本輪僅新增本文件與去識別化測試log，不覆蓋該分支。
+- 實際文件工作目錄：`task-2/repair`；本機 HEAD `09e075fc0148a410d3f3b325f73729a787c41086`，tree `5d268d20b7da788eca689adc221d2154ecb44c04`。本輪僅新增本文件與去識別化測試log，不覆蓋該分支。
 - 最新PR：<https://github.com/ahnchen1983/chiayiyouthlabclock/pull/13>，head **43251f09eb7a24098eee0ee09c093abb78c8392f**，draft=true、merged=false；標題仍含 `[skip netlify]`。main/base `84091c6108bbc6d55f47bca5455fc944b9a7f0cd`。本輪讀取一般留言與reviews均空；inline review comments亦空（已另查）。
 - 最新head比昨天發布的ee54a6a多21個提交，40個檔案變更。不得從舊repair直接覆寫PR或推送；下一批應從上述最新head另開本機工作分支，開始前再核對head。
-- 獨立只讀程式盤點副本：隔離唯讀副本，detached HEAD=43251f0。從public repo只讀fetch，不使用新憑證。未讀Codex sessions。該版未找到AGENTS.md或.agents技能目錄；測試指令以package.json、vitest.config.ts及scripts/verify-pr13.mjs為準。
+- 獨立只讀程式盤點副本：`task-2/phase1-review-20261024`，detached HEAD=43251f0。從public repo只讀fetch，不使用新憑證。未讀Codex sessions。該版未找到AGENTS.md或.agents技能目錄；測試指令以package.json、vitest.config.ts及scripts/verify-pr13.mjs為準。
 - 本輪實跑舊repair：14 files / **257 passed、0 failed**。本輪實跑最新PR隔離副本：19 files / **386 passed、0 failed**，命令均為`npm test -- --configLoader runner`。log見`phase1-evidence/`。最新副本依鎖檔安裝依賴且禁用安裝腳本；離線安裝先因ENOTCACHED失敗，後正常安裝成功。未修改依賴版本。
 - 最新遠端CI [39939660399](https://github.com/ahnchen1983/chiayiyouthlabclock/actions/runs/39939660399) completed/success，head=43251f0。`.github/workflows/ci.yml`呼叫verify:pr13；最新版既有文件記錄386程式/mock、16 emulator/rules、15瀏覽器及build通過。這些emulator/E2E/build數字是既有文件/CI證據，本輪沒有重跑，不等於正式環境成功。
 - 2e5a64f引入覆核驗證，10d4b55引入表單，4fdbb30按月保存覆核並綁員工基準，998bdc9快照重播修正，2b59c20統一CI驗證循環，43251f0整理驗證限制。正式資料、網站runtime、公司規則與發薪差額均未核實。
@@ -275,7 +275,6 @@
 
 案件待辦 UI、本人說明、管理者指派／退回補件／來源重核結案、歷程及 sandbox 通知摘要已接現有 API，詳見 `PR13_BATCH_B3.md`。2.1/2.2/2.5/7.3 維持「部分」，不代表附件、OTcomp、完整取消重送或真通知已完成；6.1 正式 BLOCKED 保留。2026-08 全體正兼與當月到離職／留停正式資料尚未核對，不啟用 effectiveMonth 或改既有結算。
 
-
 ### B4a 增量（待獨立審查，非正式驗收）
 
 - 2.2／2.5 **部分**：現有補卡 UI/API 增加本人取消、非本人管理者退回補件、重送獨立新版本，caseRequestLinks／事件與申請版本歷程持久保存；原卡與核准投影來源鏈保留。operationId＋expectedRevision、共享月鎖交易閘門、結果不明原意圖重試均有合成測試。詳見 `PR13_BATCH_B4A.md`。
@@ -283,13 +282,11 @@
 - 2.3／2.4／4.4 未因此完成：異常說明／追溯假單完整流程、OTcomp 與帳本仍另批。
 - 6.1／6.3 正式 gate 保持 BLOCKED；取消／解除關聯不消除未解案件，不直接更正已鎖月份。8.1／8.3 仍未核正式資料、部署或 effectiveMonth；2026-08 全員回溯核對範圍不代表改寫結算授權。
 
-
 ### B4b 增量（可測程式；正式 storage/scanner 未配置）
 
 2.2 **部分／待政策／待正式設定**：新增本人draft-bound附件metadata、上傳掃描契約、原子request綁定、私有授權短效下載、草稿邏輯撤除與稽核，接既有補卡UI。伺服器重算hash與內容型別，不信任client scan；缺adapter或政策fail closed，新版及舊提交入口皆不能繞過必附。測試只用合成bytes、fake storage/scanner及真Firestore metadata emulator；不宣稱已配置正式儲存或病毒掃描。技術硬上限不是公司已核數量／容量／保存期限。詳見 PR13_BATCH_B4B.md。
 
-6.1／8.1／8.3：正式月結仍BLOCKED；真附件、正式IAM／儲存與掃描、保留期限、2026-08全體人員對帳均未驗收。B4c／B5未混入本批。僅發布至既有 Draft PR 供審查，未部署／寫production／發真通知，原正式站未改。
-
+6.1／8.1／8.3：正式月結仍BLOCKED；真附件、正式IAM／儲存與掃描、保留期限、2026-08全體人員對帳均未驗收。B4c／B5未混入本批。未push／部署／寫production／發真通知。
 
 ### B4c 增量：獨立說明／追補假（部分完成）
 
@@ -298,7 +295,6 @@
 6.1／6.3：anomaly pending 納 preflight；正式 workflow gaps 未清除，月結仍 BLOCKED。immutable 說明事件／leave revisions 與原卡分離，已鎖月不能修改。
 8.1／8.3：2026-08 全體正兼職及當月到離職／留停正式核對尚未執行。僅合成測試，不以 mock 代替正式驗收；無 production 存取／真通知／部署。細節與驗收見 PR13_BATCH_B4C.md。
 
-
 ### B4d 增量：假單生命周期及私有附件（可測程式）
 
 2.2／2.3：補上本人未核取消、主管退回／要求補件、新版本重送與不可覆寫已核原版；legacy pending相容，新版附來源hash/revision/operation receipts，case與說明來源保留並沿B4cfix檢查。附件共用B4b核心但leave主體分離，正式adapter仍disabled。
@@ -306,14 +302,30 @@
 6.1／6.3：pending/needs-info進preflight，cancelled/superseded原始歷史保留；跨月transaction guard與來源case重核維持，必要workflow gap未移除。已核更正／差額流程未完成，禁止直接取消已核或覆寫月結。
 8.1／8.3：2026-08全體人員正式核對未執行，storage/scanner、真通知、公司政策與正式發薪仍NO GO。本批驗收與合成假設見PR13_BATCH_B4D.md。
 
-
 ### B5a 增量：加班申請（部分；不含補休／計薪）
 
 2.4：獨立overtimeRequests、事前授權／事後申請、本人撤回及新版本、指定主管補件／完整／部分核准。actual/requested/approved/statutory payable分離；未申請或駁回不清除confirmedWork。工作來源版本改變需新版本，已核不能直接取消。指定審核政策未知不開放任意全員或自核。
 2.1／2.5／6.1：沿12類detector記pending／approved-unapplied及超8h調查候選；preflight相同入口納入，sandbox outbox disabled且無正式scheduler。完整OT_COMP gap維持BLOCKED。
 3.3／3.4／4.4：日別、外勤歸屬、法遵上限實質規則、支付倍率與補休帳本仍待B5b/C，不以本批approvedMinutes替代依法應計。8.1／8.3正式資料仍未核對，NO GO。詳見PR13_BATCH_B5A.md。
 
-
 ### B5b：補休帳本增量
 
 2.3/2.4/4.4 部分完成：本人選擇與指定主管同意、明確適用來源、credit/reserve/debit/release/雙人沖回、FIFO、期限來源、到期離職待結清；不混國假／例假。2.5/6.1 接入案件與preflight，pending/approved未薪資套用/ledger問題保持阻擋。7.2/7.3 僅補休個人帳本及指定scope管理UI，非完整電子薪資單／薪資報表。正式政策設定、工資級距/結清支付、完整更正及正式對帳仍未完成；不得清除 OT_COMP_REQUEST_MODEL gap。詳見 PR13_BATCH_B5B.md。
+
+### C1：有效期主檔與來源保護
+
+4.1/7.1部分完成：人員類別與薪制分開、帳號類別、版本／核定／不可自核／future-only。4.2/4.3保留到離、留停復職、薪額多段history；多段部分月與日薪計算待C2，不能整月給付。6.1月份逐日policy/daytype與master version缺漏保持待核，未清正式gate。詳見PR13_BATCH_C1.md；正式8月全體資料仍未核對。
+
+C1 fix：4.1/7.1新覆核強制明示payBasis；legacy缺值unknown，不依職稱推導。3.1/6.1/7.1共用已核任職timeline優先序，復職不被舊離職日期覆蓋，未涵蓋日期待核。正式gate未解除。見PR13_BATCH_C1_FIX.md。
+### C2a：正常薪資分段試算
+
+4.2/4.3/5.3部分完成：明示有效期／折算策略、獨立留停比例、時薪實際分鐘、假與補休來源、精確分數與typed rounding，共用API/UI/覆核CSV。6.2僅正常項目分段，完整gross/net待C2b/C3，不能發薪；未替正式公司選政策。8.1/8.3正式八月全體核對與上線仍未做。詳見 PR13_BATCH_C2A.md。
+
+2026-10-24使用者補充：5.3已確認最後合計才進位，模式／單位仍待核；3.2休息由主管核實，無固定午休預設；4.2已澄清離職日期及當月薪資皆人工輸入，折算未核；4.4先前補休無過期意向已澄清依法期限結清，法定／福利分流及個別期限資料仍待覆核，禁止自動刪時數／付款。無員工手冊，另擬草案不當正式規則。歷史月結不覆寫。
+
+C2a最新澄清：4.2離職日期及當月薪資皆人工輸入；候選折算不是核定，API離職月待核。獨立人工紀錄／雙人覆核／逐項差額／來源版本交易尚未實作，維持部分。3.2跨二曆日工時依細則17合併，候選估值切日不可重置8h，C2b未完成即待核。5.3 final-stage已確認但mode待核；C3勞健保法定項目進位不得被final總額規則覆蓋。4.4法定補休依法期限結清而非歸零，個別同意與特休年度仍需正式資料。官方來源及查證日見PR13_BATCH_C2A.md，未啟用任何公司正式政策。
+
+C2a fix：3.2跨日分卡有休息間隔時，缺工日歸屬proof仍待核；已核policy source-bound workdayAssignments可供純分組計算，實際核定UI及C2b法遵仍缺。4.4 rejected/cancelled補休使用只在ledger確認無未釋放預占／使用時排除pending，不給薪、不抹其他block。詳PR13_BATCH_C2A_FIX.md；正式NO GO。
+## C2m 增量（人工離職來源覆核，非付款）
+
+4.2/6.2/7.1 部分：既有薪資明細加入人工離職日期／應發／扣項／實發及明示精度表單；server來源比較、逐項delta、第二人輸入核定、immutable版本及operation receipt落地。來源缺漏、非零差額及日期不符維持待核，不自動改名冊。6.1人工紀錄approved仍阻正式採用，不繞未知policy/保費/法定最低額。6.3已鎖月份可建立獨立歷史差額案件，原snapshot不改；案件金額核定及付款後續D。5.1/5.2完整items/保費、C2b及非零差額合法性核定仍未完成。8.1八月全體正式資料未驗，詳見PR13_BATCH_C2M.md，不能宣稱正式薪資已修畢。

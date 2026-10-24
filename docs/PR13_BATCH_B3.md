@@ -80,9 +80,3 @@ API 合成回歸另驗：50 筆後的 matching cases 不被前頁異類排除；
 - 儲存不可用／內容不合法時停止新 mutation；關閉分頁、清除瀏覽器資料或換裝置不提供跨裝置保證，應先核實原操作，不能盲重送。正式跨裝置 receipt recovery 尚未提供。
 
 新增合成回歸：review 原兩項、跨切頁／刷新保留 exact command、假單日期與空白時間、寬範圍日期不猜、管理者來源範圍；另有 context／journal 純函式測試。本次實跑：全套 unit/API 512 passed（25 files），完整 E2E 34 passed（含 review 原兩例及四項新增情境），typecheck／build／diff check passed，0 未解失敗。未改後端，此輪未重跑 emulator；先前 31 項結果不能冒充本次重跑。日誌 b3fix-tests-final.log、b3fix-e2e.log、b3fix-type-final.log、b3fix-build-final.log 留在本機暫存目錄。B4a 未納入本修復。
-
-## 發布前獨立完整驗證
-
-以乾淨419adeba來源建立隔離發布副本，保留遠端既有sanitize文件，只加入本批增量。發布前本輪完整單元/API 512 passed、typecheck與production build passed；完整Chromium E2E單次34 passed、0 failed，非定向案例加總。測試只有合成mock API，外部HTTPS封鎖。先前作者與定向review數字皆為重疊不同runs，不再相加。本輪未獨立重跑emulator，遠端CI另行執行並保存附件。
-
-不含B4a。持久申請/案件關聯及完整申請生命週期、附件、OTcomp、細分主管scope、必要政策和正式2026-08人工核對仍未完成；正式資格BLOCKED、真通知預設off、正式發薪NO GO。B3 UI完成不代表全規格驗收。

@@ -1,3 +1,7 @@
+import {TERMINATION_ACTIONS,handleTerminationAction} from './utils/terminationSettlement';
+import {employmentWindowStates} from '../../utils/employmentAuthority';
+import {effectiveMasterForMonth} from './utils/effectiveMaster';
+import {MASTER_ACTIONS,handleMasterAction} from './utils/masterWorkflow';
 import {COMP_ACTIONS,handleCompAction} from './utils/compWorkflow';
 import {foldCompLedger} from './utils/compLedger';
 import {OVERTIME_ACTIONS,handleOvertimeAction} from './utils/overtimeWorkflow';
@@ -110,7 +114,7 @@ const roleRank = (role: UserRole | null | undefined): number => {
 };
 
 const sanitizeEmployeePayload = (raw: any): any => {
-    const { id: _id, password: _password, payrollReview: _review, accountKind: _accountKind, ...rest } = raw || {};
+    const { id: _id, password: _password, payrollReview: _review, accountKind: _accountKind, payrollMasterRequired: _masterRequired, payBasis: _payBasis, employmentType: _employmentType, effectiveMasterVersion: _effectiveMasterVersion, masterAssessment: _masterAssessment, legacyPayrollSourceKey: _legacySourceKey, employmentAuthority: _employmentAuthority, normalPayDays: _normalPayDays, normalPayCompEvidence: _normalComp, ...rest } = raw || {};
     const numericFields = [
         'hourlyRate',
         'monthlySalary',
@@ -630,10 +634,13 @@ const displayAttendance = async (records: ClockRecord[], month: string): Promise
     });
 };
 
-const employeeInMonth = (e: any, month: string): boolean => e.accountKind !== 'system-account' && !(e.payrollReview?.yearMonth === month && e.payrollReview?.participation === 'system-account' && e.payrollReview?.participationReason?.trim() && e.payrollReview?.reviewedBy && e.payrollReview?.reviewedAt) && (!e.hireDate || e.hireDate.slice(0, 7) <= month) && (!e.resignDate || e.resignDate.slice(0, 7) >= month);
-const payrollEmployee = (e: any) => ({ id: e.id, accountKind: e.accountKind || null, name: e.name, role: e.role ?? null, position: e.position, status: e.status,
+const employeeInMonth = (e: any, month: string): boolean => {
+    if(e.employmentAuthority){const start=Date.parse(month+'-01T00:00:00+08:00')/60000,end=start+new Date(Date.UTC(Number(month.slice(0,4)),Number(month.slice(5)),0)).getUTCDate()*1440;return e.accountKind!=='system-account'&&!employmentWindowStates(e,start,end).every(s=>s==='not-employed');}
+    return e.effectiveMasterVersion ? e.accountKind!=='system-account'&&e.masterAssessment?.eligible!==false : e.accountKind !== 'system-account' && !(e.payrollReview?.yearMonth === month && e.payrollReview?.participation === 'system-account' && e.payrollReview?.participationReason?.trim() && e.payrollReview?.reviewedBy && e.payrollReview?.reviewedAt) && (!e.hireDate || e.hireDate.slice(0, 7) <= month) && (!e.resignDate || e.resignDate.slice(0, 7) >= month);
+};
+const payrollEmployee = (e: any) => ({ masterAssessment:e.masterAssessment||null,payBasis:e.payBasis||null,employmentType:e.employmentType||null,effectiveMasterVersion:e.effectiveMasterVersion||null, id: e.id, accountKind: e.accountKind || null, name: e.name, role: e.role ?? null, position: e.position, status: e.status,
     hourlyRate: e.hourlyRate ?? null, monthlySalary: e.monthlySalary ?? null, hireDate: e.hireDate || '', resignDate: e.resignDate || '', leaveOfAbsenceStart: e.leaveOfAbsenceStart || '', leaveOfAbsenceEnd: e.leaveOfAbsenceEnd || '', payrollReview: payrollReviewFields(e.payrollReview) });
-const pendingCollections: RequestKind[] = ['compRequests','compSettlementTasks','overtimeRequests','anomalyExplanations', 'leaveRequests', 'makeupRequests', 'leaveOfAbsenceRequests', 'shiftSwapRequests'];
+const pendingCollections: RequestKind[] = ['terminationSettlementDrafts','terminationAdjustmentCases','compRequests','compSettlementTasks','overtimeRequests','anomalyExplanations', 'leaveRequests', 'makeupRequests', 'leaveOfAbsenceRequests', 'shiftSwapRequests'];
 const readPendingSources = async (tx?: any): Promise<PendingSources> => {
     const result = {} as PendingSources;
     // Sequential transaction queries: collection reads also detect changes to request status.
@@ -658,7 +665,7 @@ const createPendingPayrollRequest = async (kind: RequestKind, value: any, ref = 
         const records = cards.docs.map(d => ({ ...d.data(), id: d.id } as ClockRecord));
         const schedules = days.docs.map(d => normalizeScheduleDoc(d.data(), d.id, ''));
         const request = { ...value, id: ref.id };
-        const sources: PendingSources = { compRequests: [],compSettlementTasks: [],overtimeRequests: [],anomalyExplanations: [], leaveRequests: [], makeupRequests: [], leaveOfAbsenceRequests: [], shiftSwapRequests: [] };
+        const sources: PendingSources = {terminationSettlementDrafts:[],terminationAdjustmentCases:[], compRequests: [],compSettlementTasks: [],overtimeRequests: [],anomalyExplanations: [], leaveRequests: [], makeupRequests: [], leaveOfAbsenceRequests: [], shiftSwapRequests: [] };
         sources[kind] = [request];
         for (const lock of locks.docs) {
             if (!isMonthLocked(lock.data())) continue;
@@ -782,6 +789,8 @@ export const handler: Handler = async (event) => {
     const isAdmin = currentUserRole === UserRole.Admin || isSuperAdmin;
 
     try {
+        if(TERMINATION_ACTIONS.includes(action as any))return ok(await handleTerminationAction(db,uid,action,data));
+        if(MASTER_ACTIONS.includes(action as any))return ok(await handleMasterAction(db,uid,action,data));
         if(COMP_ACTIONS.includes(action as any))return ok(await handleCompAction(db,uid,action,data));
         if(OVERTIME_ACTIONS.includes(action as any))return ok(await handleOvertimeAction(db,uid,action,data));
         if(LEAVE_LIFECYCLE_ACTIONS.includes(action as any)) return ok(await handleLeaveLifecycle(db,uid,action,data));
@@ -1077,8 +1086,11 @@ export const handler: Handler = async (event) => {
                     if (data.expectedEmployeeSourceKey !== undefined && data.expectedEmployeeSourceKey !== employeePayrollSourceKey(current)) {
                         const error: any = new Error('員工薪資或任職資料已變動，請重新載入後覆核'); error.statusCode = 409; throw error;
                     }
-                    const review = validatePayrollReview(data.review, current, uid, new Date().toISOString());
-                    const stored = makeStoredPayrollReview(current, review);
+                    const masterHead=await tx.get(db.collection('payrollMasterHeads').doc(data.empId));
+                    if(masterHead.exists&&data.expectedMasterVersion!==masterHead.data()?.currentVersionId){const e:any=new Error('有效主檔版本已改變，請重載再覆核');e.statusCode=409;throw e;}
+                    const effective=await effectiveMasterForMonth(db,tx,{...current,payrollReview:data.review},month,{masterVersionId:masterHead.data()?.currentVersionId});
+                    const review = validatePayrollReview(data.review, effective, uid, new Date().toISOString());
+                    const stored = {...makeStoredPayrollReview(current, review),masterVersionId:masterHead.exists?masterHead.data()?.currentVersionId:null};
                     tx.set(db.collection('payrollReviews').doc(payrollReviewDocumentId(employee.id, month)), stored);
                 });
                 await writeAuditLog(uid, '覆核計薪設定', data.empId, month);
@@ -1145,7 +1157,7 @@ export const handler: Handler = async (event) => {
                 if (!isSuperAdmin && roleRank(employeeData.role) > roleRank(currentUserRole)) {
                     return fail(403, '不可指派高於自身權限的系統角色');
                 }
-                const newEmp = { ...employeeData, id: newId, password: hashPassword(rawPwd) };
+                const newEmp = { ...employeeData, payrollMasterRequired: true, id: newId, password: hashPassword(rawPwd) };
                 await runPayrollMutation(db, [], async tx => { tx.set(db.collection('employees').doc(newId), newEmp); });
                 const { password: _p, ...empWithoutPwd } = newEmp;
                 await writeAuditLog(uid, '新增員工', newId, `${data.employee.name} (${data.employee.position})`);
@@ -1162,11 +1174,18 @@ export const handler: Handler = async (event) => {
                     return fail(403, '不可編輯高於自身權限的帳號');
                 }
                 const updates = sanitizeEmployeePayload(data.updates);
-                if (['hourlyRate', 'monthlySalary', 'position', 'status', 'hireDate', 'resignDate', 'leaveOfAbsenceStart', 'leaveOfAbsenceEnd'].some(k => k in updates)) updates.payrollReview = null;
                 if (updates.role && !isSuperAdmin && roleRank(updates.role) > roleRank(currentUserRole)) {
                     return fail(403, '不可指派高於自身權限的系統角色');
                 }
-                await runPayrollMutation(db, [], async tx => { tx.update(ref, updates); });
+                await runPayrollMutation(db, [], async tx => {
+                    const current = await tx.get(ref);
+                    const source = current.data() || {};
+                    const protectedFields = ['hourlyRate','monthlySalary','position','status','hireDate','resignDate','leaveOfAbsenceStart','leaveOfAbsenceEnd'];
+                    if (protectedFields.some(k => k in updates && updates[k] !== source[k])) {
+                        throw Object.assign(new Error('薪資／雇用異動需有效期主檔版本核定入口；legacy欄位唯讀'), { statusCode: 409 });
+                    }
+                    tx.update(ref, updates);
+                });
                 const updated = await ref.get();
                 const { password: _p, ...emp } = updated.data()!;
                 await writeAuditLog(uid, '更新員工', data.empId, JSON.stringify(updates));

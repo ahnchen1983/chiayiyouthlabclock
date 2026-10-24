@@ -54,8 +54,4 @@ ATTENDANCE_CASE_WORKFLOW及其他A門檻沒有移除。沒有完整scan證明時
 原有快照機制測試依A的測試邊界隔離正式資格；不可把它們視為正式月結放行。B2共享月鎖競態以synthetic lock transaction測試guard，明確不代表實際正式payroll lock獲准。
 
 
-驗證日誌由本機測試保留；遠端 CI 證據另附於 PR。測試使用合成資料、mock auth及fake delivery；emulator使用官方暫存Java/jar，沒有production credentials。固定案例實際與預期皆一致；沒有以此宣稱正式八月差額為零。
-
-## 獨立審查與發布界線
-
-本批獨立審查未發現 blocker：514 單元/API（作者504加10個獨立案例）、30真實 emulator/rules、typecheck通過。作者504/30與獨立514/30為重疊不同runs，不加總。獨立未重跑build/E2E。僅移植B2相對8faf4fc的八檔增量，不重新覆寫B1公開文件。scan.complete仍false、正式資格BLOCKED、通知預設off且僅sandbox；無UI，不代表全規格完成。正式發薪NO GO。
+本機日誌：/tmp/b2-final-all.log、/tmp/b2-final-emulator.log、/tmp/b2-final-type.log、/tmp/b2-final-build.log。測試使用合成資料、mock auth及fake delivery；emulator使用官方暫存Java/jar，沒有production credentials。固定案例實際與預期皆一致；沒有以此宣稱正式八月差額為零。

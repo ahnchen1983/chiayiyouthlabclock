@@ -57,9 +57,3 @@ preflight納入待審、待補件、事前計畫與已核未計薪；OT_COMP_REQ
 - 最終 typecheck、build、diff check 通過。最後 detector 修正另重跑 B5a 定向 emulator，4 passed、0 failed，59 個非本範圍案例由 -t 篩掉（前一全套均已通過），未刪除或停用測試。
 
 保留來源證據，不把核准狀態當作依法應付已確認；所有正式 gate 仍 BLOCKED。未 push／部署／發送通知，未存取正式人資資料。
-
-## 獨立複驗與發布範圍
-
-來源 5ca3d6419a091d1685f49ae9bf838e7ac9d4e6da 的最終完整複驗：594 unit/API、63 真實 emulator/rules、63 Chromium E2E、typecheck及production build全部通過，包含最後後端修正。另5個獨立handler邊界案例通過（休息缺口、區間來源變更、撤銷權限、缺實際來源及變更重播內容）；不同runs重疊不可加總。獨立案例保留在review證據，不納本批21檔增量。瀏覽器仍為synthetic API，附件為fake adapter。
-
-本批僅增量送至Draft PR13供審查，不包含B5b，不合併或部署；正式gate仍BLOCKED／NO GO。上方未push描述為作者交付階段紀錄。實際／申請／核准與依法應計分離，並不表示payable engine、補休、公司政策或正式資料核對已完成。

@@ -1,3 +1,5 @@
+import {withEmploymentAuthority} from './employmentAuthority';
+import {employmentStateOn} from '../../../utils/employmentAuthority';
 import {compEmploymentEvidence} from './compEmployment';
 import {selectedCreditSegments} from './compCreditSource';
 import {UserRole} from '../../../types';
@@ -39,7 +41,7 @@ export async function handleCompAction(db:any,uid:string,action:string,data:any)
  if(action==='get-comp-workflow'){
   const a=await get(db,readTx,'employees',uid),empId=data.empId||uid,p=await get(db,readTx,'compPolicies',empId,true);scope(a,empId,p);
   const requests=await rows(db,readTx,'compRequests',empId),ledger=await rows(db,readTx,'compLedger',empId),tasks=await rows(db,readTx,'compSettlementTasks',empId);let balance:any;const issues:string[]=[];
-  try{const f=foldCompLedger(ledger);await checkLots(db,readTx,empId,f.lots,true,false);const employee=await get(db,readTx,'employees',empId);const unavailable=!policyValid(p,empId)||!!employee.resignDate&&employee.resignDate<=date(Date.now()/60000);balance={available:unavailable?null:f.lots.filter(l=>l.deadline>=date(Date.now()/60000)).reduce((n,l)=>n+l.available,0),reserved:f.reserved,used:f.used,pendingPolicy:requests.filter(r=>r.status==='pending-policy').reduce((n,r)=>n+r.minutes,0),pendingPayroll:f.lots.filter(l=>l.originalWageBasis?.status!=='confirmed').map(l=>l.id),lots:f.lots};}catch{issues.push('ledger-or-source-unverified');balance={available:null,reserved:null,used:null,pendingPolicy:null,lots:[]};}
+  try{const f=foldCompLedger(ledger);await checkLots(db,readTx,empId,f.lots,true,false);const employee=await withEmploymentAuthority(db,readTx,await get(db,readTx,'employees',empId));const state=employmentStateOn(employee,date(Date.now()/60000));if(state==='unknown')issues.push('employment-source-unverified');const unavailable=!policyValid(p,empId)||state!=='active';balance={available:unavailable?null:f.lots.filter(l=>l.deadline>=date(Date.now()/60000)).reduce((n,l)=>n+l.available,0),reserved:f.reserved,used:f.used,pendingPolicy:requests.filter(r=>r.status==='pending-policy').reduce((n,r)=>n+r.minutes,0),pendingPayroll:f.lots.filter(l=>l.originalWageBasis?.status!=='confirmed').map(l=>l.id),lots:f.lots};}catch{issues.push('ledger-or-source-unverified');balance={available:null,reserved:null,used:null,pendingPolicy:null,lots:[]};}
   return {empId,requests:requests.map(r=>({...r,sourceVersion:evidenceHash(r)})),ledger,tasks,balance,issues,policy:policyValid(p,empId)?{version:p.version,reviewerIds:p.reviewerIds,deadline:p.deadline}:null,settlementEligibility:'BLOCKED',deliveryEnabled:false};
  }
  if(!id(data.operationId)||typeof data.reason!=='string'||data.reason.trim().length<5||data.reason.length>2000)fail(400,'需操作識別及完整原因');const at=new Date().toISOString(),hash=evidenceHash([action,data]);
@@ -48,11 +50,11 @@ export async function handleCompAction(db:any,uid:string,action:string,data:any)
   const old=action==='act-comp-request'?await get(db,tx,'compRequests',data.requestId):null,empId=old?.empId||(action==='scan-comp-settlement'||data.kind==='adjustment'?data.empId:uid),p=await get(db,tx,'compPolicies',empId,true);
   const review=action==='scan-comp-settlement'||data.kind==='adjustment'||!!old&&!['cancel','resubmit'].includes(data.mode);scope(a,empId,p,review);if(!review&&uid!==empId)fail(403,'只能本人選擇／撤回');
   const ref=db.collection('compCommands').doc(evidenceHash([uid,data.operationId])),prior=await tx.get(ref);if(prior.exists){if(prior.data().hash!==hash)fail(409,'操作識別內容不符');return prior.data().result;}
-  const requests=await rows(db,tx,'compRequests',empId),ledger=await rows(db,tx,'compLedger',empId),fold=foldCompLedger(ledger),employee=await get(db,tx,'employees',empId);
+  const requests=await rows(db,tx,'compRequests',empId),ledger=await rows(db,tx,'compLedger',empId),fold=foldCompLedger(ledger),employee=await withEmploymentAuthority(db,tx,await get(db,tx,'employees',empId));
   const entries:CompEntry[]=[];const append=(type:any,r:any,allocations:any[],extra:any={})=>entries.push({id:evidenceHash([uid,data.operationId,type,...allocations.map((a:any)=>a.lotId)]),empId,sequence:fold.sequence+entries.length+1,type,requestId:r.id,actor:uid,at,reason:data.reason.trim(),allocations,...extra});
   if(action==='scan-comp-settlement'){
-   const tasks=await rows(db,tx,'compSettlementTasks',empId),planned:any[]=[];await checkLots(db,tx,empId,fold.lots,true);
-   for(const l of fold.lots)if((l.deadline<date(Date.now()/60000)||employee.resignDate&&employee.resignDate<=date(Date.now()/60000))&&l.available+l.reserved>0){const task={id:evidenceHash(['comp-settlement',l.id]),empId,lotId:l.id,startDate:l.startDate,endDate:l.endDate,status:'pending-payroll',remainingMinutes:l.available+l.reserved,reservedMinutes:l.reserved,originalWageBasis:l.originalWageBasis,sourceVersion:evidenceHash(l),reason:employee.resignDate?'contract-ended':'expired',actor:uid,at};const oldTask=tasks.find(t=>t.id===task.id);if(!oldTask||oldTask.sourceVersion!==task.sourceVersion||oldTask.reason!==task.reason){const history=oldTask?[...(oldTask.history||[]),{revision:oldTask.revision,sourceVersion:oldTask.sourceVersion,remainingMinutes:oldTask.remainingMinutes,reservedMinutes:oldTask.reservedMinutes,reason:oldTask.reason,actor:oldTask.actor,at:oldTask.at}]:[];if(history.length>100)fail(409,'待結清任務歷程容量超限');planned.push({...task,revision:(oldTask?.revision||0)+1,history});}}
+   const state=employmentStateOn(employee,date(Date.now()/60000));if(state==='unknown')fail(409,'任職主檔未涵蓋結清檢查日期，需覆核');const terminated=state==='not-employed';const tasks=await rows(db,tx,'compSettlementTasks',empId),planned:any[]=[];await checkLots(db,tx,empId,fold.lots,true);
+   for(const l of fold.lots)if((l.deadline<date(Date.now()/60000)||terminated)&&l.available+l.reserved>0){const task={id:evidenceHash(['comp-settlement',l.id]),empId,lotId:l.id,startDate:l.startDate,endDate:l.endDate,status:'pending-payroll',remainingMinutes:l.available+l.reserved,reservedMinutes:l.reserved,originalWageBasis:l.originalWageBasis,sourceVersion:evidenceHash(l),reason:terminated?'contract-ended':'expired',actor:uid,at};const oldTask=tasks.find(t=>t.id===task.id);if(!oldTask||oldTask.sourceVersion!==task.sourceVersion||oldTask.reason!==task.reason){const history=oldTask?[...(oldTask.history||[]),{revision:oldTask.revision,sourceVersion:oldTask.sourceVersion,remainingMinutes:oldTask.remainingMinutes,reservedMinutes:oldTask.reservedMinutes,reason:oldTask.reason,actor:oldTask.actor,at:oldTask.at}]:[];if(history.length>100)fail(409,'待結清任務歷程容量超限');planned.push({...task,revision:(oldTask?.revision||0)+1,history});}}
    if(tasks.length+planned.filter(t=>!tasks.some(old=>old.id===t.id)).length>500)fail(409,'待結清任務容量超限');const refresh=planned.length?await planCompCaseRefresh(db,tx,empId,[...new Set(planned.flatMap(t=>months(t)))],planned[0],uid,at,planned.slice(1)):()=>{};for(const t of planned){const ref=db.collection('compSettlementTasks').doc(t.id);if(tasks.some(old=>old.id===t.id))tx.update(ref,t);else tx.create(ref,t);}refresh();const result={created:planned.map(t=>t.id),settlementEligibility:'BLOCKED'};tx.create(ref,{hash,result,actor:uid,at});return result;
   }
   if(old){if(old.revision!==data.expectedRevision||evidenceHash(old)!==data.sourceVersion)fail(409,'補休申請版本已變更');await assertTransactionMonths(db,tx,months(old));}
@@ -67,7 +69,7 @@ export async function handleCompAction(db:any,uid:string,action:string,data:any)
     const segments=selectedCreditSegments(s,data.minutes);Object.assign(r,snapshotSource(s),{overtimeId:s.ot.id,minutes:data.minutes,employeeChoice:{actor:uid,at},creditSegments:segments,approvedIntervals:segments.flatMap(x=>x.approvedIntervals),startDate:segments[0].startDate,endDate:segments[segments.length-1].endDate});await assertTransactionMonths(db,tx,months(s.ot));if(!policyValid(p,empId)||!s.eligible||segments.some(x=>!x.eligible))r.status='pending-policy';else{period(p,r);if(data.minutes>s.eligibility.eligibleMinutes||p.deadline<date(range(r).end-1))fail(409,'補休取得超出已核適用時數／期限');r.deadline=p.deadline;}
    }else if(kind==='use'){
     const w=range(data);const employmentEvidence=await compEmploymentEvidence(db,tx,empId,w);Object.assign(r,{employmentEvidence,startDate:data.startDate,endDate:data.endDate,minutes:w.end-w.start,allocations:[]});
-    if(date(w.start)<date(Date.now()/60000)||employee.resignDate&&date(w.end-1)>employee.resignDate)fail(409,'過去／離職後使用需獨立更正流程');
+    if(date(w.start)<date(Date.now()/60000))fail(409,'過去／離職後使用需獨立更正流程');
     for(const q of requests)if(q.id!==old?.id&&q.kind==='use'&&!['cancelled','rejected','superseded'].includes(q.status)&&overlap(range(q),w))fail(409,'已有重疊補休使用申請');
     const leaves=await rows(db,tx,'leaveRequests',empId);for(const q of leaves)if(!['駁回','已取消','已取代'].includes(q.status)&&overlap(range(q),w))fail(409,'補休與既有假單重疊／待核');
     const actual=await overtimeActualSource(db,tx,empId,w);if(actual.intervals.length)fail(409,'補休與已確認工作重疊，需調查');
@@ -100,3 +102,21 @@ export async function handleCompAction(db:any,uid:string,action:string,data:any)
 }
 // Explicit testable handler; no scheduler, sender, monetary settlement, or production trigger.
 export const compEventHandler=handleCompAction;
+
+/** Read-only payroll source projection. A debit is not enough: current source and employment must still bind. */
+export async function compNormalPayEvidence(db:any,tx:any,empId:string,month:string){
+ const readTx=tx||{get:(r:any)=>r.get()},issues:string[]=[],intervals:any[]=[];
+ const first=Date.parse(month+'-01T00:00:00+08:00')/60000,last=first+new Date(Date.UTC(Number(month.slice(0,4)),Number(month.slice(5)),0)).getUTCDate()*1440;
+ const uses=(await rows(db,readTx,'compRequests',empId)).filter(r=>r.kind==='use');if(uses.some(r=>!Number.isFinite(Date.parse(r.startDate))||!Number.isFinite(Date.parse(r.endDate))))issues.push('補休使用日期無法判斷月份');const requests=uses.filter(r=>Date.parse(r.startDate)/60000<last&&Date.parse(r.endDate)/60000>first);
+ if(!requests.length)return {issues,intervals};
+ const ledger=await rows(db,readTx,'compLedger',empId);
+ try{const fold=foldCompLedger(ledger);for(const r of requests){
+  if(['rejected','cancelled','returned','superseded'].includes(r.status)){if(fold.reservations.has(r.id)||ledger.some(e=>e.type==='debit'&&e.requestId===r.id))fail(409,'補休終態與預占釋放／使用帳本不一致');continue;}
+  if(r.status!=='approved'||!r.approvedBy||!r.approvedAt){issues.push('補休使用申請尚未核定');continue;}
+  const w=range(r),debits=ledger.filter(e=>e.type==='debit'&&e.requestId===r.id);
+  if(debits.length!==1||evidenceHash(debits[0].allocations)!==evidenceHash(r.allocations)||debits[0].allocations.reduce((n:any,a:any)=>n+a.minutes,0)!==w.end-w.start||evidenceHash(await compEmploymentEvidence(db,readTx,empId,w))!==evidenceHash(r.employmentEvidence))fail(409,'補休使用投影來源失效');
+  await checkLots(db,readTx,empId,fold.lots.filter(l=>debits[0].allocations.some((a:any)=>a.lotId===l.id)),true,false);
+  intervals.push({start:w.start,end:w.end,kind:'comp',sourceId:r.id,sourceVersion:evidenceHash([r,debits[0]]),approvalId:r.approvedBy+'@'+r.approvedAt});
+ }}catch{issues.push('補休帳本／核准使用來源待覆核');}
+ return {issues,intervals};
+}

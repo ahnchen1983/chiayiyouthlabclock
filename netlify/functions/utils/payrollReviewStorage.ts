@@ -1,3 +1,5 @@
+import {withEmploymentAuthority} from './employmentAuthority';
+import {effectiveMasterForMonth} from './effectiveMaster';
 import { createHash } from 'node:crypto';
 import type { PayrollReview } from '../../../types';
 import { sanitizePayrollSnapshot } from './payrollSnapshot';
@@ -7,7 +9,7 @@ import { payrollReviewFields } from './payrollReviewValidation';
 // Identity/contact edits do not silently replace or invalidate that decision.
 const SOURCE_FIELDS = ['id', 'accountKind', 'position', 'status', 'hourlyRate', 'monthlySalary', 'laborPensionRate',
     'hireDate', 'resignDate', 'leaveOfAbsenceStart', 'leaveOfAbsenceEnd'] as const;
-export const employeePayrollSourceKey = (employee: any): string => createHash('sha256').update(JSON.stringify(sanitizePayrollSnapshot(
+export const employeePayrollSourceKey = (employee: any): string => employee.legacyPayrollSourceKey || createHash('sha256').update(JSON.stringify(sanitizePayrollSnapshot(
     Object.fromEntries(SOURCE_FIELDS.map(field => [field, employee[field] ?? null])),
 ))).digest('hex');
 
@@ -37,7 +39,7 @@ export const loadMonthlyPayrollEmployees = async (employees: any[], yearMonth: s
     for (const employee of employees) {
         const ref = database.collection('payrollReviews').doc(payrollReviewDocumentId(employee.id, yearMonth));
         const snapshot = transaction ? await transaction.get(ref) : await ref.get();
-        result.push(withMonthlyPayrollReview(employee, yearMonth, snapshot.exists ? snapshot.data() as StoredPayrollReview : null, snapshot.exists));
+        const reviewed=withMonthlyPayrollReview(employee,yearMonth,snapshot.exists?snapshot.data() as StoredPayrollReview:null,snapshot.exists);const effective=await effectiveMasterForMonth(database,transaction,{...reviewed,legacyPayrollSourceKey:employeePayrollSourceKey(employee)},yearMonth,snapshot.exists?snapshot.data():null);if(effective.normalPayDays){const {compNormalPayEvidence}=await import('./compWorkflow');effective.normalPayCompEvidence=await compNormalPayEvidence(database,transaction,employee.id,yearMonth);}result.push(await withEmploymentAuthority(database,transaction,effective));
     }
     return result;
 };

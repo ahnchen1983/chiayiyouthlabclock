@@ -9,5 +9,3 @@
 回歸包含純 policy、實際 handler、真本機 Firestore emulator 一般／案件假單分配、取消／重送／重播與競爭交易。正式 policy、附件 storage/scanner、資料核對仍未完成，正式計薪 BLOCKED / NO GO；不讀寫正式資料、不發通知。
 
 實跑：584/584 unit/API、59/59 Firestore emulator/rules、typecheck、production build、diff check 通過。此後端修復沒有另跑 UI E2E；原 B4d 的58案例與本批不可混稱同一輪。
-
-獨立發布前複驗：586 unit/API（584來源＋2獨立案例）、9定向真實 emulator（50 filtered）、最終完整58 Chromium E2E、typecheck及production build通過。重疊runs不加總；瀏覽器使用合成API，附件使用fake adapter，不代表正式服務驗收。正式發薪仍BLOCKED／NO GO。

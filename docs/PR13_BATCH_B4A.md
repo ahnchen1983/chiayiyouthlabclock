@@ -60,8 +60,3 @@ useMakeupOperation 將未確認命令按登入主體保存在 tab sessionStorage
 回歸包含 reviewer 三例（100次真 handler 建立，再試第101條）、每申請100條、滿容量unlink/relink與重送，以及真Firestore最後一個名額雙請求競爭。容量不足全部拒絕，沒有 request／history／link 部分寫入；GET仍可讀。UI未改，本次不重跑E2E；先前40項作者與reviewer6項結果不當成本輪重跑。
 
 本修正實跑：533 unit/API（26 files）、38 emulator（2 files）全過，typecheck/build/diff check通過。正式 gate、通知與部署限制不變。
-
-
-## 發布前獨立複驗
-
-對修復來源 `474013f` 的隔離副本重跑：533 單元/API、38 真實 Firestore emulator/rules、40 Chromium E2E、typecheck、production build 全部通過。原兩個第101筆失敗案例改為409且無部分寫入；滿容量重送、保留歷史的解除/重連、原操作重播及最後名額雙請求競態均通過。此輪與作者先前測試重疊，不加總。瀏覽器使用合成 API mock，emulator 不等於正式資料驗收。僅發布 B4a＋容量修正，未包含 B4b；正式月結仍 BLOCKED／NO GO，真通知停用。

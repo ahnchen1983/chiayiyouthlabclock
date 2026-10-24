@@ -281,7 +281,7 @@ describe('computeLeaveBalances', () => {
 describe('calculateSalaryForEmployee', () => {
     const fullTimeEmp = {
         id: 'EMP001', name: '小王', position: '專責人員', monthlySalary: 30000, hourlyRate: 0,
-        payrollReview: { ...explicitReview, insurance: { labor: 690, health: 633, pensionSelf: 0 } },
+        payrollReview: { ...explicitReview, payBasis:'monthly', insurance: { labor: 690, health: 633, pensionSelf: 0 } },
     };
     const partTimeEmp = {
         id: 'EMP002', name: '小李', position: '兼職人員', hourlyRate: 200, payrollReview: explicitReview,
