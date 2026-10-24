@@ -1,5 +1,6 @@
 import { normalizeScheduleDoc } from './calculations';
 import { UserRole } from '../../../types';
+import { CASE_TYPES } from './attendanceCaseTypes';
 import type { AttendanceCase, CaseObservation, DetectorInput } from './attendanceCaseTypes';
 import { detectAttendanceCases } from './attendanceCaseDetector';
 import { caseKey, evidenceHash, outboxIntent, reconcileCase } from './attendanceCaseLifecycle';
@@ -88,13 +89,19 @@ export const handleAttendanceCaseAction=async(db:any,uid:string,action:string,da
  if(action==='list-attendance-cases'){
   const actor=await actorFor(db,uid);assertScope(actor,data.empId);const window=monthWindow(data.yearMonth);
   const snap=await db.collection('attendanceCases').where('empId','==',data.empId).limit(501).get();if(snap.size>500)error(409,'案件查詢需縮小範圍');
-  const selected=snap.docs.map((d:any)=>({...d.data(),id:d.id})).filter((c:StoredCase)=>intersect(c.observation.window,window)).sort((a:any,b:any)=>a.id.localeCompare(b.id));
+  if(data.status&&!['open','awaiting-employee','awaiting-review','needs-info','resolved','cancelled'].includes(data.status))error(400,'案件狀態無效');
+  if(data.type&&!CASE_TYPES.includes(data.type))error(400,'案件類別無效');
+  const selected=snap.docs.map((d:any)=>({...d.data(),id:d.id})).filter((c:StoredCase)=>intersect(c.observation.window,window)&&(!data.status||c.status===data.status)&&(!data.type||c.type===data.type)).sort((a:any,b:any)=>a.id.localeCompare(b.id));
   const page=selected.filter((c:any)=>!data.afterId||c.id>data.afterId).slice(0,50);
   return {cases:page.map(publicCase),nextCursor:page.length===50?page.at(-1).id:null,scope:'existing-attendance-role'};
  }
  if(action==='get-attendance-case'){
   if(!validId(data.caseId))error(400,'案件識別無效');const actor=await actorFor(db,uid),snap=await db.collection('attendanceCases').doc(data.caseId).get();
-  if(!snap.exists)error(404,'案件不存在');assertScope(actor,snap.data().empId);return publicCase({...snap.data(),id:snap.id});
+  if(!snap.exists)error(404,'案件不存在');assertScope(actor,snap.data().empId);const jobs=await db.collection('attendanceCaseOutbox').where('caseId','==',snap.id).limit(501).get();
+  const states=['held','queued','leased','retry','delivered','unknown-delivery','dead-letter'];
+  const counts:Record<string,number>={};
+  for(const job of jobs.docs){const d=job.data();const state=d.channel==='sandbox'&&states.includes(d.state)?d.state:'unknown';counts[state]=(counts[state]||0)+1;}
+  return {...publicCase({...snap.data(),id:snap.id}),notifications:{mode:'sandbox-only',counts,complete:jobs.size<=500,deliveryEnabled:false}};
  }
  const at=clock().toISOString();
  if(action==='scan-attendance-cases'){

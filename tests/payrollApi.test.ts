@@ -418,3 +418,29 @@ it('B2 unknown scope cases keep distinct month identities instead of overwriting
  const a=all.find(c=>c.anchor==='scope:2026-04'&&c.type==='pending-request'),b=all.find(c=>c.anchor==='scope:2026-05'&&c.type==='pending-request');
  expect(a).toBeTruthy();expect(b).toBeTruthy();expect(a.id).not.toBe(b.id);
 });
+
+describe('B3 case view API contract',()=>{
+ afterEach(()=>vi.mocked(adminAuth.verifyIdToken).mockResolvedValue({uid:'ADMIN'} as any));
+ const seed=async()=>{await call('scan-attendance-cases',{empId:'SYNTH',yearMonth:month});return [...fake.data.entries()].find(([k])=>k.startsWith('attendanceCases/'))![1];};
+ it('filters before pagination and does not omit matching cases after 50 unrelated rows',async()=>{
+  const c=await seed();for(let i=0;i<60;i++)fake.data.set('attendanceCases/a'+String(i).padStart(2,'0'),{...c,type:'late',status:'open'});
+  for(let i=0;i<51;i++)fake.data.set('attendanceCases/z'+String(i).padStart(2,'0'),{...c,type:'pending-request',status:'needs-info'});
+  const q={empId:'SYNTH',yearMonth:month,type:'pending-request',status:'needs-info'};
+  const first=JSON.parse((await call('list-attendance-cases',q)).body);expect(first.cases).toHaveLength(50);expect(first.cases.every(c=>c.status==='needs-info'&&c.type==='pending-request')).toBe(true);
+  const next=JSON.parse((await call('list-attendance-cases',{...q,afterId:first.nextCursor})).body);expect(next.cases.length).toBeGreaterThan(0);expect(next.cases.every(c=>!first.cases.some(a=>a.id===c.id))).toBe(true);
+  expect((await call('list-attendance-cases',{...q,status:'bogus'})).statusCode).toBe(400);
+ });
+ it('notification summary is readonly and redacted, including failed sandbox delivery',async()=>{
+  const c=await seed();fake.data.set('attendanceCaseOutbox/extra',{caseId:c.id,state:'dead-letter',channel:'sandbox',leaseToken:'private-lease',recipientId:'private-recipient',deliveryEvidence:'private-receipt'});
+  const before=JSON.stringify([...fake.data]);const r=await call('get-attendance-case',{caseId:c.id});expect(r.statusCode).toBe(200);const n=JSON.parse(r.body).notifications;
+  expect(n).toMatchObject({mode:'sandbox-only',complete:true,deliveryEnabled:false});expect(n.counts['dead-letter']).toBe(1);
+  for(const value of ['private-lease','private-recipient','private-receipt','hourlyRate'])expect(r.body).not.toContain(value);
+  expect(JSON.stringify([...fake.data])).toBe(before);
+ });
+ it('notification read shares case scope and incomplete summary cannot claim full delivery',async()=>{
+  const c=await seed();for(let i=0;i<501;i++)fake.data.set('attendanceCaseOutbox/large'+i,{caseId:c.id,state:'held',channel:'sandbox'});
+  expect(JSON.parse((await call('get-attendance-case',{caseId:c.id})).body).notifications.complete).toBe(false);
+  fake.data.set('employees/OTHER',{role:UserRole.Employee});vi.mocked(adminAuth.verifyIdToken).mockResolvedValue({uid:'OTHER'} as any);
+  expect((await call('get-attendance-case',{caseId:c.id})).statusCode).toBe(403);
+ });
+});

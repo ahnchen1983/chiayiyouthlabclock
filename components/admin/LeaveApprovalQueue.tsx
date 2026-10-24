@@ -1,10 +1,11 @@
+import { contextLeaveMatches, type CaseFormContext } from '../../utils/caseFormContext';
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiGetAllLeaveRequests, apiApproveLeave } from '../../services/googleAppsScriptAPI';
 import { LeaveRequest, LeaveStatus } from '../../types';
 import { useAuth } from '../../contexts/AuthContext';
 
-const LeaveApprovalQueue: React.FC = () => {
+const LeaveApprovalQueue: React.FC<{caseContext?:CaseFormContext}> = ({caseContext}) => {
     const { user } = useAuth();
     const [requests, setRequests] = useState<LeaveRequest[]>([]);
     const [loading, setLoading] = useState(true);
@@ -41,7 +42,7 @@ const LeaveApprovalQueue: React.FC = () => {
         await fetchRequests();
     };
     
-    const filteredRequests = requests.filter(r => r.status === filter);
+    const filteredRequests = requests.filter(r => r.status === filter && (!caseContext||contextLeaveMatches(caseContext,r)));
 
     const getStatusChipClass = (status: LeaveStatus) => {
         switch(status) {

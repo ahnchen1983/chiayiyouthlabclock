@@ -1,3 +1,4 @@
+import { contextDateMatches, type CaseFormContext } from '../../utils/caseFormContext';
 import React, { useEffect, useState } from 'react';
 import { apiGetMakeupRequests, apiApproveMakeupRequest } from '../../services/googleAppsScriptAPI';
 import { ClockMakeupRequest } from '../../types';
@@ -12,7 +13,7 @@ const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
     return <span className={`px-2 py-1 rounded text-xs ${map[status] || 'bg-gray-100'}`}>{status}</span>;
 };
 
-const MakeupApprovalQueue: React.FC = () => {
+const MakeupApprovalQueue: React.FC<{caseContext?:CaseFormContext}> = ({caseContext}) => {
     const { user } = useAuth();
     const [list, setList] = useState<ClockMakeupRequest[]>([]);
     const [loading, setLoading] = useState(true);
@@ -60,7 +61,8 @@ const MakeupApprovalQueue: React.FC = () => {
         }
     };
 
-    const visible = filter === 'pending' ? list.filter(r => r.status === '待審核') : list;
+    const scoped = caseContext ? list.filter(r=>r.empId===caseContext.empId&&contextDateMatches(caseContext,r.date)) : list;
+    const visible = filter === 'pending' ? scoped.filter(r => r.status === '待審核') : scoped;
 
     return (
         <div className="p-6 bg-white rounded-lg shadow-lg">

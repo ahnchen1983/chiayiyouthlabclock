@@ -16,6 +16,8 @@ import {
 const API_URL = '/.netlify/functions/api';
 const isE2E = import.meta.env.VITE_E2E === 'true';
 
+export class APIError extends Error { constructor(public status: number, message: string) { super(message); } }
+
 const callAPI = async (action: string, data: Record<string, unknown> = {}): Promise<any> => {
     const idToken = auth.currentUser ? await auth.currentUser.getIdToken() : null;
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -29,7 +31,7 @@ const callAPI = async (action: string, data: Record<string, unknown> = {}): Prom
 
     if (!res.ok) {
         const text = await res.text();
-        throw new Error(text || `API 錯誤 ${res.status}`);
+        throw new APIError(res.status, text || `API 錯誤 ${res.status}`);
     }
     return res.json();
 };
@@ -253,7 +255,7 @@ export const apiUpdateClockRecord = async (
 // ==================== 補打卡申請（Phase 3.3）====================
 
 export const apiSubmitMakeupRequest = async (
-    request: { date: string; type: '上班' | '下班' | '上下班'; requestedClockIn?: string; requestedClockOut?: string; reason: string }
+    request: { date: string; recordId?: string; type: '上班' | '下班' | '上下班'; requestedClockIn?: string; requestedClockOut?: string; reason: string }
 ): Promise<ClockMakeupRequest> => {
     return callAPI('submit-makeup-request', request);
 };
@@ -458,3 +460,8 @@ export const apiApproveLeaveOfAbsenceRequest = async (
 ): Promise<boolean> => {
     return callAPI('approve-leave-of-absence-request', { requestId, status, approverName, rejectReason });
 };
+
+// Cases use the authenticated API; no client detector proof or delivery action.
+export const apiListAttendanceCases = (query: import('./attendanceCaseContract').CaseQuery): Promise<import('./attendanceCaseContract').CasePage> => callAPI('list-attendance-cases', {...query});
+export const apiGetAttendanceCase = (caseId: string): Promise<import('./attendanceCaseContract').CaseDetail> => callAPI('get-attendance-case', {caseId});
+export const apiActAttendanceCase = (command: import('./attendanceCaseContract').CaseCommand): Promise<{id:string;revision:number;status:string}> => callAPI('act-attendance-case', {...command});

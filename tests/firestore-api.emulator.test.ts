@@ -374,3 +374,12 @@ it('B2 sandbox worker rejects missing demo guard before invoking adapter',async(
  const prior=process.env.FIREBASE_PROJECT_ID;const deliver=vi.fn();delete process.env.FIREBASE_PROJECT_ID;
  try{await expect(runSandboxOutbox(db,'a'.repeat(64),{kind:'sandbox',deliver},{enabled:true})).rejects.toThrow('demo emulator');expect(deliver).not.toHaveBeenCalled();}finally{process.env.FIREBASE_PROJECT_ID=prior;}
 });
+it('B3 scoped filtered query and notification summary use real Firestore without delivery or writes',async()=>{
+ await db.collection('employees').doc(employee.id).update({role:UserRole.Employee});
+ const scan=await call('scan-attendance-cases',{empId:employee.id,yearMonth:month});expect(scan.statusCode).toBe(200);
+ const cases=await db.collection('attendanceCases').get();const c=cases.docs[0];
+ const queried=await call('list-attendance-cases',{empId:employee.id,yearMonth:month,status:c.data().status,type:c.data().type},'synthetic-employee');expect(queried.statusCode,queried.body).toBe(200);expect(JSON.parse(queried.body).cases.some(x=>x.id===c.id)).toBe(true);
+ const before=(await db.collection('attendanceCaseOutbox').get()).size;
+ const response=await call('get-attendance-case',{caseId:c.id},'synthetic-employee');expect(response.statusCode,response.body).toBe(200);expect(JSON.parse(response.body).notifications).toMatchObject({mode:'sandbox-only',deliveryEnabled:false,complete:true,counts:{held:1}});
+ expect((await db.collection('attendanceCaseOutbox').get()).size).toBe(before);
+});

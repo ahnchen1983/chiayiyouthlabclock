@@ -1,3 +1,4 @@
+import { contextDateMatches, type CaseFormContext } from '../../utils/caseFormContext';
 
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
@@ -6,9 +7,13 @@ import { LeaveType, LeaveRequest, LeaveBalance, OUTING_LEAVE_TYPES, isOutingLeav
 
 const REGULAR_LEAVE_TYPES: LeaveType[] = [LeaveType.Personal, LeaveType.Sick, LeaveType.Annual, LeaveType.Other];
 
-const LeaveRequestForm: React.FC = () => {
+const LeaveRequestForm: React.FC<{caseContext?:CaseFormContext}> = ({caseContext}) => {
   const { user } = useAuth();
   const [leaveType, setLeaveType] = useState<LeaveType>(LeaveType.Personal);
+  const [caseStartDay,setCaseStartDay]=useState(caseContext?.date||'');
+  const [caseEndDay,setCaseEndDay]=useState(caseContext?.date||'');
+  const [caseStartTime,setCaseStartTime]=useState('');
+  const [caseEndTime,setCaseEndTime]=useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [reason, setReason] = useState('');
@@ -19,6 +24,8 @@ const LeaveRequestForm: React.FC = () => {
   useEffect(() => {
     apiGetLeaveBalance().then(setBalances).catch(() => {});
   }, []);
+
+  useEffect(()=>{if(caseContext){setStartDate(caseStartDay&&caseStartTime?caseStartDay+'T'+caseStartTime+':00+08:00':'');setEndDate(caseEndDay&&caseEndTime?caseEndDay+'T'+caseEndTime+':00+08:00':'');}},[caseContext,caseStartDay,caseEndDay,caseStartTime,caseEndTime]);
 
   const currentBalance = balances.find(b => b.leaveType === leaveType);
   const requestedHours = startDate && endDate
@@ -31,6 +38,7 @@ const LeaveRequestForm: React.FC = () => {
       setMessage({ type: 'error', text: '所有欄位皆為必填。' });
       return;
     }
+    if(caseContext&&(caseContext.empId!==user.id||!contextDateMatches(caseContext,caseStartDay))){setMessage({type:'error',text:'案件員工或日期不符，請核對案件範圍。'});return;}
     // Phase 3.4 日期驗證
     const startMs = new Date(startDate).getTime();
     const endMs = new Date(endDate).getTime();
@@ -143,6 +151,13 @@ const LeaveRequestForm: React.FC = () => {
           </p>
         </div>
 
+        {caseContext ? <fieldset className="grid gap-3 sm:grid-cols-2">
+          <legend>案件請假時段（台北；時間待核實，不自動填入）</legend>
+          <label>案件請假開始日<input className="block border p-2" type="date" required value={caseStartDay} onChange={e=>setCaseStartDay(e.target.value)}/></label>
+          <label>案件請假開始時間<input className="block border p-2" type="time" required value={caseStartTime} onChange={e=>setCaseStartTime(e.target.value)}/></label>
+          <label>案件請假結束日<input className="block border p-2" type="date" required value={caseEndDay} onChange={e=>setCaseEndDay(e.target.value)}/></label>
+          <label>案件請假結束時間<input className="block border p-2" type="time" required value={caseEndTime} onChange={e=>setCaseEndTime(e.target.value)}/></label>
+        </fieldset> : <>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
             <label htmlFor="startDate" className="block text-sm font-medium text-gray-700">開始日期</label>
@@ -165,6 +180,7 @@ const LeaveRequestForm: React.FC = () => {
             />
             </div>
         </div>
+        </>}
 
         <div>
           <label htmlFor="reason" className="block text-sm font-medium text-gray-700">事由</label>

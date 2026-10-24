@@ -1,3 +1,5 @@
+import { useAuth } from '../../contexts/AuthContext';
+import { contextDateMatches, type CaseFormContext } from '../../utils/caseFormContext';
 import { taipeiDate } from '../../utils/attendance';
 import React, { useEffect, useState } from 'react';
 import { apiSubmitMakeupRequest, apiGetEmployeeMakeupRequests } from '../../services/googleAppsScriptAPI';
@@ -12,8 +14,9 @@ const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
     return <span className={`px-2 py-1 rounded text-xs ${map[status] || 'bg-gray-100'}`}>{status}</span>;
 };
 
-const ClockMakeupForm: React.FC = () => {
-    const [date, setDate] = useState(taipeiDate());
+const ClockMakeupForm: React.FC<{caseContext?:CaseFormContext}> = ({caseContext}) => {
+    const {user}=useAuth();
+    const [date, setDate] = useState(caseContext ? caseContext.date || '' : taipeiDate());
     const [type, setType] = useState<'上班' | '下班' | '上下班'>('上班');
     const [clockIn, setClockIn] = useState('');
     const [clockOut, setClockOut] = useState('');
@@ -39,6 +42,7 @@ const ClockMakeupForm: React.FC = () => {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        if(caseContext&&(caseContext.empId!==user?.id||!contextDateMatches(caseContext,date))){alert('案件員工或日期不符，請核對案件範圍');return;}
         if (reason.length < 5) {
             alert('請填寫詳細理由（至少 5 字）');
             return;
@@ -55,6 +59,7 @@ const ClockMakeupForm: React.FC = () => {
         try {
             await apiSubmitMakeupRequest({
                 date,
+                ...(caseContext?.recordId ? {recordId:caseContext.recordId} : {}),
                 type,
                 requestedClockIn: type !== '下班' ? clockIn : undefined,
                 requestedClockOut: type !== '上班' ? clockOut : undefined,
@@ -75,6 +80,7 @@ const ClockMakeupForm: React.FC = () => {
     return (
         <div className="p-6 bg-white rounded-lg shadow-lg space-y-6">
             <h1 className="text-2xl font-bold text-gray-800">補打卡申請</h1>
+            {caseContext&&<p>案件日期：{caseContext.date||'待選擇'}；不預填未核實上下班時間。案件關聯尚未持久化。</p>}
 
             <form onSubmit={handleSubmit} className="space-y-4 border rounded p-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
