@@ -312,3 +312,8 @@
 2.4：獨立overtimeRequests、事前授權／事後申請、本人撤回及新版本、指定主管補件／完整／部分核准。actual/requested/approved/statutory payable分離；未申請或駁回不清除confirmedWork。工作來源版本改變需新版本，已核不能直接取消。指定審核政策未知不開放任意全員或自核。
 2.1／2.5／6.1：沿12類detector記pending／approved-unapplied及超8h調查候選；preflight相同入口納入，sandbox outbox disabled且無正式scheduler。完整OT_COMP gap維持BLOCKED。
 3.3／3.4／4.4：日別、外勤歸屬、法遵上限實質規則、支付倍率與補休帳本仍待B5b/C，不以本批approvedMinutes替代依法應計。8.1／8.3正式資料仍未核對，NO GO。詳見PR13_BATCH_B5A.md。
+
+
+### B5b：補休帳本增量
+
+2.3/2.4/4.4 部分完成：本人選擇與指定主管同意、明確適用來源、credit/reserve/debit/release/雙人沖回、FIFO、期限來源、到期離職待結清；不混國假／例假。2.5/6.1 接入案件與preflight，pending/approved未薪資套用/ledger問題保持阻擋。7.2/7.3 僅補休個人帳本及指定scope管理UI，非完整電子薪資單／薪資報表。正式政策設定、工資級距/結清支付、完整更正及正式對帳仍未完成；不得清除 OT_COMP_REQUEST_MODEL gap。詳見 PR13_BATCH_B5B.md。

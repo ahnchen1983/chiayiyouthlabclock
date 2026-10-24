@@ -1,3 +1,4 @@
+import {foldCompLedger} from './compLedger';
 import { normalizeScheduleDoc } from './calculations';
 import { UserRole } from '../../../types';
 import { CASE_TYPES } from './attendanceCaseTypes';
@@ -40,13 +41,15 @@ const loadInput=async(db:any,tx:any,empId:string,month:string,at:string):Promise
  const records=await rows(db,tx,'clockRecords',empId);
  const schedules=(await rows(db,tx,'dailySchedule')).map((d:any)=>normalizeScheduleDoc(d,d.id,''));
  // Read complete employee sources, including full cross-month evidence.
+ const comps=[...await rows(db,tx,'compRequests',empId),...await rows(db,tx,'compSettlementTasks',empId)];
+ try{foldCompLedger(await rows(db,tx,'compLedger',empId));}catch{comps.push({id:'ledger-unverified:'+empId,empId,status:'unverified'});}
  const overtimes=await rows(db,tx,'overtimeRequests',empId);
  const leaves=await rows(db,tx,'leaveRequests',empId),makeups=await rows(db,tx,'makeupRequests',empId),absences=await rows(db,tx,'leaveOfAbsenceRequests',empId);
  const swaps=(await rows(db,tx,'shiftSwapRequests')).filter((r:any)=>r.fromEmpId===empId||r.toEmpId===empId);
  const revisions=(await rows(db,tx,'attendanceRevisions')).filter((r:any)=>r.before?.empId===empId||r.after?.empId===empId);
  const review=e.payrollReview, p=review?.policy;
  return { employee:{id:empId,hireDate:e.hireDate||'',...(e.resignDate?{resignDate:e.resignDate}:{}),...(e.leaveOfAbsenceStart?{leaveOfAbsenceStart:e.leaveOfAbsenceStart}:{}),...(e.leaveOfAbsenceEnd?{leaveOfAbsenceEnd:e.leaveOfAbsenceEnd}:{})},
- window:monthWindow(month),asOf:Date.parse(at)/60000,records,schedules,leaves,makeups,overtimes,absences,swaps,revisions,
+ window:monthWindow(month),asOf:Date.parse(at)/60000,records,schedules,leaves,makeups,comps,overtimes,absences,swaps,revisions,
  coverage:{records:'complete',schedules:schedules.some((d:any)=>d.shifts.some((s:any)=>!s.empId))?'unknown':'complete',requests:'complete',employment:'complete',revisions:'complete',explanations:'unknown'},
  // Existing payroll policy does not attest attendance grace/close/break targets.
  // Keep those unknown; do not reinterpret general system defaults as approval.
@@ -172,7 +175,7 @@ export async function assertCurrentCaseSource(db:any,tx:any,c:any,at:string){
  const fresh=observed?retainAffectedWindow(c,observed):null;
  if(!fresh||fresh.evidenceVersion!==c.observation.evidenceVersion)error(409,'原始來源已變更，須重新掃描後覆核');
 }
-export async function planLeaveCaseRefresh(db:any,tx:any,empId:string,months:string[],leave:any,actor:string,at:string,otherLeaves:any[]=[],collection:'leaves'|'overtimes'='leaves'){
+export async function planLeaveCaseRefresh(db:any,tx:any,empId:string,months:string[],leave:any,actor:string,at:string,otherLeaves:any[]=[],collection:'leaves'|'overtimes'|'comps'='leaves'){
  const existing=await rows(db,tx,'attendanceCases',empId),original=new Map(existing.map((c:any)=>[c.id,c]));
  const planned=new Map<string,any>();
  for(const month of months){
@@ -191,3 +194,5 @@ export async function planLeaveCaseRefresh(db:any,tx:any,empId:string,months:str
 }
 
 export const planOvertimeCaseRefresh=(db:any,tx:any,empId:string,months:string[],request:any,actor:string,at:string,previous:any[]=[])=>planLeaveCaseRefresh(db,tx,empId,months,request,actor,at,previous,'overtimes');
+
+export const planCompCaseRefresh=(db:any,tx:any,empId:string,months:string[],request:any,actor:string,at:string,previous:any[]=[])=>planLeaveCaseRefresh(db,tx,empId,months,request,actor,at,previous,'comps');

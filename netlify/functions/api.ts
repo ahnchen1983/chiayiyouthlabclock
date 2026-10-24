@@ -1,3 +1,5 @@
+import {COMP_ACTIONS,handleCompAction} from './utils/compWorkflow';
+import {foldCompLedger} from './utils/compLedger';
 import {OVERTIME_ACTIONS,handleOvertimeAction} from './utils/overtimeWorkflow';
 import {LEAVE_LIFECYCLE_ACTIONS,handleLeaveLifecycle} from './utils/leaveLifecycle';
 import {LEAVE_ATTACHMENT_ACTIONS,handleLeaveAttachmentAction} from './utils/makeupAttachments';
@@ -631,7 +633,7 @@ const displayAttendance = async (records: ClockRecord[], month: string): Promise
 const employeeInMonth = (e: any, month: string): boolean => e.accountKind !== 'system-account' && !(e.payrollReview?.yearMonth === month && e.payrollReview?.participation === 'system-account' && e.payrollReview?.participationReason?.trim() && e.payrollReview?.reviewedBy && e.payrollReview?.reviewedAt) && (!e.hireDate || e.hireDate.slice(0, 7) <= month) && (!e.resignDate || e.resignDate.slice(0, 7) >= month);
 const payrollEmployee = (e: any) => ({ id: e.id, accountKind: e.accountKind || null, name: e.name, role: e.role ?? null, position: e.position, status: e.status,
     hourlyRate: e.hourlyRate ?? null, monthlySalary: e.monthlySalary ?? null, hireDate: e.hireDate || '', resignDate: e.resignDate || '', leaveOfAbsenceStart: e.leaveOfAbsenceStart || '', leaveOfAbsenceEnd: e.leaveOfAbsenceEnd || '', payrollReview: payrollReviewFields(e.payrollReview) });
-const pendingCollections: RequestKind[] = ['overtimeRequests','anomalyExplanations', 'leaveRequests', 'makeupRequests', 'leaveOfAbsenceRequests', 'shiftSwapRequests'];
+const pendingCollections: RequestKind[] = ['compRequests','compSettlementTasks','overtimeRequests','anomalyExplanations', 'leaveRequests', 'makeupRequests', 'leaveOfAbsenceRequests', 'shiftSwapRequests'];
 const readPendingSources = async (tx?: any): Promise<PendingSources> => {
     const result = {} as PendingSources;
     // Sequential transaction queries: collection reads also detect changes to request status.
@@ -639,6 +641,9 @@ const readPendingSources = async (tx?: any): Promise<PendingSources> => {
         const ref = db.collection(name), snap = tx ? await tx.get(ref) : await ref.get();
         result[name] = snap.docs.map(d => ({ ...d.data(), id: d.id }));
     }
+    const ledgerRef=db.collection('compLedger'),ledger=tx?await tx.get(ledgerRef):await ledgerRef.get();
+    const groups=new Map<string,any[]>();for(const d of ledger.docs){const r={...d.data(),id:d.id};groups.set(r.empId,[...(groups.get(r.empId)||[]),r]);}
+    for(const [empId,entries] of groups)try{foldCompLedger(entries);}catch{result.compRequests.push({id:'ledger-unverified:'+empId,empId,status:'unverified'});}
     return result;
 };
 
@@ -653,7 +658,7 @@ const createPendingPayrollRequest = async (kind: RequestKind, value: any, ref = 
         const records = cards.docs.map(d => ({ ...d.data(), id: d.id } as ClockRecord));
         const schedules = days.docs.map(d => normalizeScheduleDoc(d.data(), d.id, ''));
         const request = { ...value, id: ref.id };
-        const sources: PendingSources = { overtimeRequests: [],anomalyExplanations: [], leaveRequests: [], makeupRequests: [], leaveOfAbsenceRequests: [], shiftSwapRequests: [] };
+        const sources: PendingSources = { compRequests: [],compSettlementTasks: [],overtimeRequests: [],anomalyExplanations: [], leaveRequests: [], makeupRequests: [], leaveOfAbsenceRequests: [], shiftSwapRequests: [] };
         sources[kind] = [request];
         for (const lock of locks.docs) {
             if (!isMonthLocked(lock.data())) continue;
@@ -777,6 +782,7 @@ export const handler: Handler = async (event) => {
     const isAdmin = currentUserRole === UserRole.Admin || isSuperAdmin;
 
     try {
+        if(COMP_ACTIONS.includes(action as any))return ok(await handleCompAction(db,uid,action,data));
         if(OVERTIME_ACTIONS.includes(action as any))return ok(await handleOvertimeAction(db,uid,action,data));
         if(LEAVE_LIFECYCLE_ACTIONS.includes(action as any)) return ok(await handleLeaveLifecycle(db,uid,action,data));
         if(LEAVE_ATTACHMENT_ACTIONS.includes(action)){const response=ok(await handleLeaveAttachmentAction(db,uid,action,data));return {...response,headers:{...response.headers,'Cache-Control':'no-store','Pragma':'no-cache','X-Content-Type-Options':'nosniff'}};}

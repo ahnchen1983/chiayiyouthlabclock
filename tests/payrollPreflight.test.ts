@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { evaluatePayrollMonth, pendingRequestIssues, type PendingSources } from '../netlify/functions/utils/payrollPreflight';
 import { card, employee, month, review, schedule } from './fixtures/payrollV2';
 import { clockSourceKey } from '../utils/attendance';
-const empty = (): PendingSources => ({overtimeRequests:[],anomalyExplanations:[],leaveRequests:[],makeupRequests:[],leaveOfAbsenceRequests:[],shiftSwapRequests:[]});
+const empty = (): PendingSources => ({compRequests:[],compSettlementTasks:[],overtimeRequests:[],anomalyExplanations:[],leaveRequests:[],makeupRequests:[],leaveOfAbsenceRequests:[],shiftSwapRequests:[]});
 const evaluate = (requests: Partial<PendingSources> = empty(), emp = employee, records = [card()], schedules = [schedule()]) => evaluatePayrollMonth({month, employees:[emp],records,schedules,leaves:[],requests});
 const pending = {id:'P1',empId:employee.id,status:'待審核',date:'2026-04-01',startDate:'2026-04-01T13:00',endDate:'2026-04-01T17:00'};
 describe('preflight-v1 explicit synthetic input and manual expected result',()=>{

@@ -493,7 +493,7 @@ export const apiActExplanation=(command:ExplanationCommand):Promise<import('../n
 export const apiSubmitCaseLeave=(command:ExplanationCommand & {leaveType:LeaveType;startDate:string;endDate:string}):Promise<LeaveRequest>=>callAPI('submit-case-leave',{...command});
 export const apiLinkCaseLeave=(command:ExplanationCommand & {leaveRequestId:string}):Promise<unknown>=>callAPI('link-case-leave',{...command});
 export const apiReviewCaseLeave=(command:Omit<ExplanationCommand,'mode'> & {leaveRequestId:string;mode:'approve'|'reject'}):Promise<LeaveRequest>=>callAPI('review-case-leave',{...command});
-export type AnomalyMutationAction='submit-overtime-request'|'act-overtime-request'|'act-leave-version'|'submit-anomaly-explanation'|'act-anomaly-explanation'|'submit-case-leave'|'link-case-leave'|'review-case-leave';
+export type AnomalyMutationAction='submit-comp-request'|'act-comp-request'|'scan-comp-settlement'|'submit-overtime-request'|'act-overtime-request'|'act-leave-version'|'submit-anomaly-explanation'|'act-anomaly-explanation'|'submit-case-leave'|'link-case-leave'|'review-case-leave';
 export const apiAnomalyMutation=(action:AnomalyMutationAction,command:Record<string,unknown>):Promise<any>=>callAPI(action,command);
 
 export const apiLeaveWorkflow=(requestId:string):Promise<{request:LeaveRequest;sourceVersion:string;caseRevision?:number;caseEvidenceVersion?:string;policyStatus:string}>=>callAPI('get-leave-workflow',{requestId});
@@ -510,3 +510,5 @@ export const subjectAttachmentAPI=(subject:'makeup'|'leave')=>{
 };
 
 export const apiOvertimeWorkflow=(empId:string):Promise<{empId:string;requests:any[];workflowPolicy:any;settlementEligibility:'BLOCKED'}>=>callAPI('get-overtime-workflow',{empId});
+
+export const apiCompWorkflow=(empId:string):Promise<{empId:string;requests:any[];ledger:any[];tasks:any[];balance:any;issues:string[];policy:any;settlementEligibility:'BLOCKED'}>=>callAPI('get-comp-workflow',{empId});
