@@ -9,14 +9,15 @@ const fake = vi.hoisted(() => {
         set: async (value: any) => data.set(path, value),
         update: async (value: any) => data.set(path, { ...data.get(path), ...value }),
     });
-    const collection = (path: string, filters: any[] = []): any => ({
+    const collection = (path: string, filters: any[] = [], limit=Infinity): any => ({
         doc: (id = 'synthetic-auto') => doc(`${path}/${id}`),
-        where: (field: string, operator: string, value: any) => collection(path, [...filters, [field, operator, value]]),
+        where: (field: string, operator: string, value: any) => collection(path, [...filters, [field, operator, value]], limit),
+        limit: (n:number) => collection(path,filters,n),
         add: async (value: any) => { const ref = doc(`${path}/synthetic-auto`); await ref.set(value); return ref; },
         get: async () => {
             const docs = [...data.keys()].filter(key => key.startsWith(path + '/') && key.split('/').length === 2)
                 .map(snapshot).filter(snap => filters.every(([field, operator, value]) => operator === '==' && snap.data()[field] === value));
-            return { docs, empty: !docs.length, size: docs.length };
+            const selected=docs.slice(0,limit);return { docs:selected, empty: !selected.length, size:selected.length };
         },
     });
     const db = {
@@ -60,7 +61,7 @@ describe('PR 13 makeup rejection with multiple sessions', () => {
 });
 
 const call = async (body: any) => await handler({ httpMethod: 'POST', headers: { authorization: 'Bearer synthetic' }, body: JSON.stringify({ action: 'approve-makeup-request', requestId: 'M', ...body }) } as any, {} as any) as any;
-const attendance = () => [...fake.data.entries()].filter(([path]) => /^(clockRecords|attendanceRevisions|payrollControl)\//.test(path));
+const attendance = () => [...fake.data.entries()].filter(([path]) => /^(clockRecords|attendanceRevisions)\//.test(path));
 
 describe('makeup rejection preserves attendance under legacy invalid input', () => {
     it.each([
@@ -76,9 +77,11 @@ describe('makeup rejection preserves attendance under legacy invalid input', () 
         expect(fake.data.get('makeupRequests/M')).toMatchObject({ status: '駁回', approver: 'ADMIN', rejectReason: '請重提完整時間' });
         expect(attendance()).toEqual(before);
     });
-    it('rejects requests on a locked month without any payroll mutation', async () => {
+    // B4a explicit requirement: every lifecycle mutation now shares the month gate.
+    it('blocks rejection on a locked month without any mutation', async () => {
         fake.data.set('monthLocks/2026-04', { yearMonth: '2026-04', lockedAt: '2026-05-01T00:00:00Z' });
-        expect((await call({ status: '駁回' })).statusCode).toBe(200);
+        expect((await call({ status: '駁回' })).statusCode).toBe(423);
+        expect(fake.data.get('makeupRequests/M').status).toBe('待審核');
         expect(fake.data.has('payrollControl/revision')).toBe(false);
     });
     it('keeps reviewer role and valid request identity requirements', async () => {
@@ -95,9 +98,10 @@ describe('makeup rejection preserves attendance under legacy invalid input', () 
         expect((await call({ status: '駁回' })).statusCode).toBe(409);
         expect(fake.data.get('makeupRequests/M').status).toBe('核准');
         fake.data.get('makeupRequests/M').status = '待審核';
-        await call({ status: '駁回' }); const before = structuredClone([...fake.data.entries()]);
+        await call({ status: '駁回' }); const before = structuredClone([...fake.data.entries()].filter(([k])=>k!=='payrollControl/revision'));
         expect((await call({ status: '駁回' })).statusCode).toBe(200);
-        expect([...fake.data.entries()]).toEqual(before);
+        // A replay may advance the shared serialization gate, never attendance/request/audit.
+        expect([...fake.data.entries()].filter(([k])=>k!=='payrollControl/revision')).toEqual(before);
     });
     it.each(['invalid-timestamp', '2026-04-02T06:00:00', '2026-13-02T06:00:00+08:00', '2026-02-31T06:00:00+08:00', '2026-04-02T24:00:00+08:00'])('refuses approval for invalid absolute requested time (%s)', async stamp => {
         Object.assign(fake.data.get('makeupRequests/M'), { recordId: 'C1', requestedClockOutAt: stamp });

@@ -183,9 +183,20 @@ export interface SystemConfig {
 }
 
 // 補打卡申請
-export type MakeupRequestStatus = '待審核' | '核准' | '駁回';
+export type MakeupRequestStatus = '待審核' | '核准' | '駁回' | '待補件' | '已取消' | '已取代';
 
 export interface ClockMakeupRequest {
+    schemaVersion?: 'makeup-request-v1';
+    revision?: number;
+    recordId?: string | null;
+    requestedClockInAt?: string | null;
+    requestedClockOutAt?: string | null;
+    supersedesRequestId?: string | null;
+    supersededByRequestId?: string;
+    returnReason?: string;
+    workflowPolicyStatus?: 'needs-configuration';
+    history?: {id:string;operationId:string;revision:number;actor:string;at:string;from:string|null;to:string;reason:string}[];
+
     id: string;
     empId: string;
     name: string;

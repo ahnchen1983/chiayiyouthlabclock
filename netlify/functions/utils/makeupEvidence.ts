@@ -1,11 +1,33 @@
 import { createHash } from 'node:crypto';
 import type { ClockRecord } from '../../../types';
-import { clockSourceKey } from '../../../utils/attendance';
+import { clockSourceKey, clockInterval, localInstant } from '../../../utils/attendance';
 import { editClock } from './clockMutation';
 export const makeupSourceKey = (r: any): string => createHash('sha256').update(JSON.stringify([
     r.empId, r.date, r.recordId || null, r.requestedClockIn || null, r.requestedClockOut || null,
     r.requestedClockInAt || null, r.requestedClockOutAt || null,
 ])).digest('hex');
+// Versioned normalization is replayed during evidence verification, never inferred for legacy revisions.
+export const makeupClockPatch = (request: any, base: any): any => {
+    const patch: any = {};
+    for (const side of ['In', 'Out']) {
+        if (request[`requestedClock${side}At`]) patch[`clock${side}At`] = request[`requestedClock${side}At`];
+        else if (request[`requestedClock${side}`]) patch[`clock${side}Time`] = request[`requestedClock${side}`];
+    }
+    if (patch.clockOutAt && !patch.clockInAt && !patch.clockInTime && !base.clockInAt && base.clockInTime)
+        patch.clockInAt = localInstant(base.date, base.clockInTime);
+    if (patch.clockInAt && !patch.clockOutAt && !patch.clockOutTime && !base.clockOutAt && base.clockOutTime) {
+        const end = localInstant(base.date, base.clockOutTime);
+        if (end && Date.parse(end) > Date.parse(patch.clockInAt)) patch.clockOutAt = end;
+    }
+    if (!base.clockInAt && !base.clockOutAt && !patch.clockInAt && !patch.clockOutAt) {
+        const candidate = {...base, clockInTime: patch.clockInTime ?? base.clockInTime, clockOutTime: patch.clockOutTime ?? base.clockOutTime};
+        if (clockInterval(candidate)) {
+            if (!patch.clockInTime) patch.clockInAt = localInstant(base.date, candidate.clockInTime);
+            if (!patch.clockOutTime) patch.clockOutAt = localInstant(base.date, candidate.clockOutTime);
+        }
+    }
+    return patch;
+};
 const sameSource = (a: ClockRecord, b: ClockRecord) => a && b && a.empId === b.empId && a.date === b.date && clockSourceKey(a) === clockSourceKey(b);
 // Immutable before/after revisions attest application; timestamps alone do not.
 export const hasAppliedMakeup = (request: any, records: ClockRecord[], revisions: any[]): boolean => {
@@ -22,7 +44,7 @@ export const hasAppliedMakeup = (request: any, records: ClockRecord[], revisions
             else if (request[`requestedClock${side}`]) patch[`clock${side}Time`] = request[`requestedClock${side}`];
         }
         const seed = original.before || { ...original.after, clockInTime: null, clockOutTime: null, clockInAt: null, clockOutAt: null };
-        if (!sameSource(editClock(seed, patch, original.editedBy, original.editedAt), original.after)) return false;
+        if (!sameSource(editClock(seed, original.makeupNormalizationVersion === 'same-day-v1' ? makeupClockPatch(request, seed) : patch, original.editedBy, original.editedAt), original.after)) return false;
     } catch { return false; }
     const current = records.find(r => r.id === applied.recordId && r.empId === request.empId);
     if (!current) return false;

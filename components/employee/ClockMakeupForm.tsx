@@ -1,163 +1,61 @@
 import { useAuth } from '../../contexts/AuthContext';
-import { contextDateMatches, type CaseFormContext } from '../../utils/caseFormContext';
+import { type CaseFormContext, contextDateMatches } from '../../utils/caseFormContext';
+import { useMakeupOperation, type MakeupOperation } from '../../hooks/useMakeupOperation';
+import React, { useEffect, useRef, useState } from 'react';
 import { taipeiDate } from '../../utils/attendance';
-import React, { useEffect, useState } from 'react';
-import { apiSubmitMakeupRequest, apiGetEmployeeMakeupRequests } from '../../services/googleAppsScriptAPI';
-import { ClockMakeupRequest } from '../../types';
+import { APIError, apiActMakeupRequest, apiGetCaseRequestLinks, apiGetEmployeeMakeupRequests, apiGetMakeupRequestDetail, apiSubmitMakeupVersion, type MakeupCaseContext, type MakeupDraft } from '../../services/googleAppsScriptAPI';
+import type { ClockMakeupRequest } from '../../types';
+import MakeupRequestActions from '../MakeupRequestActions';
+const taipeiInput=(value?:string|null)=>value?new Date(Date.parse(value)+8*3600000).toISOString().slice(0,19):'';
+export default function ClockMakeupForm({caseContext,requestId}:{caseContext?:CaseFormContext;requestId?:string}={}){
+ const {user}=useAuth();const operation=useMakeupOperation();
+ const [linkContext,setLinkContext]=useState<MakeupCaseContext|null>(null);
+ const [date,setDate]=useState(caseContext?caseContext.date||'':taipeiDate()),[type,setType]=useState<'上班'|'下班'|'上下班'>('上班');
+ const [clockIn,setClockIn]=useState(''),[clockOut,setClockOut]=useState(''),[inAt,setInAt]=useState(''),[outAt,setOutAt]=useState(''),[recordId,setRecordId]=useState(caseContext?.recordId||''),[reason,setReason]=useState('');
+ const [history,setHistory]=useState<ClockMakeupRequest[]>([]),[prior,setPrior]=useState<ClockMakeupRequest|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState(''),[stale,setStale]=useState(false),[uncertain,setUncertain]=useState(false);
+ const gate=useRef(false);
+ const matching=operation.pending&&(operation.pending.kind==='submit'&&(!caseContext||operation.pending.command.caseId===caseContext.caseId)||operation.pending.kind==='act'&&operation.pending.command.mode==='resubmit'&&(!caseContext||operation.pending.contextCaseId===caseContext.caseId))?operation.pending:null;
+ const otherPending=!!operation.pending&&!matching;
+ useEffect(()=>{if(matching){const p=matching.command;const d=matching.kind==='act'?matching.command.patch!:matching.command;setDate(d.date);setType(d.type);setRecordId(d.recordId||'');setReason(p.reason);setClockIn(d.requestedClockIn||'');setClockOut(d.requestedClockOut||'');setInAt(taipeiInput(d.requestedClockInAt));setOutAt(taipeiInput(d.requestedClockOutAt));setUncertain(true);}else setUncertain(false);},[operation.pending]);
+ useEffect(()=>{if(caseContext)apiGetCaseRequestLinks(caseContext.caseId).then(setLinkContext).catch(()=>setError('案件關聯範圍未能讀取，暫不能送出。'));},[caseContext?.caseId]);
+ const load=async()=>{try{const rows=await apiGetEmployeeMakeupRequests();setHistory(rows.sort((a,b)=>(b.requestDate||'').localeCompare(a.requestDate||'')));}catch{setError('申請紀錄讀取失敗，請重試。');}};
+ useEffect(()=>{void load();},[]);
+ const edit=(r:ClockMakeupRequest)=>{setPrior(r);setDate(r.date);setType(r.type);setClockIn(r.requestedClockIn||'');setClockOut(r.requestedClockOut||'');setInAt(taipeiInput(r.requestedClockInAt));setOutAt(taipeiInput(r.requestedClockOutAt));setRecordId(r.recordId||'');setReason(r.reason);setStale(false);setUncertain(false);setError('');};
+ const submit=async()=>{
+  if(gate.current||operation.blocked||otherPending||(stale&&!matching)||reason.trim().length<5||caseContext&&!linkContext)return;
+  if(caseContext&&(caseContext.empId!==user?.id||!contextDateMatches(caseContext,date))){setError('案件員工或日期不符，請核對範圍');return;}gate.current=true;setBusy(true);setError('');setNotice('');
+  const draft:MakeupDraft={date,type,reason:reason.trim(),...(recordId?{recordId}:{}),...(type!=='下班'?(inAt?{requestedClockInAt:inAt+(inAt.length===16?':00':'')+'+08:00'}:{requestedClockIn:clockIn}):{}),...(type!=='上班'?(outAt?{requestedClockOutAt:outAt+(outAt.length===16?':00':'')+'+08:00'}:{requestedClockOut:clockOut}):{})};
+  const intent:MakeupOperation=matching||(prior?{kind:'act' as const,...(caseContext?{contextCaseId:caseContext.caseId}:{}),command:{requestId:prior.id,expectedRevision:prior.revision??0,mode:'resubmit' as const,operationId:crypto.randomUUID(),reason:draft.reason,patch:draft}}:{kind:'submit' as const,command:{...draft,operationId:crypto.randomUUID(),...(caseContext?{caseId:caseContext.caseId,expectedCaseRevision:linkContext!.caseRevision}:{})}});
 
-const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
-    const map: Record<string, string> = {
-        '待審核': 'bg-yellow-100 text-yellow-800',
-        '核准': 'bg-green-100 text-green-800',
-        '駁回': 'bg-red-100 text-red-800',
-    };
-    return <span className={`px-2 py-1 rounded text-xs ${map[status] || 'bg-gray-100'}`}>{status}</span>;
-};
-
-const ClockMakeupForm: React.FC<{caseContext?:CaseFormContext}> = ({caseContext}) => {
-    const {user}=useAuth();
-    const [date, setDate] = useState(caseContext ? caseContext.date || '' : taipeiDate());
-    const [type, setType] = useState<'上班' | '下班' | '上下班'>('上班');
-    const [clockIn, setClockIn] = useState('');
-    const [clockOut, setClockOut] = useState('');
-    const [reason, setReason] = useState('');
-    const [submitting, setSubmitting] = useState(false);
-    const [history, setHistory] = useState<ClockMakeupRequest[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [reloadKey, setReloadKey] = useState(0);
-
-    useEffect(() => {
-        (async () => {
-            setLoading(true);
-            try {
-                const list = await apiGetEmployeeMakeupRequests();
-                setHistory(list.sort((a, b) => (b.requestDate || '').localeCompare(a.requestDate || '')));
-            } catch (e) {
-                console.error(e);
-            } finally {
-                setLoading(false);
-            }
-        })();
-    }, [reloadKey]);
-
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if(caseContext&&(caseContext.empId!==user?.id||!contextDateMatches(caseContext,date))){alert('案件員工或日期不符，請核對案件範圍');return;}
-        if (reason.length < 5) {
-            alert('請填寫詳細理由（至少 5 字）');
-            return;
-        }
-        if ((type === '上班' || type === '上下班') && !clockIn) {
-            alert('請填寫上班時間');
-            return;
-        }
-        if ((type === '下班' || type === '上下班') && !clockOut) {
-            alert('請填寫下班時間');
-            return;
-        }
-        setSubmitting(true);
-        try {
-            await apiSubmitMakeupRequest({
-                date,
-                ...(caseContext?.recordId ? {recordId:caseContext.recordId} : {}),
-                type,
-                requestedClockIn: type !== '下班' ? clockIn : undefined,
-                requestedClockOut: type !== '上班' ? clockOut : undefined,
-                reason,
-            });
-            alert('申請已送出，請待管理者審核');
-            setReason('');
-            setClockIn('');
-            setClockOut('');
-            setReloadKey(k => k + 1);
-        } catch (e: any) {
-            alert(e.message || '送出失敗');
-        } finally {
-            setSubmitting(false);
-        }
-    };
-
-    return (
-        <div className="p-6 bg-white rounded-lg shadow-lg space-y-6">
-            <h1 className="text-2xl font-bold text-gray-800">補打卡申請</h1>
-            {caseContext&&<p>案件日期：{caseContext.date||'待選擇'}；不預填未核實上下班時間。案件關聯尚未持久化。</p>}
-
-            <form onSubmit={handleSubmit} className="space-y-4 border rounded p-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">補打卡日期</label>
-                        <input type="date" value={date} onChange={e => setDate(e.target.value)} required className="w-full p-2 border rounded" max={taipeiDate()} />
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">補打卡類型</label>
-                        <select value={type} onChange={e => setType(e.target.value as any)} className="w-full p-2 border rounded">
-                            <option value="上班">補上班</option>
-                            <option value="下班">補下班</option>
-                            <option value="上下班">補上下班</option>
-                        </select>
-                    </div>
-                    {(type === '上班' || type === '上下班') && (
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">上班時間</label>
-                            <input type="time" value={clockIn} onChange={e => setClockIn(e.target.value)} className="w-full p-2 border rounded" />
-                        </div>
-                    )}
-                    {(type === '下班' || type === '上下班') && (
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">下班時間</label>
-                            <input type="time" value={clockOut} onChange={e => setClockOut(e.target.value)} className="w-full p-2 border rounded" />
-                        </div>
-                    )}
-                </div>
-                <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">申請理由</label>
-                    <textarea value={reason} onChange={e => setReason(e.target.value)} required rows={3} className="w-full p-2 border rounded" placeholder="請說明忘記打卡的原因（至少 5 字）" />
-                </div>
-                <button type="submit" disabled={submitting} className="px-6 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50">
-                    {submitting ? '送出中…' : '送出申請'}
-                </button>
-            </form>
-
-            <div>
-                <h2 className="text-lg font-bold mb-3">我的申請紀錄</h2>
-                {loading ? (
-                    <p className="text-gray-500">載入中…</p>
-                ) : history.length === 0 ? (
-                    <p className="text-gray-500">尚無申請紀錄</p>
-                ) : (
-                    <div className="overflow-x-auto">
-                        <table className="min-w-full text-sm">
-                            <thead className="bg-gray-100">
-                                <tr>
-                                    <th className="py-2 px-3 text-left">申請時間</th>
-                                    <th className="py-2 px-3 text-left">補打卡日期</th>
-                                    <th className="py-2 px-3 text-left">類型</th>
-                                    <th className="py-2 px-3 text-left">時間</th>
-                                    <th className="py-2 px-3 text-left">理由</th>
-                                    <th className="py-2 px-3 text-center">狀態</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {history.map(h => (
-                                    <tr key={h.id} className="border-b">
-                                        <td className="py-2 px-3 text-gray-500">{h.requestDate?.slice(0, 16).replace('T', ' ')}</td>
-                                        <td className="py-2 px-3">{h.date}</td>
-                                        <td className="py-2 px-3">{h.type}</td>
-                                        <td className="py-2 px-3">{h.requestedClockIn || '-'} / {h.requestedClockOut || '-'}</td>
-                                        <td className="py-2 px-3 max-w-xs truncate" title={h.reason}>{h.reason}</td>
-                                        <td className="py-2 px-3 text-center">
-                                            <StatusBadge status={h.status} />
-                                            {h.rejectReason && <p className="text-xs text-red-600 mt-1">{h.rejectReason}</p>}
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                )}
-            </div>
-        </div>
-    );
-};
-
-export default ClockMakeupForm;
+  try{const saved=await operation.attempt(intent);setUncertain(false);setPrior(null);setReason('');setClockIn('');setClockOut('');setInAt('');setOutAt('');setNotice(`已提交 ${saved.id}，待審核；未自動結案或核定工作。`);await load();}
+  catch(e){if(e instanceof APIError&&[400,403,404,409,423].includes(e.status)){if(!matching)setStale(true);setError('時間／權限／版本或鎖月檢查未通過；請重新核對，不會覆寫舊版。');}else setError('結果未確認，請重試原申請，勿另外重複提交。');}
+  finally{gate.current=false;setBusy(false);}
+ };
+ const reload=async()=>{await load();if(matching)return;if(prior){try{edit(await apiGetMakeupRequestDetail(prior.id));}catch{setError('原版本無法重新讀取。');}}else if(!caseContext){setStale(false);}else setError('案件版本請返回案件重新載入；不自動略過版本檢查。');};
+ return <div className="p-4 bg-white rounded space-y-4 min-w-0 break-words">
+  <h1 className="text-2xl font-bold">補打卡申請</h1>
+  <p className="text-sm">指定主管、期限與必附附件政策待設定。此批尚不提供附件。已核准版本不能取消；已鎖月份須另走差額覆核。</p>
+  {caseContext&&<p className="break-all">關聯案件 {caseContext.caseId}／員工 {caseContext.empId}。僅帶入日期與已知卡 ID，時間必須自行核實。</p>}
+  {requestId&&<p className="break-all">指定申請：{requestId}（見紀錄）</p>}
+  {(otherPending||operation.blocked)&&<p role="alert">另有未確認操作或暫存不可用，請回原申請核實。不要關閉分頁或清除資料後重送。</p>}
+  {matching&&<p>保留原申請識別，重新載入不代表成功；只能重試原內容。</p>}
+  {notice&&<p role="status">{notice}</p>}{error&&<p role="alert">{error}</p>}
+  <form className="space-y-3 border rounded p-3" onSubmit={e=>{e.preventDefault();void submit();}}>
+   <h2>{prior?`重送新版本（原版本 ${prior.revision??0}）`:'新增申請'}</h2>
+   <fieldset disabled={busy||operation.blocked||otherPending||uncertain||stale} className="grid gap-3 sm:grid-cols-2">
+    <label>補打卡日期<input className="block w-full border p-2" type="date" required value={date} onChange={e=>setDate(e.target.value)}/></label>
+    <label>補打卡類型<select className="block w-full border p-2" value={type} onChange={e=>setType(e.target.value as any)}><option value="上班">補上班</option><option value="下班">補下班</option><option value="上下班">補上下班</option></select></label>
+    <label className="sm:col-span-2">打卡紀錄 ID（多段時必須指定）<input className="block w-full border p-2" value={recordId} maxLength={150} onChange={e=>setRecordId(e.target.value)}/></label>
+    {type!=='下班'&&<><label>上班時間（當日）<input className="block w-full border p-2" type="time" value={clockIn} disabled={!!inAt} onChange={e=>setClockIn(e.target.value)}/></label><label>完整上班日期時間（台北）<input className="block w-full border p-2" type="datetime-local" step="1" value={inAt} onChange={e=>setInAt(e.target.value)}/></label></>}
+    {type!=='上班'&&<><label>下班時間（當日）<input className="block w-full border p-2" type="time" value={clockOut} disabled={!!outAt} onChange={e=>setClockOut(e.target.value)}/></label><label>完整下班日期時間（跨夜必填，台北）<input className="block w-full border p-2" type="datetime-local" step="1" value={outAt} onChange={e=>setOutAt(e.target.value)}/></label></>}
+    <label className="sm:col-span-2">申請理由<textarea aria-label="申請理由" className="block w-full border p-2" required minLength={5} maxLength={2000} value={reason} onChange={e=>setReason(e.target.value)}/></label>
+   </fieldset>
+   <button className="rounded border p-2 disabled:opacity-50" disabled={busy||operation.blocked||otherPending||(stale&&!matching)||reason.trim().length<5||!!caseContext&&!linkContext}>{uncertain?'重試原申請':prior?'送出新版本':'送出申請'}</button>
+   {prior&&<button type="button" disabled={busy||uncertain} onClick={()=>{setPrior(null);setReason('');setStale(false);}}>取消重送編輯</button>}
+  </form>
+  <button disabled={busy} onClick={()=>void reload()}>重新載入申請紀錄</button>
+  <h2 className="font-bold">我的申請紀錄</h2>
+  {history.filter(r=>!requestId||r.id===requestId||r.supersedesRequestId===requestId).map(r=><article key={r.id} className="border rounded p-3 break-words space-y-2"><p>{r.date} · {r.type} · {r.requestedClockInAt||r.requestedClockIn||'—'} / {r.requestedClockOutAt||r.requestedClockOut||'—'}</p><p>{r.reason}</p><MakeupRequestActions request={r} onChanged={()=>void load()} onResubmit={operation.pending?undefined:edit}/></article>)}
+  {!history.length&&<p>尚無申請紀錄，不代表出勤異常已解除。</p>}
+ </div>;
+}

@@ -139,9 +139,9 @@ export const detectAttendanceCases = (input: DetectorInput): DetectionResult => 
         const impactWindows=[input.window,...cards.map(c=>c.range),...allDayRanges];
         if(requestRanges.every(valid)&&!requestRanges.some(r=>impactWindows.some(w=>overlap(r,w))))continue;
         const refs=[ref(collection,q.id,q),...cards.map(c=>c.ref),...input.revisions.filter(r=>r.after?.empId===empId || r.before?.empId===empId).map(r=>ref('attendanceRevisions',r.id,r)),ref('employment',empId,input.employee)],anchor=collection+':'+q.id;
-        const pending=collection==='shiftSwapRequests'?['awaiting-peer','awaiting-admin'].includes(q.status):q.status==='待審核';
+        const pending=collection==='shiftSwapRequests'?['awaiting-peer','awaiting-admin'].includes(q.status):collection==='makeupRequests'?['待審核','待補件'].includes(q.status):q.status==='待審核';
         const approved=collection==='shiftSwapRequests'?q.status==='approved':q.status==='核准';
-        const rejected=collection==='shiftSwapRequests'?['rejected-by-peer','rejected-by-admin','cancelled'].includes(q.status):q.status==='駁回';
+        const rejected=collection==='shiftSwapRequests'?['rejected-by-peer','rejected-by-admin','cancelled'].includes(q.status):collection==='makeupRequests'?['駁回','已取消','已取代'].includes(q.status):q.status==='駁回';
         emit('pending-request',anchor,input.window,!complete('requests')||(!pending&&!approved&&!rejected)?'unknown':pending?'finding':'clear','申請狀態檢查；待審或未知不等於已解決',refs);
         let applied: boolean|null=null;
         if(approved&&collection==='makeupRequests'&&complete('records','revisions')) applied=hasAppliedMakeup(q,input.records,input.revisions);

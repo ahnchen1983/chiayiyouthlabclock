@@ -1,3 +1,4 @@
+import { MAKEUP_ACTIONS, handleMakeupAction, assertMakeupRequestLocks } from './utils/makeupLifecycle';
 import { CASE_ACTIONS, handleAttendanceCaseAction } from './utils/attendanceCaseService';
 import { makeupSourceKey } from './utils/makeupEvidence';
 import { evaluatePayrollMonth, assertPayrollReady, pendingRequestIssues, requestEmployeeIds, type PendingSources, type RequestKind } from './utils/payrollPreflight';
@@ -637,6 +638,7 @@ const readPendingSources = async (tx?: any): Promise<PendingSources> => {
 
 // Submission and settlement share the revision gate. A new pending request can
 // neither slip past a concurrent lock nor retroactively affect an already locked run.
+const failVersionedMakeup = (): never => { const e: any = new Error('版本化補卡需使用含操作識別與版本的審核入口'); e.statusCode = 409; throw e; };
 const createPendingPayrollRequest = async (kind: RequestKind, value: any, ref = db.collection(kind).doc()) => {
     await runPayrollMutation(db, [], async tx => {
         const locks = await tx.get(db.collection('monthLocks'));
@@ -764,6 +766,7 @@ export const handler: Handler = async (event) => {
     const isAdmin = currentUserRole === UserRole.Admin || isSuperAdmin;
 
     try {
+        if (MAKEUP_ACTIONS.includes(action as any)) return ok(await handleMakeupAction(db, uid, action, data));
         if (CASE_ACTIONS.includes(action as any)) return ok(await handleAttendanceCaseAction(db, uid, action, data));
         switch (action) {
 
@@ -1970,6 +1973,10 @@ export const handler: Handler = async (event) => {
                     const snap = await tx.get(reqRef);
                     if (!snap.exists) throw new Error('申請不存在');
                     const req = snap.data()!;
+                    if (req.schemaVersion === 'makeup-request-v1') return failVersionedMakeup();
+                    await assertMakeupRequestLocks(db, tx, [{...req,id:data.requestId}]);
+                    const freshActor = await tx.get(db.collection('employees').doc(uid));
+                    if (![UserRole.Admin, UserRole.SuperAdmin].includes(freshActor.data()?.role) || req.empId === uid) { const e: any = new Error('不可自行審核或無管理權限'); e.statusCode = 403; throw e; }
                     if (req.status === data.status) return false;
                     if (req.status !== '待審核') throw new Error('申請已審核，請另建更正申請');
                     let appliedEvidence: any;
@@ -2001,7 +2008,7 @@ export const handler: Handler = async (event) => {
                 };
                 let changed: boolean;
                 if (data.status === '駁回') {
-                    try { changed = await db.runTransaction(reviewRequest); }
+                    try { changed = await runPayrollMutation(db, [], reviewRequest); }
                     catch (error: any) { error.statusCode ||= 409; throw error; }
                 }
                 else {

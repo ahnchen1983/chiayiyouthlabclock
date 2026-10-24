@@ -10,11 +10,11 @@ export type PendingSources = Record<RequestKind, RequestEvidence[]>;
 const kinds: RequestKind[] = ['leaveRequests', 'makeupRequests', 'leaveOfAbsenceRequests', 'shiftSwapRequests'];
 const labels: Record<RequestKind, string> = { leaveRequests: '假單/外勤', makeupRequests: '補卡', leaveOfAbsenceRequests: '留停', shiftSwapRequests: '換班' };
 const finalStates: Record<RequestKind, string[]> = {
-    leaveRequests: ['核准', '駁回'], makeupRequests: ['核准', '駁回'], leaveOfAbsenceRequests: ['核准', '駁回'],
+    leaveRequests: ['核准', '駁回'], makeupRequests: ['核准', '駁回', '已取消', '已取代'], leaveOfAbsenceRequests: ['核准', '駁回'],
     shiftSwapRequests: ['approved', 'rejected-by-peer', 'rejected-by-admin', 'cancelled'],
 };
 const pendingStates: Record<RequestKind, string[]> = {
-    leaveRequests: ['待審核'], makeupRequests: ['待審核'], leaveOfAbsenceRequests: ['待審核'], shiftSwapRequests: ['awaiting-peer', 'awaiting-admin'],
+    leaveRequests: ['待審核'], makeupRequests: ['待審核', '待補件'], leaveOfAbsenceRequests: ['待審核'], shiftSwapRequests: ['awaiting-peer', 'awaiting-admin'],
 };
 const minute = (date: string) => Date.parse(date + 'T00:00:00+08:00') / 60000;
 const instant = (value: unknown): number => {

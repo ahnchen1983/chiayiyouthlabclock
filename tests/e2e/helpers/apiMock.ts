@@ -103,6 +103,8 @@ export const mockApi = async (page: Page, options: ApiMockOptions = {}) => {
             createdAt: new Date().toISOString(),
           }],
         });
+      case 'get-case-request-links':
+        return route.fulfill({json:{caseId:body.caseId,empId:employeeUser.id,caseRevision:1,window:{start:Date.parse('2026-08-01T09:00:00+08:00')/60000,end:Date.parse('2026-08-01T17:00:00+08:00')/60000},recordId:null,links:[],history:[],historyComplete:true,workflowPolicyStatus:'needs-configuration'}});
       case 'get-notifications':
         return route.fulfill({ json: [] });
       default:

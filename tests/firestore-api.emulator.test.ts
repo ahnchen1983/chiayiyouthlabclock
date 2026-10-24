@@ -383,3 +383,40 @@ it('B3 scoped filtered query and notification summary use real Firestore without
  const response=await call('get-attendance-case',{caseId:c.id},'synthetic-employee');expect(response.statusCode,response.body).toBe(200);expect(JSON.parse(response.body).notifications).toMatchObject({mode:'sandbox-only',deliveryEnabled:false,complete:true,counts:{held:1}});
  expect((await db.collection('attendanceCaseOutbox').get()).size).toBe(before);
 });
+
+describe('B4a versioned makeup actual transactions',()=>{
+ const draft={date:'2026-04-01',type:'下班',recordId:'C1',requestedClockOut:'18:00',reason:'合成版本化補卡理由',operationId:'emulator-create'};
+ const employeeCall=(action:string,data:any)=>call(action,data,'synthetic-employee');
+ const create=async()=>{await db.collection('employees').doc(employee.id).update({role:UserRole.Employee});const r=await employeeCall('submit-makeup-version',draft);expect(r.statusCode,r.body).toBe(200);return JSON.parse(r.body);};
+ const cmd=(r:any,mode:string,op:string)=>({requestId:r.id,mode,expectedRevision:r.revision,operationId:op,reason:'合成核實操作原因'});
+ it('concurrent same operation creates one request/event and no real notification',async()=>{
+  await db.collection('employees').doc(employee.id).update({role:UserRole.Employee});const results=await Promise.all([employeeCall('submit-makeup-version',draft),employeeCall('submit-makeup-version',draft)]);expect(results.map(r=>r.statusCode)).toEqual([200,200]);expect(JSON.parse(results[0].body).id).toBe(JSON.parse(results[1].body).id);expect((await db.collection('makeupRequests').get()).size).toBe(1);expect((await db.collection('makeupRequestEvents').get()).size).toBe(1);expect((await db.collection('notifications').get()).empty).toBe(true);
+ });
+ it('concurrent cancel and return serialize; stale party writes no additional event',async()=>{
+  const r=await create();const results=await Promise.all([employeeCall('act-makeup-request',cmd(r,'cancel','cancel')),call('act-makeup-request',cmd(r,'return','return'))]);expect(results.map(r=>r.statusCode).sort()).toEqual([200,409]);expect((await db.collection('makeupRequestEvents').get()).size).toBe(2);expect((await db.collection('makeupRequests').doc(r.id).get()).data()?.revision).toBe(2);
+ });
+ it('resubmit and approval retry retain raw before/after lineage without a second card application',async()=>{
+  const r=await create(),returned=JSON.parse((await call('act-makeup-request',cmd(r,'return','return'))).body);const resubmit={...cmd(returned,'resubmit','resubmit'),patch:{...draft,requestedClockOut:'19:00'}};
+  const responses=await Promise.all([employeeCall('act-makeup-request',resubmit),employeeCall('act-makeup-request',resubmit)]);expect(responses.map(r=>r.statusCode)).toEqual([200,200]);const next=JSON.parse(responses[0].body);expect(next.supersedesRequestId).toBe(r.id);expect((await db.collection('makeupRequests').get()).size).toBe(2);
+  const raw=(await db.collection('clockRecords').doc('C1').get()).data();const approvals=await Promise.all([call('act-makeup-request',cmd(next,'approve','approve')),call('act-makeup-request',cmd(next,'approve','approve'))]);expect(approvals.map(r=>r.statusCode)).toEqual([200,200]);const revs=await db.collection('attendanceRevisions').get();expect(revs.size).toBe(1);expect(revs.docs[0].data().before.clockOutTime).toBe(raw?.clockOutTime);expect(revs.docs[0].data().after.clockOutTime).toBe('19:00');
+  expect((await employeeCall('act-makeup-request',cmd(JSON.parse(approvals[0].body),'cancel','cancel-approved'))).statusCode).toBe(409);
+ });
+ it('same gate serializes versioned submit against a synthetic month lock',async()=>{
+  await db.collection('employees').doc(employee.id).update({role:UserRole.Employee});const lock=()=>runPayrollMutation(db,[month],async tx=>tx.set(db.collection('monthLocks').doc(month),{yearMonth:month,lockedAt:review.reviewedAt,lockedBy:'EMULATOR_ADMIN'}));
+  const [r]=await Promise.all([employeeCall('submit-makeup-version',draft),lock()]);expect([200,423]).toContain(r.statusCode);expect((await db.collection('makeupRequests').get()).size).toBe(r.statusCode===200?1:0);expect((await db.collection('makeupRequestEvents').get()).size).toBe(r.statusCode===200?1:0);
+ });
+ it('linked create and blocked unlink preserve case and audit atomically',async()=>{
+  await db.collection('employees').doc(employee.id).update({role:UserRole.Employee});await db.collection('clockRecords').doc('C1').update({clockInTime:null,clockInAt:null,workReview:null,workIntervals:[]});await call('scan-attendance-cases',{empId:employee.id,yearMonth:month});
+  const c=(await db.collection('attendanceCases').get()).docs.find(d=>d.data().type==='missing-in'&&d.data().anchor==='card:C1')!;
+  const created=await employeeCall('submit-makeup-version',{...draft,type:'上班',requestedClockIn:'09:00',requestedClockOut:null,caseId:c.id,expectedCaseRevision:c.data().revision});expect(created.statusCode,created.body).toBe(200);const r=JSON.parse(created.body),links=await db.collection('caseRequestLinks').get();expect(links.size).toBe(1);const before=(await c.ref.get()).data();
+  await db.collection('monthLocks').doc(month).set({yearMonth:month,lockedAt:review.reviewedAt,lockedBy:'EMULATOR_ADMIN'});
+  const response=await employeeCall('link-case-request',{caseId:c.id,requestId:r.id,mode:'unlink',expectedRevision:r.revision,expectedCaseRevision:before?.revision,expectedLinkRevision:1,operationId:'unlink',reason:'合成解除原因'});expect(response.statusCode).toBe(423);expect((await links.docs[0].ref.get()).data()?.state).toBe('active');expect((await db.collection('caseRequestLinkEvents').get()).size).toBe(1);expect((await c.ref.get()).data()).toEqual(before);
+ });
+});
+it('B4a capacity guard serializes two contenders for the last retained case slot without partial requests',async()=>{
+ await db.collection('employees').doc(employee.id).update({role:UserRole.Employee});const id='CAPACITY',c={id,empId:employee.id,revision:1,anchor:'card:C1',observation:{window:{start:Date.parse('2026-04-01T09:00:00+08:00')/60000,end:Date.parse('2026-04-01T17:00:00+08:00')/60000}}};await db.collection('attendanceCases').doc(id).set(c);
+ const batch=db.batch();for(let n=0;n<99;n++)batch.set(db.collection('caseRequestLinks').doc('retained-'+n),{caseId:id,requestId:'prior-'+n,state:n%2?'inactive':'active'});await batch.commit();
+ const draft={date:'2026-04-01',type:'下班',recordId:'C1',requestedClockOut:'18:00',reason:'合成最後名額競爭',caseId:id,expectedCaseRevision:1};
+ const responses=await Promise.all(['one','two'].map(operationId=>call('submit-makeup-version',{...draft,operationId},'synthetic-employee')));expect(responses.map(r=>r.statusCode).sort()).toEqual([200,409]);expect((await db.collection('caseRequestLinks').where('caseId','==',id).get()).size).toBe(100);expect((await db.collection('makeupRequests').get()).size).toBe(1);expect((await db.collection('makeupRequestEvents').get()).size).toBe(1);expect((await db.collection('caseRequestLinkEvents').get()).size).toBe(1);
+ expect((await call('get-case-request-links',{caseId:id},'synthetic-employee')).statusCode).toBe(200);
+});

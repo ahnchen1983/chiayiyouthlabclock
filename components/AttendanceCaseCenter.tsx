@@ -1,3 +1,4 @@
+import MakeupCaseLinks from './MakeupCaseLinks';
 import { caseFormContext } from '../utils/caseFormContext';
 import { readPendingCaseOperation, savePendingCaseOperation, clearPendingCaseOperation } from '../services/pendingCaseOperation';
 import React, { lazy, Suspense, useEffect, useRef, useState } from 'react';
@@ -30,6 +31,7 @@ export default function AttendanceCaseCenter(){
  const pending=useRef<CaseCommand|null>(null);const [uncertain,setUncertain]=useState(false);
  const [storageError,setStorageError]=useState(false);
  useEffect(()=>{try{const saved=readPendingCaseOperation(user!.id);if(saved){pending.current=saved;setUncertain(true);setMode(saved.mode);setReason(saved.reason);setOwner(saved.owner||'');}}catch{setStorageError(true);}},[user?.id]);
+ const [linkedRequestId,setLinkedRequestId]=useState<string|undefined>(undefined);
  const [related,setRelated]=useState<'makeup'|'leave'|null>(null);
  useEffect(()=>()=>{generation.current++;},[]);
  const start=()=>{if(busyRef.current)return null;busyRef.current=true;setBusy(true);setError('');setNotice('');return ++generation.current;};
@@ -79,7 +81,7 @@ export default function AttendanceCaseCenter(){
    <p className="text-sm">沿用既有{manager?'審核':'申請'}流程；帶入案件員工與可確定日期，時間仍須核實，不自動核准。完成後請返回案件並重新載入，必要時由管理者重核來源。</p>
    <p className="break-all">案件 {context?.caseId} · 員工 {context?.empId} · {context&&date(context.start)} – {context&&date(context.end)}（台北）；{context?.date?'案件日期 '+context.date:'日期未能確定，請明確選擇'}</p>
    <Suspense fallback={<p role="status">載入既有表單…</p>}>
-    {related==='makeup'?(manager?<MakeupReview caseContext={context}/>:<Makeup caseContext={context}/>):(manager?<LeaveReview caseContext={context}/>:<Leave caseContext={context}/>)}
+    {related==='makeup'?(manager?<MakeupReview caseContext={context} requestId={linkedRequestId}/>:<Makeup caseContext={context} requestId={linkedRequestId}/>):(manager?<LeaveReview caseContext={context}/>:<Leave caseContext={context}/>)}
    </Suspense>
   </> : <>
   {!selectedId&&<form className="grid gap-3 sm:grid-cols-2" onSubmit={e=>{e.preventDefault();void loadList({empId:manager?empId.trim():user!.id,yearMonth:month,...(status?{status}:{}),...(type?{type}:{})});}}>
@@ -106,7 +108,7 @@ export default function AttendanceCaseCenter(){
    <p>{date(detail.window.start)} – {date(detail.window.end)}（台北）</p>
    <p>來源判定：{detail.outcome==='unknown'?'資料或政策未完整':detail.outcome==='finding'?'仍有差異':'已具清除證據'}</p><p>{detail.reason}</p>
    <p className="text-sm">原始卡與完整核准證據不在此摘要中；申請待審及已核准未反映仍需各來源核實，說明不等於核准。</p>
-   <div className="flex flex-wrap gap-2"><button className={button} disabled={busy||uncertain} onClick={()=>setRelated('makeup')}>{manager?'前往補打卡審核':'前往補打卡申請'}</button><button className={button} disabled={busy||uncertain} onClick={()=>setRelated('leave')}>{manager?'前往請假／外勤審核':'前往請假／外勤申請'}</button></div>
+   <div className="flex flex-wrap gap-2"><button className={button} disabled={busy||uncertain} onClick={()=>{setLinkedRequestId(undefined);setRelated('makeup');}}>{manager?'前往補打卡審核':'前往補打卡申請'}</button><button className={button} disabled={busy||uncertain} onClick={()=>setRelated('leave')}>{manager?'前往請假／外勤審核':'前往請假／外勤申請'}</button></div>
    <div className="rounded bg-gray-50 p-3"><h4 className="font-semibold">通知狀態（Sandbox，非真實送達）</h4><p>真實通知與排程未啟用；本頁只讀狀態，不能重送推播。</p>{detail.notifications? <><ul>{Object.entries(detail.notifications.counts).map(([k,n])=><li key={k}>{notificationStates[k]||'未確認'}：{n}</li>)}</ul>{!Object.keys(detail.notifications.counts).length&&<p>無通知紀錄，不能視為已送達。</p>}{!detail.notifications.complete&&<p>通知摘要超出上限，結果不完整。</p>}</>:<p>通知狀態尚未取得。</p>}</div>
    {(manager||!closed||uncertain)&&(!pending.current||pending.current.caseId===detail.id)&&<form className="space-y-3" onSubmit={e=>{e.preventDefault();void send();}}>
     <h4 className="font-semibold">{manager?'管理者處理':'提交本人說明'}</h4>
@@ -119,6 +121,7 @@ export default function AttendanceCaseCenter(){
     <div className="flex gap-2"><button className={button} disabled={busy||storageError||(stale&&!uncertain)||(uncertain&&pending.current?.caseId!==detail.id)||(!uncertain&&(!reason.trim()||(mode==='assign'&&!owner.trim())))|| (!!closed&&mode==='explain'&&!uncertain)}>{uncertain?'重試原操作':'送出處理'}</button><button type="button" className={button} disabled={busy||uncertain} onClick={()=>{setReason('');setOwner('');}}>取消編輯</button></div>
     {stale&&<p>請先重新載入案件；不會自動覆蓋其他人的變更或自動重送。</p>}
    </form>}
+   <MakeupCaseLinks caseId={detail.id} caseRevision={detail.revision} onOpen={id=>{setLinkedRequestId(id);setRelated('makeup');}}/>
    <h4 className="font-semibold">處理歷程</h4><ol className="space-y-2">{detail.history.map(h=><li key={h.id} className="border-l-2 pl-3"><p>版本 {h.revision} · {h.actor} · {new Date(h.at).toLocaleString('zh-TW',{timeZone:'Asia/Taipei'})}（台北）</p><p>{h.from?caseStatuses[h.from]:'建立'} → {caseStatuses[h.to]}</p><p>{h.reason}</p></li>)}</ol>
   </article>}
   </>}

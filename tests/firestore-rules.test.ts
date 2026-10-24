@@ -81,6 +81,14 @@ describe('Firestore Rules — client 全 deny', () => {
         await assertFails(getDoc(doc(db, 'totpSecrets', 'EMP001')));
     });
 
+    it('B4a client cannot bypass lifecycle or forge case links/audit/receipts', async () => {
+        const db=testEnv.authenticatedContext('ADMIN',{role:'最高管理者'}).firestore();
+        for(const name of ['makeupRequests','makeupRequestEvents','makeupCommands','caseRequestLinks','caseRequestLinkEvents']) {
+            await assertFails(setDoc(doc(db,name,'forged'),{empId:'EMP001',status:'核准'}));
+            await assertFails(getDoc(doc(db,name,'forged')));
+        }
+    });
+
     it('withSecurityRulesDisabled（模擬 service account）讀寫所有 collection → allow', async () => {
         await testEnv.withSecurityRulesDisabled(async (ctx) => {
             const db = ctx.firestore();

@@ -465,3 +465,12 @@ export const apiApproveLeaveOfAbsenceRequest = async (
 export const apiListAttendanceCases = (query: import('./attendanceCaseContract').CaseQuery): Promise<import('./attendanceCaseContract').CasePage> => callAPI('list-attendance-cases', {...query});
 export const apiGetAttendanceCase = (caseId: string): Promise<import('./attendanceCaseContract').CaseDetail> => callAPI('get-attendance-case', {caseId});
 export const apiActAttendanceCase = (command: import('./attendanceCaseContract').CaseCommand): Promise<{id:string;revision:number;status:string}> => callAPI('act-attendance-case', {...command});
+
+export interface MakeupDraft {date:string;type:'上班'|'下班'|'上下班';reason:string;recordId?:string;requestedClockIn?:string;requestedClockOut?:string;requestedClockInAt?:string;requestedClockOutAt?:string}
+export interface MakeupCaseContext {history?:{requestId:string;revision:number;state:string;actor:string;at:string;reason:string}[];historyComplete?:boolean;caseId:string;empId:string;caseRevision:number;window:{start:number;end:number};recordId:string|null;links:CaseRequestLink[];workflowPolicyStatus:'needs-configuration'}
+export interface CaseRequestLink {id:string;caseId:string;requestId:string;empId:string;state:'active'|'inactive';revision:number;requestRevision:number;caseRevision:number;reason:string;actor:string;at:string}
+export const apiSubmitMakeupVersion=(request:MakeupDraft & {operationId:string;caseId?:string;expectedCaseRevision?:number}):Promise<ClockMakeupRequest>=>callAPI('submit-makeup-version',{...request});
+export const apiActMakeupRequest=(command:{requestId:string;mode:'cancel'|'return'|'resubmit'|'approve'|'reject';expectedRevision:number;operationId:string;reason:string;patch?:MakeupDraft}):Promise<ClockMakeupRequest>=>callAPI('act-makeup-request',{...command});
+export const apiGetMakeupRequestDetail=(requestId:string):Promise<ClockMakeupRequest>=>callAPI('get-makeup-request-detail',{requestId});
+export const apiGetCaseRequestLinks=(caseId:string):Promise<MakeupCaseContext>=>callAPI('get-case-request-links',{caseId});
+export const apiLinkCaseRequest=(command:{caseId:string;requestId:string;mode:'link'|'unlink';expectedRevision:number;expectedCaseRevision:number;expectedLinkRevision:number;operationId:string;reason:string}):Promise<CaseRequestLink>=>callAPI('link-case-request',{...command});
