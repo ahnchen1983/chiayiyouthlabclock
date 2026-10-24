@@ -13,3 +13,7 @@ P2：真實reject/cancel handler完成後，source projection不再把終態當p
 測試含pure正反例、真API有／無來源配置與過期proof、Firestore兩項原重現／來源變更，所有policy僅合成。技術測試不是正式八月驗收，未push/deploy/改歷史結算。
 
 驗證：完整unit/API 708 passed；最終proof更新後三檔109 passed（重疊不累加）。typecheck及runner build通過。完整Firestore/rules首輪78 passed、1 failed（新測試缺clockSourceKey import，非產品斷言）；修正import及完整工作來源hash後原兩項review案例2 passed、77 filtered，未宣稱79項同輪全綠。沒有新增UI流程，本fix未重跑E2E。所有命令／輸出保留本機日誌；正式資料仍未測。
+
+## 2026-10-24 獨立審查修復
+
+在 portable 基準 cf1d746 獨立重現過期工日政策 mapping、無效假單期間遭月份過濾、無效工作覆核時間導致正常候選誤 ready。已保留外層政策員工／有效期間來源、先驗非終態日期及 actor/time，再建立正常項目來源；完整薪資呼叫端與共用工作區間另補防御。新增合成回歸先紅後綠，修復後由其他審查者交叉核對。整合版與最終完整驗證結果見 docs/PR14_INDEPENDENT_REVIEW_2026-10-24.md；不代表正式八月驗收或完整計薪可啟用。

@@ -41,3 +41,7 @@ fixture `terminationSeed`：僅合成，月薪31000、8/1–15有效任職、8/1
 - Playwright termination-settlement、normal-pay-preview、payroll-master、payroll-review、payroll-review-workflow：同輪**26 passed**；新增歷史檢視後離職檔**8 passed**。共27個不同相關案例通過，重疊不累加；其餘57個UI案例本批未重跑。
 - 首輪UI 22 passed／2 failed為下拉標籤包含選項文字，已補明確可存取名稱，原斷言保留。中間整合unit 729 passed／1 failed抓到無效已核假單被篩出月份；已改保留未知來源阻核，最終731全過。
 - C2a獨立修復、C2m及build-loader分commit；不把舊公開文件sanitize回退。正式資料、實際付款／通知、部署、正式政策設定與C2b/C3/D皆未執行／未完成，NO GO。
+
+## 2026-10-24 獨立審查修復
+
+獨立重現 P1：缺／無效日期卡被來源查詢排除，送審後新增仍可能保持 hash 並批准人工輸入記錄；P2：真實 attendanceRevisions 無頂層 empId，合法補卡鏈遭漏讀。已改只盤點目標員工，未知日期留於 hash 與阻核理由，依選定 recordId 讀取真實鏈並驗歸屬。技術清冊上限 10000、相關月來源／更正鏈各 1000，超限拒絕、非人資政策。合成正確行為先紅後綠，另加兩項真 SDK 原流程重現並交整合驗證。結果見 docs/PR14_INDEPENDENT_REVIEW_2026-10-24.md；approved 仍只記錄人工輸入，正式採用及付款維持 BLOCKED。

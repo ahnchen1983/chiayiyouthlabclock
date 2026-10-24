@@ -1,5 +1,13 @@
 # Claude 跨機接手：PR #13 的 C1/C2a/C2m 與 C2b WIP
 
+## 最新獨立審查補充（2026-10-24）
+
+portable交接後，cf1d746已在獨立副本重跑完整767 unit/API、85 Firestore/rules、85 Chromium E2E、typecheck/build與依賴稽核，全部通過。C2a fix／C2m／C2b已進行獨立審查，發現並修復來源漏讀、過期工日政策、無效來源誤ready、待核金額誤列已知及來源版本配對；完整薪資與畸形工作區間也補防御。各修復有紅綠回歸與交叉覆核；完整紀錄及最終驗證以 docs/PR14_INDEPENDENT_REVIEW_2026-10-24.md 為準，以下初始交接／作者結果保留作歷史，不等於當前未審狀態。
+
+最終程式 d3ca818 完整驗證：832 unit/API（38檔）、87 真實 Firestore emulator/rules、85 Chromium E2E、typecheck、production build、依賴稽核全通過；manifest/source hash 與時間見上述獨立審查報告。之後只補文件，未變更已驗證程式。C2b WIP 與正式計薪 NO GO 仍保留。
+
+使用者已回答時薪假日是否另有公司加給：「依適用法定基準」。兩條倍率疑問已對官方說明釐清：休息日出勤按4/3、5/3、8/3，不再加同時段1R；原約定工作日逢國假出勤8h內時薪總2R。適用日別、調移、工資組成與來源仍要核定。最後金額rounding mode、C2b未完成來源與法遵、C3/D及正式八月全員核對仍未完成；**正式計薪NO GO，不合併或部署**。本輪只使用合成資料，沒有正式資料操作、付款或真通知。
+
 ## 此次交接入口（2026-10-24）
 
 此分支是本機來源 `dc35fde191f99fa294b20c0c64588c564ab6c910` 的完整 tracked snapshot，包含 C1、C2a 修復、C2m 與 C2b WIP。發布提交直接以原 PR #13 分支 `fix/attendance-payroll-consistency` 的 `13717ca8cffcb50209ac53fab9cb281714dae600` 為 parent；不發布本機其他分支歷史，不更動原 PR #13 head。發布 SHA 與本機來源 SHA 不同，程式與測試檔保持來源版本，此文件補上跨機接手說明。
