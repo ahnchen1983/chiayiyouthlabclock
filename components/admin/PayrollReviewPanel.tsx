@@ -31,7 +31,7 @@ const LeaveAllocationEditor: React.FC<{ leave: LeaveRequest; locked: boolean; on
                 if (!row.date || from === null || to === null || to <= from) throw new Error('請填寫有效日期與當日的起訖時間');
                 return { ...row, minutes: to - from };
             });
-            await apiReviewLeaveAllocation(leave.id, allocations);
+            await apiReviewLeaveAllocation(leave.id, allocations,leave.revision);
             await onSaved(); setSaved(true); setConfirmed(false);
         } catch (e: any) { setError(e.message || '請假時段儲存失敗'); }
         finally { setBusy(false); onBusyChange(false); }

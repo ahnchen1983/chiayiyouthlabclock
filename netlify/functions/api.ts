@@ -1,3 +1,4 @@
+import {EXPLANATION_ACTIONS,handleExplanationAction,assertNoDuplicateLeave,prepareCaseLeaveAllocation} from './utils/anomalyExplanations';
 import {ATTACHMENT_ACTIONS,handleMakeupAttachmentAction,prepareAttachmentSubmission,assertRequestAttachmentEvidence} from './utils/makeupAttachments';
 import { MAKEUP_ACTIONS, handleMakeupAction, assertMakeupRequestLocks } from './utils/makeupLifecycle';
 import { CASE_ACTIONS, handleAttendanceCaseAction } from './utils/attendanceCaseService';
@@ -626,7 +627,7 @@ const displayAttendance = async (records: ClockRecord[], month: string): Promise
 const employeeInMonth = (e: any, month: string): boolean => e.accountKind !== 'system-account' && !(e.payrollReview?.yearMonth === month && e.payrollReview?.participation === 'system-account' && e.payrollReview?.participationReason?.trim() && e.payrollReview?.reviewedBy && e.payrollReview?.reviewedAt) && (!e.hireDate || e.hireDate.slice(0, 7) <= month) && (!e.resignDate || e.resignDate.slice(0, 7) >= month);
 const payrollEmployee = (e: any) => ({ id: e.id, accountKind: e.accountKind || null, name: e.name, role: e.role ?? null, position: e.position, status: e.status,
     hourlyRate: e.hourlyRate ?? null, monthlySalary: e.monthlySalary ?? null, hireDate: e.hireDate || '', resignDate: e.resignDate || '', leaveOfAbsenceStart: e.leaveOfAbsenceStart || '', leaveOfAbsenceEnd: e.leaveOfAbsenceEnd || '', payrollReview: payrollReviewFields(e.payrollReview) });
-const pendingCollections: RequestKind[] = ['leaveRequests', 'makeupRequests', 'leaveOfAbsenceRequests', 'shiftSwapRequests'];
+const pendingCollections: RequestKind[] = ['anomalyExplanations', 'leaveRequests', 'makeupRequests', 'leaveOfAbsenceRequests', 'shiftSwapRequests'];
 const readPendingSources = async (tx?: any): Promise<PendingSources> => {
     const result = {} as PendingSources;
     // Sequential transaction queries: collection reads also detect changes to request status.
@@ -648,7 +649,7 @@ const createPendingPayrollRequest = async (kind: RequestKind, value: any, ref = 
         const records = cards.docs.map(d => ({ ...d.data(), id: d.id } as ClockRecord));
         const schedules = days.docs.map(d => normalizeScheduleDoc(d.data(), d.id, ''));
         const request = { ...value, id: ref.id };
-        const sources: PendingSources = { leaveRequests: [], makeupRequests: [], leaveOfAbsenceRequests: [], shiftSwapRequests: [] };
+        const sources: PendingSources = { anomalyExplanations: [], leaveRequests: [], makeupRequests: [], leaveOfAbsenceRequests: [], shiftSwapRequests: [] };
         sources[kind] = [request];
         for (const lock of locks.docs) {
             if (!isMonthLocked(lock.data())) continue;
@@ -658,6 +659,7 @@ const createPendingPayrollRequest = async (kind: RequestKind, value: any, ref = 
                 }
             }
         }
+        if(kind==='leaveRequests') await assertNoDuplicateLeave(db,tx,value);
         if(kind==='makeupRequests'){
             const attachments=await prepareAttachmentSubmission(db,tx,value.empId,{},ref.id,value.date);
             Object.assign(value,attachments.fields);attachments.commit();
@@ -771,6 +773,7 @@ export const handler: Handler = async (event) => {
     const isAdmin = currentUserRole === UserRole.Admin || isSuperAdmin;
 
     try {
+        if (EXPLANATION_ACTIONS.includes(action as any)) return ok(await handleExplanationAction(db,uid,action,data));
         if (ATTACHMENT_ACTIONS.includes(action as any)) {
             const response=ok(await handleMakeupAttachmentAction(db,uid,action,data));
             return {...response,headers:{...response.headers,'Cache-Control':'no-store','Pragma':'no-cache','X-Content-Type-Options':'nosniff'}};
@@ -962,6 +965,7 @@ export const handler: Handler = async (event) => {
             }
 
             case 'get-all-leave-requests': {
+                if(!isAdmin) return fail(403,'僅管理者可讀全部假單');
                 const snap = await db.collection('leaveRequests').get();
                 return ok(snap.docs.map(d => ({ id: d.id, ...d.data() })));
             }
@@ -1002,6 +1006,7 @@ export const handler: Handler = async (event) => {
                 const lrSnap = await lrRef.get();
                 if (!lrSnap.exists) return fail(404, '請假申請不存在');
                 const lr = lrSnap.data()!;
+                if(lr.schemaVersion==='case-leave-v1') return fail(409,'追補假單須使用版本化審核入口');
                 // Phase 6.3：鎖定月份請假審核擋下
                 const leaveDate = (lr.startDate || '').slice(0, 10);
                 const lockChkLeave = await assertMonthNotLocked(leaveDate);
@@ -1017,6 +1022,7 @@ export const handler: Handler = async (event) => {
                 if (![LeaveStatus.Approved, LeaveStatus.Rejected].includes(data.status)) return fail(400, '狀態無效');
                 await runPayrollMutation(db, monthsInRange(lr.startDate, lr.endDate), async tx => {
                     const fresh = await tx.get(lrRef);
+                    if(fresh.data()?.schemaVersion==='case-leave-v1') throw Object.assign(new Error('追補假單須使用版本化審核入口'),{statusCode:409});
                     if (fresh.data()?.status === data.status) return;
                     if (fresh.data()?.status !== LeaveStatus.Pending) throw new Error('假單已審核，請另建更正');
                     const all = await tx.get(db.collection('leaveRequests').where('empId', '==', lr.empId));
@@ -1088,7 +1094,8 @@ export const handler: Handler = async (event) => {
                     const oldAllocations = Array.isArray(current.payrollAllocations) ? current.payrollAllocations : [];
                     const allocationMonths = [...oldAllocations, ...data.allocations].flatMap(a => validDate(a?.date) ? [a.date.slice(0, 7)] : []);
                     await assertTransactionMonths(db, tx, [...monthsInRange(current.startDate, current.endDate), ...allocationMonths]);
-                    tx.update(ref, { payrollAllocations: data.allocations.map((a: any) => ({ date: a.date, from: a.from, to: a.to, minutes: a.minutes })), payrollReviewedBy: uid, payrollReviewedAt: new Date().toISOString() });
+                    if(current.schemaVersion==='case-leave-v1'){const commit=await prepareCaseLeaveAllocation(db,tx,uid,{...current,id:data.requestId},data);commit();}
+                    else tx.update(ref, { payrollAllocations: data.allocations.map((a: any) => ({ date: a.date, from: a.from, to: a.to, minutes: a.minutes })), payrollReviewedBy: uid, payrollReviewedAt: new Date().toISOString() });
                 });
                 return ok(true);
             }

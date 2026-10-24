@@ -127,6 +127,16 @@ export enum LeaveStatus {
 }
 
 export interface LeaveRequest {
+    schemaVersion?: 'case-leave-v1';
+    caseId?: string;
+    explanationId?: string|null;
+    revision?: number;
+    requestedSpanMinutes?: number;
+    policyStatus?: 'needs-review';
+    reviewIssues?: string[];
+    applicationEvidence?: {version:'case-leave-v1';revisionId:string;sourceKey:string;requiresPayrollAllocation:true};
+    history?: {id:string;revision:number;actor:string;at:string;from:string|null;to:string;reason:string}[];
+
     payrollAllocations?: { date: string; from: string; to: string; minutes: number }[]; // Reviewed working-time allocation, not elapsed duration
     id: string;
     empId: string;

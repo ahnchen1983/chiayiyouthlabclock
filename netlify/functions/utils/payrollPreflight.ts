@@ -4,16 +4,18 @@ import { clockInterval, shiftIntervals, validDate, hhmmMinutes } from '../../../
 import { calculateSalaryForEmployee } from './payroll';
 
 export const PREFLIGHT_GAPS = ['OT_COMP_REQUEST_MODEL', 'PAYROLL_ITEM_REQUIREMENTS', 'MANUAL_DIFF_APPROVAL', 'ATTENDANCE_CASE_WORKFLOW', 'PRODUCTION_RECONCILIATION'] as const;
-export type RequestKind = 'leaveRequests' | 'makeupRequests' | 'leaveOfAbsenceRequests' | 'shiftSwapRequests';
+export type RequestKind = 'anomalyExplanations' | 'leaveRequests' | 'makeupRequests' | 'leaveOfAbsenceRequests' | 'shiftSwapRequests';
 export type RequestEvidence = Record<string, any> & { id: string };
 export type PendingSources = Record<RequestKind, RequestEvidence[]>;
-const kinds: RequestKind[] = ['leaveRequests', 'makeupRequests', 'leaveOfAbsenceRequests', 'shiftSwapRequests'];
-const labels: Record<RequestKind, string> = { leaveRequests: '假單/外勤', makeupRequests: '補卡', leaveOfAbsenceRequests: '留停', shiftSwapRequests: '換班' };
+const kinds: RequestKind[] = ['anomalyExplanations','leaveRequests', 'makeupRequests', 'leaveOfAbsenceRequests', 'shiftSwapRequests'];
+const labels: Record<RequestKind, string> = {anomalyExplanations:'異常說明', leaveRequests: '假單/外勤', makeupRequests: '補卡', leaveOfAbsenceRequests: '留停', shiftSwapRequests: '換班' };
 const finalStates: Record<RequestKind, string[]> = {
+    anomalyExplanations:['accepted','rejected','cancelled','superseded'],
     leaveRequests: ['核准', '駁回'], makeupRequests: ['核准', '駁回', '已取消', '已取代'], leaveOfAbsenceRequests: ['核准', '駁回'],
     shiftSwapRequests: ['approved', 'rejected-by-peer', 'rejected-by-admin', 'cancelled'],
 };
 const pendingStates: Record<RequestKind, string[]> = {
+    anomalyExplanations:['submitted','needs-info'],
     leaveRequests: ['待審核'], makeupRequests: ['待審核', '待補件'], leaveOfAbsenceRequests: ['待審核'], shiftSwapRequests: ['awaiting-peer', 'awaiting-admin'],
 };
 const minute = (date: string) => Date.parse(date + 'T00:00:00+08:00') / 60000;

@@ -67,7 +67,7 @@ type StoredCase=AttendanceCase & {scanMonth:string;sourceVersion:string};
 const publicCase=(c:StoredCase)=>({id:c.id,empId:c.empId,type:c.type,anchor:c.anchor,status:c.status,owner:c.owner,revision:c.revision,
  expectedEvidenceVersion:c.observation.evidenceVersion,window:c.observation.window,outcome:c.observation.outcome,reason:c.observation.reason,
  history:c.history.map(e=>({id:e.id,revision:e.revision,actor:e.actor,at:e.at,from:e.from,to:e.to,reason:e.reason}))});
-const persist=(db:any,tx:any,previous:StoredCase|undefined,next:StoredCase)=>{
+export const persistCaseWorkflow=(db:any,tx:any,previous:StoredCase|undefined,next:StoredCase)=>{
  if(Buffer.byteLength(JSON.stringify(next))>500000||next.history.length>200)error(409,'案件歷程達安全上限，須保留原資料另行歸檔');
  tx.set(db.collection('attendanceCases').doc(next.id),next);
  for(const e of next.history.slice(previous?.history.length||0)){
@@ -77,7 +77,7 @@ const persist=(db:any,tx:any,previous:StoredCase|undefined,next:StoredCase)=>{
   tx.create(db.collection('attendanceCaseOutbox').doc(intent.id),{...intent,policyVersion:'sandbox-retry-v1',maxAttempts:3});
  }
 };
-const appendEvent=(c:StoredCase,data:any,actor:string,at:string,status=c.status,owner=c.owner):StoredCase=>{
+export const appendCaseWorkflowEvent=(c:StoredCase,data:any,actor:string,at:string,status=c.status,owner=c.owner):StoredCase=>{
  const revision=c.revision+1;
  const ev={id:evidenceHash([c.id,revision,data.operationId]),operationId:data.operationId,revision,actor,at,from:c.status,to:status,reason:data.reason,evidenceVersion:c.observation.evidenceVersion,commandOwner:owner};
  return {...c,revision,status,owner,history:[...c.history,ev]};
@@ -115,7 +115,7 @@ export const handleAttendanceCaseAction=async(db:any,uid:string,action:string,da
    if(updates.reduce((n,u)=>n+u.next.history.length-(u.previous?.history.length||0),0)>100)error(409,'單次案件變更過多，須拆分來源；未部分寫入');
    const months=[...new Set(updates.flatMap(u=>[...affectedMonths(u.next.observation),...(u.previous?affectedMonths(u.previous.observation):[])]))];
    await assertTransactionMonths(db,tx,months);
-   for(const u of updates)persist(db,tx,u.previous,u.next);
+   for(const u of updates)persistCaseWorkflow(db,tx,u.previous,u.next);
    tx.set(db.collection('attendanceCaseScans').doc(evidenceHash([data.empId,data.yearMonth])),{empId:data.empId,yearMonth:data.yearMonth,sourceVersion,at,actor:uid,detectorVersion:'detector-v1',complete:false,missingCapabilities:result.missingCapabilities});
    return {changed:updates.length,complete:false,settlementEligibility:'BLOCKED'};
   });
@@ -135,13 +135,13 @@ export const handleAttendanceCaseAction=async(db:any,uid:string,action:string,da
   let next=previous;
   if(data.mode==='assign'){
    if(!validId(data.owner))error(400,'請指定有效管理者');const owner=await actorFor(db,data.owner,tx);if(!owner.manager)error(403,'負責人需具有既有出勤管理權限');
-   next=appendEvent(previous,data,uid,at,previous.status,data.owner);
+   next=appendCaseWorkflowEvent(previous,data,uid,at,previous.status,data.owner);
   }else if(data.mode==='explain'){
    if(['resolved','cancelled'].includes(previous.status))error(409,'已結案案件不能由說明重新開啟');
-   next=appendEvent(previous,data,uid,at,'awaiting-review');
+   next=appendCaseWorkflowEvent(previous,data,uid,at,'awaiting-review');
   }else if(data.mode==='request-info'){
    if(['resolved','cancelled'].includes(previous.status))error(409,'已結案案件須以來源重核後再重開');
-   next=appendEvent(previous,data,uid,at,'needs-info');
+   next=appendCaseWorkflowEvent(previous,data,uid,at,'needs-info');
   }
   else {
    const input=await loadInput(db,tx,previous.empId,previous.scanMonth,at);
@@ -152,9 +152,9 @@ export const handleAttendanceCaseAction=async(db:any,uid:string,action:string,da
    if(data.mode==='resolve'&&fresh.outcome!=='clear')error(409,'仍有異常或未知來源，不能結案');
    if(data.mode==='reopen'&&fresh.outcome==='clear')error(409,'目前來源無重開依據');
    const reconciled=reconcileCase(previous,fresh,uid,at)!;
-   next=appendEvent({...reconciled,scanMonth:previous.scanMonth,sourceVersion:evidenceHash(input)},data,uid,at,data.mode==='resolve'?'resolved':fresh.outcome==='unknown'?'needs-info':'open');
+   next=appendCaseWorkflowEvent({...reconciled,scanMonth:previous.scanMonth,sourceVersion:evidenceHash(input)},data,uid,at,data.mode==='resolve'?'resolved':fresh.outcome==='unknown'?'needs-info':'open');
   }
-  persist(db,tx,previous,next);
+  persistCaseWorkflow(db,tx,previous,next);
   const response={id:next.id,revision:next.revision,status:next.status};tx.create(commandRef,{hash:commandHash,result:response,actor:uid,at});return response;
  });
 };
@@ -162,3 +162,29 @@ export const handleAttendanceCaseAction=async(db:any,uid:string,action:string,da
 // call this same backend entrypoint with a verified principal, never raw proof.
 export const runAttendanceScanTrigger=async(db:any,uid:string,request:any,enabled=false)=>enabled
  ?handleAttendanceCaseAction(db,uid,'scan-attendance-cases',request):{disabled:true};
+
+// Shared server-only planning for versioned leave transitions. No client evidence accepted.
+export async function assertCurrentCaseSource(db:any,tx:any,c:any,at:string){
+ const month=c.scanMonth;if(!month)error(409,'案件缺少來源掃描月份，須先重核');
+ const input=await loadInput(db,tx,c.empId,month,at);
+ const observed=scanObservations(input,month).observations.find(o=>o.id===c.id);
+ const fresh=observed?retainAffectedWindow(c,observed):null;
+ if(!fresh||fresh.evidenceVersion!==c.observation.evidenceVersion)error(409,'原始來源已變更，須重新掃描後覆核');
+}
+export async function planLeaveCaseRefresh(db:any,tx:any,empId:string,months:string[],leave:any,actor:string,at:string){
+ const existing=await rows(db,tx,'attendanceCases',empId),original=new Map(existing.map((c:any)=>[c.id,c]));
+ const planned=new Map<string,any>();
+ for(const month of months){
+  const input=await loadInput(db,tx,empId,month,at);
+  input.leaves=[...input.leaves.filter(r=>r.id!==leave.id),leave];
+  const sourceVersion=evidenceHash(input);
+  for(const o of scanObservations(input,month).observations){
+   const previous=planned.get(o.id)||original.get(o.id) as any;
+   const next=reconcileCase(previous,retainAffectedWindow(previous,o),actor,at);
+   if(next&&next!==previous)planned.set(o.id,{...next,scanMonth:month,sourceVersion});
+  }
+ }
+ if(new Set([...original.keys(),...planned.keys()]).size>500||[...planned.values()].reduce((n,c)=>n+c.history.length-((original.get(c.id) as any)?.history.length||0),0)>100)error(409,'案件變更超過技術容量，未部分寫入');
+ await assertTransactionMonths(db,tx,[...months,...[...planned.values()].flatMap(c=>affectedMonths(c.observation))]);
+ return ()=>{for(const [id,next] of planned)persistCaseWorkflow(db,tx,original.get(id) as any,next);};
+}

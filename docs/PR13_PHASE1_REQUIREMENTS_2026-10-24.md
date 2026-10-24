@@ -289,3 +289,11 @@
 2.2 **部分／待政策／待正式設定**：新增本人draft-bound附件metadata、上傳掃描契約、原子request綁定、私有授權短效下載、草稿邏輯撤除與稽核，接既有補卡UI。伺服器重算hash與內容型別，不信任client scan；缺adapter或政策fail closed，新版及舊提交入口皆不能繞過必附。測試只用合成bytes、fake storage/scanner及真Firestore metadata emulator；不宣稱已配置正式儲存或病毒掃描。技術硬上限不是公司已核數量／容量／保存期限。詳見 PR13_BATCH_B4B.md。
 
 6.1／8.1／8.3：正式月結仍BLOCKED；真附件、正式IAM／儲存與掃描、保留期限、2026-08全體人員對帳均未驗收。B4c／B5未混入本批。僅發布至既有 Draft PR 供審查，未部署／寫production／發真通知，原正式站未改。
+
+
+### B4c 增量：獨立說明／追補假（部分完成）
+
+2.1／2.3／2.5：新增獨立版本化 anomalyExplanations、caseExplanationLinks、caseLeaveLinks；本人送說明、主管補件／採納／退回、新版重送，接受說明不代表工作或假單核准。追補假沿既有 leaveRequests 審核／分配、重新偵測 pending／approved-unapplied／卡假重疊。來源、鎖月、容量、權限及 replay 用真 handler 與本機 emulator 驗證；UI 沿用既有頁面。
+2.2／2.3仍部分：完整假單取消／補件重送、有效期假別／餘額政策、假單附件與指定主管政策未實作，不以文字說明代替核准投影。2.4／comp 未納本批。
+6.1／6.3：anomaly pending 納 preflight；正式 workflow gaps 未清除，月結仍 BLOCKED。immutable 說明事件／leave revisions 與原卡分離，已鎖月不能修改。
+8.1／8.3：2026-08 全體正兼職及當月到離職／留停正式核對尚未執行。僅合成測試，不以 mock 代替正式驗收；無 production 存取／真通知／部署。細節與驗收見 PR13_BATCH_B4C.md。

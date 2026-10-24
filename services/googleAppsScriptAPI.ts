@@ -2,7 +2,7 @@ import { auth } from './firebaseConfig';
 import { signInWithCustomToken, signOut } from 'firebase/auth';
 import {
     User, ClockStatus, ScheduleEvent, ClockRecord,
-    LeaveRequest, LeaveStatus, PartTimeHourInfo,
+    LeaveRequest, LeaveStatus, LeaveType, PartTimeHourInfo,
     Employee, TodayAttendanceComparison, DashboardStats, SalaryDetail,
     SystemConfig, ClockMakeupRequest, Notification,
     LeaveBalance, OpenShift, MonthLock, LoginResult,
@@ -216,7 +216,7 @@ export const apiGetMonthlyReport = async (yearMonth: string): Promise<MonthlyRep
 
 export const apiGetPayrollReviewInputs = (yearMonth: string): Promise<PayrollReviewInputs> => callAPI('get-payroll-review-inputs', { yearMonth });
 export const apiReviewPayrollInputs = (empId: string, review: PayrollReviewSubmission, expectedEmployeeSourceKey?: string): Promise<boolean> => callAPI('review-payroll-inputs', { empId, review, ...(expectedEmployeeSourceKey ? { expectedEmployeeSourceKey } : {}) });
-export const apiReviewLeaveAllocation = (requestId: string, allocations: NonNullable<LeaveRequest['payrollAllocations']>): Promise<boolean> => callAPI('review-leave-allocation', { requestId, allocations });
+export const apiReviewLeaveAllocation = (requestId: string, allocations: NonNullable<LeaveRequest['payrollAllocations']>, expectedRevision?:number): Promise<boolean> => callAPI('review-leave-allocation', { requestId, allocations,...(expectedRevision===undefined?{}:{expectedRevision}) });
 
 // ==================== 稽核日誌 ====================
 
@@ -484,3 +484,14 @@ export const apiUploadAttachment=(command:{draftId:string;expectedDraftRevision:
 export const apiWithdrawAttachment=(command:{attachmentId:string;expectedRevision:number;expectedDraftRevision:number;operationId:string;reason:string}):Promise<MakeupAttachment>=>callAPI('withdraw-makeup-attachment',{...command});
 export const apiAttachmentAccess=(attachmentId:string):Promise<{accessToken:string;expiresAt:number}>=>callAPI('issue-makeup-attachment-access',{attachmentId});
 export const apiDownloadAttachment=(accessToken:string):Promise<{name:string;mime:string;size:number;contentBase64:string;disposition:string}>=>callAPI('download-makeup-attachment',{accessToken});
+
+export interface CaseExplanationWorkflow {caseId:string;empId:string;caseRevision:number;evidenceVersion:string;window:{start:number;end:number};explanations:import('../netlify/functions/utils/anomalyExplanationTypes').AnomalyExplanation[];leaves:LeaveRequest[];policyStatus:'needs-review';settlementEligibility:'BLOCKED'}
+export interface ExplanationCommand {caseId:string;expectedCaseRevision:number;expectedEvidenceVersion:string;operationId:string;reason:string;mode?:'request-info'|'accept'|'reject'|'cancel'|'resubmit';text?:string;explanationId?:string;expectedRevision?:number}
+export const apiExplanationWorkflow=(caseId:string):Promise<CaseExplanationWorkflow>=>callAPI('get-case-explanation-workflow',{caseId});
+export const apiSubmitExplanation=(command:ExplanationCommand):Promise<import('../netlify/functions/utils/anomalyExplanationTypes').AnomalyExplanation>=>callAPI('submit-anomaly-explanation',{...command});
+export const apiActExplanation=(command:ExplanationCommand):Promise<import('../netlify/functions/utils/anomalyExplanationTypes').AnomalyExplanation>=>callAPI('act-anomaly-explanation',{...command});
+export const apiSubmitCaseLeave=(command:ExplanationCommand & {leaveType:LeaveType;startDate:string;endDate:string}):Promise<LeaveRequest>=>callAPI('submit-case-leave',{...command});
+export const apiLinkCaseLeave=(command:ExplanationCommand & {leaveRequestId:string}):Promise<unknown>=>callAPI('link-case-leave',{...command});
+export const apiReviewCaseLeave=(command:Omit<ExplanationCommand,'mode'> & {leaveRequestId:string;mode:'approve'|'reject'}):Promise<LeaveRequest>=>callAPI('review-case-leave',{...command});
+export type AnomalyMutationAction='submit-anomaly-explanation'|'act-anomaly-explanation'|'submit-case-leave'|'link-case-leave'|'review-case-leave';
+export const apiAnomalyMutation=(action:AnomalyMutationAction,command:Record<string,unknown>):Promise<any>=>callAPI(action,command);
