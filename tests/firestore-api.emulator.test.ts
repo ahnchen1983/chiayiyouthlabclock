@@ -307,3 +307,70 @@ describe('actual formal gate and application evidence against emulator', () => {
         expect((await db.collection('attendanceRevisions').get()).empty).toBe(true);
     });
 });
+
+import { runSandboxOutbox } from '../netlify/functions/utils/attendanceSandboxOutbox';
+import { runAttendanceScanTrigger } from '../netlify/functions/utils/attendanceCaseService';
+
+describe('B2 actual case persistence and sandbox-only retry',()=>{
+ const scan=()=>call('scan-attendance-cases',{empId:employee.id,yearMonth:month});
+ const seed=async()=>{await db.collection('clockRecords').doc('C1').update({clockInTime:null,clockInAt:null,workReview:null,workIntervals:[]});const r=await scan();expect(r.statusCode,r.body).toBe(200);const snap=await db.collection('attendanceCases').get();return snap.docs.map(d=>({...d.data(),id:d.id})).find((c:any)=>c.type==='missing-in'&&c.anchor==='card:C1') as any;};
+ const command=(c:any,id:string)=>({caseId:c.id,mode:'explain',operationId:id,reason:'synthetic evidence provided',expectedRevision:c.revision,expectedEvidenceVersion:c.observation.evidenceVersion});
+ it('concurrent scans and repeat scan leave one history and held outbox per actual event',async()=>{
+  const responses=await Promise.all([scan(),scan()]);expect(responses.map(r=>r.statusCode)).toEqual([200,200]);
+  const cases=await db.collection('attendanceCases').get(),events=await db.collection('attendanceCaseEvents').get(),outbox=await db.collection('attendanceCaseOutbox').get();
+  expect(cases.size).toBeGreaterThan(0);expect(events.size).toBe(cases.size);expect(outbox.size).toBe(events.size);
+  expect(outbox.docs.every(d=>d.data().state==='held'&&d.data().channel==='sandbox')).toBe(true);
+  expect((await scan()).statusCode).toBe(200);expect((await db.collection('attendanceCaseEvents').get()).size).toBe(events.size);
+ });
+ it('competing transitions reject one stale request without partial audit/outbox writes',async()=>{
+  const c=await seed(),before=(await db.collection('attendanceCaseEvents').get()).size;
+  const results=await Promise.all([call('act-attendance-case',command(c,'one')),call('act-attendance-case',command(c,'two'))]);
+  expect(results.map(r=>r.statusCode).sort()).toEqual([200,409]);
+  expect((await db.collection('attendanceCaseEvents').get()).size).toBe(before+1);
+  expect((await db.collection('attendanceCaseOutbox').get()).size).toBe(before+1);
+ });
+ it('locked case is immutable and disabled trigger does no work',async()=>{
+  const c=await seed();await db.collection('monthLocks').doc(month).set({yearMonth:month,lockedAt:review.reviewedAt,lockedBy:'EMULATOR_ADMIN'});
+  const before=(await db.collection('attendanceCases').doc(c.id).get()).data();const count=(await db.collection('attendanceCaseOutbox').get()).size;
+  expect((await call('act-attendance-case',command(c,'locked'))).statusCode).toBe(423);expect((await scan()).statusCode).toBe(423);
+  expect((await db.collection('attendanceCases').doc(c.id).get()).data()).toEqual(before);expect((await db.collection('attendanceCaseOutbox').get()).size).toBe(count);
+  expect(await runAttendanceScanTrigger(db,'EMULATOR_ADMIN',{empId:employee.id,yearMonth:month})).toEqual({disabled:true});
+ });
+ it('sandbox defaults off; failures back off and dead-letter at three without deleting case',async()=>{
+  const c=await seed(),job=(await db.collection('attendanceCaseOutbox').get()).docs[0];let now=Date.now();
+  const deliver=vi.fn().mockRejectedValue(new Error('synthetic-sensitive-provider-detail'));
+  const adapter={kind:'sandbox' as const,deliver};
+  expect(await runSandboxOutbox(db,job.id,adapter)).toEqual({disabled:true});expect(deliver).not.toHaveBeenCalled();
+  for(let attempt=1;attempt<=3;attempt++){
+   const result=await runSandboxOutbox(db,job.id,adapter,{enabled:true,clock:()=>now});expect(result).toMatchObject({attempt,state:attempt===3?'dead-letter':'retry'});
+   if(attempt<3){expect(await runSandboxOutbox(db,job.id,adapter,{enabled:true,clock:()=>now})).toEqual({claimed:false});now+=60000*2**(attempt-1);}
+  }
+  expect(deliver).toHaveBeenCalledTimes(3);expect(await runSandboxOutbox(db,job.id,adapter,{enabled:true,clock:()=>now+999999})).toEqual({claimed:false});
+  expect((await db.collection('attendanceCases').doc(c.id).get()).exists).toBe(true);expect(JSON.stringify((await job.ref.get()).data())).not.toContain('sensitive');
+ });
+ it('concurrent sandbox workers acquire one lease, retry delivery is deduped by stable key',async()=>{
+  await seed();const job=(await db.collection('attendanceCaseOutbox').get()).docs[0];const deliver=vi.fn().mockResolvedValue({receipt:'SYNTH-RECEIPT'});const adapter={kind:'sandbox' as const,deliver};
+  await Promise.all([runSandboxOutbox(db,job.id,adapter,{enabled:true}),runSandboxOutbox(db,job.id,adapter,{enabled:true})]);
+  expect(deliver).toHaveBeenCalledTimes(1);expect(deliver).toHaveBeenCalledWith(job.id);expect((await job.ref.get()).data()?.state).toBe('delivered');
+  expect(await runSandboxOutbox(db,job.id,adapter,{enabled:true})).toEqual({claimed:false});
+ });
+ it('expired lease can be recovered with bounded attempts',async()=>{
+  await seed();const job=(await db.collection('attendanceCaseOutbox').get()).docs[0];
+  await job.ref.update({state:'leased',attempts:1,leaseToken:'synthetic-abandoned',leaseExpiresAt:'2020-01-01T00:00:00Z'});
+  const result=await runSandboxOutbox(db,job.id,{kind:'sandbox',deliver:async()=>({receipt:'SYNTH-RECOVERED'})},{enabled:true});
+  expect(result).toMatchObject({state:'delivered',attempt:2});
+ });
+});
+
+import { runPayrollMutation } from '../netlify/functions/utils/monthGuard';
+it('B2 scan serializes with the actual shared month guard (synthetic lock, not payroll authorization)',async()=>{
+ const scan=()=>call('scan-attendance-cases',{empId:employee.id,yearMonth:month});
+ const lock=()=>runPayrollMutation(db,[month],async tx=>{tx.set(db.collection('monthLocks').doc(month),{yearMonth:month,lockedAt:review.reviewedAt,lockedBy:'EMULATOR_ADMIN'});});
+ const [result]=await Promise.all([scan(),lock()]);expect([200,423]).toContain(result.statusCode);
+ const count=(await db.collection('attendanceCases').get()).size;expect(count>0).toBe(result.statusCode===200);
+ expect((await db.collection('payrollControl').doc('revision').get()).data()?.revision).toBe(result.statusCode===200?2:1);
+});
+it('B2 sandbox worker rejects missing demo guard before invoking adapter',async()=>{
+ const prior=process.env.FIREBASE_PROJECT_ID;const deliver=vi.fn();delete process.env.FIREBASE_PROJECT_ID;
+ try{await expect(runSandboxOutbox(db,'a'.repeat(64),{kind:'sandbox',deliver},{enabled:true})).rejects.toThrow('demo emulator');expect(deliver).not.toHaveBeenCalled();}finally{process.env.FIREBASE_PROJECT_ID=prior;}
+});

@@ -98,12 +98,21 @@ export const pendingRequestIssues = (month: string, empId: string, sources: Part
 // Trial completeness is distinct from formal settlement eligibility. Missing
 // required capabilities block every new lock, with no client/config override.
 export const evaluatePayrollMonth = (input: {
-    month: string; employees: any[]; records: ClockRecord[]; schedules: ScheduleEvent[]; leaves: LeaveRequest[]; requests: Partial<PendingSources>; revisions?: any[];
+    month: string; employees: any[]; records: ClockRecord[]; schedules: ScheduleEvent[]; leaves: LeaveRequest[]; requests: Partial<PendingSources>; revisions?: any[]; cases?: any[];
 }): { status: PayrollPreflight['status']; trialStatus: PayrollPreflight['status']; salaries: SalaryDetail[] } => {
     const salaries = input.employees.map(employee => {
         const calculated = calculateSalaryForEmployee(employee, input.month, input.schedules, input.records, input.leaves);
         const issues: PayrollPreflightIssue[] = (calculated.reviewReasons || []).map(message => ({ code: 'CALCULATION_REVIEW', severity: 'NEEDS_REVIEW', source: 'calculation', message }));
         issues.push(...pendingRequestIssues(input.month, employee.id, input.requests, input.records, input.schedules, input.revisions));
+        for (const c of input.cases || []) {
+            if (c.empId !== employee.id || ['resolved','cancelled'].includes(c.status)) continue;
+            const start = Date.parse(input.month+'-01T00:00:00+08:00')/60000;
+            const next = new Date(input.month+'-01T00:00:00Z'); next.setUTCMonth(next.getUTCMonth()+1);
+            const end = Date.parse(next.toISOString().slice(0,10)+'T00:00:00+08:00')/60000;
+            const w = c.observation?.window;
+            if (!w || !Number.isFinite(w.start) || !Number.isFinite(w.end) || (w.start < end && w.end > start))
+                issues.push({ code: 'CASE_UNRESOLVED', severity: 'NEEDS_REVIEW', source: 'attendanceCases', sourceId: c.id, message: `出勤案件 ${c.id} 尚未完成覆核` });
+        }
         if (calculated.calculationStatus !== 'ready' && !issues.length) issues.push({ code: 'CALCULATION_UNAVAILABLE', severity: 'BLOCKED', source: 'calculation', message: '計算結果尚未確認' });
         const status = issues.some(x => x.severity === 'BLOCKED') ? 'BLOCKED' : issues.length ? 'NEEDS_REVIEW' : 'READY';
         const preflight: PayrollPreflight = { version: 'preflight-v1', status: 'BLOCKED', trialStatus: status, scope: 'existing-models', issues: [...issues, ...PREFLIGHT_GAPS.map(gap => ({ code: 'CAPABILITY_MISSING' as const, severity: 'BLOCKED' as const, source: gap, message: `正式結算缺少必要能力或驗收：${gap}` }))], gaps: [...PREFLIGHT_GAPS] };

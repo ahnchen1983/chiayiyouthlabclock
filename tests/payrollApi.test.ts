@@ -359,3 +359,62 @@ describe('unmocked formal eligibility and applied correction evidence',()=>{
   lock();fake.data.set('makeupRequests/P',{empId:'SYNTH',date:'2026-04-01',recordId:'C1',status:'待審核',requestedClockOut:'18:00'});const before=JSON.stringify([...fake.data]);expect((await call('approve-makeup-request',{requestId:'P',status:'核准'})).statusCode).toBe(423);expect(JSON.stringify([...fake.data])).toBe(before);
  });
 });
+
+describe('B2 scoped case API with server evidence only',()=>{
+ afterEach(()=>vi.mocked(adminAuth.verifyIdToken).mockResolvedValue({uid:'ADMIN'} as any));
+ const scan=()=>call('scan-attendance-cases',{empId:'SYNTH',yearMonth:month});
+ const cases=()=>[...fake.data.entries()].filter(([k])=>k.startsWith('attendanceCases/')).map(([,v])=>v);
+ const seed=async()=>{fake.data.set('clockRecords/C1',{...card(undefined,null,'17:00',false),id:'C1'});const r=await scan();expect(r.statusCode,r.body).toBe(200);return cases().find(c=>c.type==='missing-in'&&c.anchor==='card:C1');};
+ const command=(c:any,mode:string,id=mode)=>({caseId:c.id,mode,operationId:id,reason:'synthetic reviewed action',expectedRevision:c.revision,expectedEvidenceVersion:c.observation.evidenceVersion});
+ it('scan rerun dedupes case, immutable audit and held sandbox outbox',async()=>{
+  await seed();const count=(p:string)=>[...fake.data.keys()].filter(k=>k.startsWith(p+'/')).length;
+  const before=['attendanceCases','attendanceCaseEvents','attendanceCaseOutbox'].map(count);expect(before[0]).toBeGreaterThan(0);expect((await scan()).statusCode).toBe(200);expect(['attendanceCases','attendanceCaseEvents','attendanceCaseOutbox'].map(count)).toEqual(before);
+  expect([...fake.data.entries()].filter(([k])=>k.startsWith('attendanceCaseOutbox/')).every(([,v])=>v.state==='held'&&v.channel==='sandbox')).toBe(true);
+ });
+ it('employee sees only own redacted cases, can explain but cannot assign/scan/resolve',async()=>{
+  const c=await seed();vi.mocked(adminAuth.verifyIdToken).mockResolvedValue({uid:'SYNTH'} as any);fake.data.get('employees/SYNTH').role=UserRole.Employee;
+  expect((await call('get-attendance-case',{caseId:c.id})).statusCode).toBe(200);
+  const response=await call('list-attendance-cases',{empId:'SYNTH',yearMonth:month});expect(response.statusCode).toBe(200);expect(response.body).not.toContain('hourlyRate');expect(response.body).not.toContain('verificationData');expect(response.body).not.toContain('requestSourceKey');
+  expect((await call('list-attendance-cases',{empId:'ADMIN',yearMonth:month})).statusCode).toBe(403);expect((await scan()).statusCode).toBe(403);
+  for(const mode of ['resolve','reopen','assign'])expect((await call('act-attendance-case',command(c,mode))).statusCode).toBe(403);
+  expect((await call('act-attendance-case',command(c,'explain'))).statusCode).toBe(200);expect(fake.data.get('attendanceCases/'+c.id).status).toBe('awaiting-review');
+ });
+ it('repeated explanation is idempotent, stale version and changed replay rejected',async()=>{
+  const c=await seed(),cmd=command(c,'explain');expect((await call('act-attendance-case',cmd)).statusCode).toBe(200);const count=[...fake.data.keys()].filter(k=>k.startsWith('attendanceCaseEvents/')).length;expect((await call('act-attendance-case',cmd)).statusCode).toBe(200);expect([...fake.data.keys()].filter(k=>k.startsWith('attendanceCaseEvents/')).length).toBe(count);
+  expect((await call('act-attendance-case',{...cmd,operationId:'other'})).statusCode).toBe(409);expect((await call('act-attendance-case',{...cmd,reason:'changed'})).statusCode).toBe(409);
+ });
+ it('forged proof is rejected and resolve/reopen use fresh actual source',async()=>{
+  const c=await seed();expect((await call('act-attendance-case',{...command(c,'resolve'),proof:{outcome:'clear'}})).statusCode).toBe(400);expect((await call('act-attendance-case',command(c,'resolve'))).statusCode).toBe(409);
+  expect((await call('update-clock-record',{recordId:'C1',clockInTime:'09:00',clockOutTime:'17:00',workIntervals:[{start:540,end:1020}]})).statusCode).toBe(200);
+  expect((await call('act-attendance-case',command(c,'resolve','resolved'))).statusCode).toBe(200);const closed=fake.data.get('attendanceCases/'+c.id);expect(closed.status).toBe('resolved');expect(closed.history.length).toBeGreaterThan(c.history.length);
+  expect((await call('act-attendance-case',command(closed,'reopen'))).statusCode).toBe(409);
+  await call('update-clock-record',{recordId:'C1',clockInTime:null});expect((await call('act-attendance-case',command(closed,'reopen'))).statusCode).toBe(200);expect(fake.data.get('attendanceCases/'+c.id).status).toBe('open');
+ });
+ it('assign validates existing manager role and never grants employee approval rights',async()=>{
+  const c=await seed();fake.data.get('employees/SYNTH').role=UserRole.Employee;expect((await call('act-attendance-case',{...command(c,'assign'),owner:'SYNTH'})).statusCode).toBe(403);expect((await call('act-attendance-case',{...command(c,'assign'),owner:'ADMIN'})).statusCode).toBe(200);expect(fake.data.get('attendanceCases/'+c.id).owner).toBe('ADMIN');
+ });
+ it('locked month rejects scan and case mutation without partial history/outbox writes',async()=>{
+  const c=await seed();lock();const before=JSON.stringify([...fake.data]);expect((await scan()).statusCode).toBe(423);expect((await call('act-attendance-case',command(c,'explain'))).statusCode).toBe(423);expect(JSON.stringify([...fake.data])).toBe(before);
+ });
+ it('persisted unresolved cases enter preflight; missing complete workflow still formally blocks',async()=>{
+  await seed();const salary=JSON.parse((await call('get-employee-salary',{empId:'SYNTH',yearMonth:month})).body);expect(salary.preflight.status).toBe('BLOCKED');expect(salary.preflight.issues.some(i=>i.code==='CASE_UNRESOLVED')).toBe(true);expect(salary.preflight.gaps).toContain('ATTENDANCE_CASE_WORKFLOW');
+ });
+});
+
+it('B2 legacy name-only schedule remains unknown without guessing an employee ID',async()=>{
+ fake.data.set('dailySchedule/2026-04-01',{status:'營運',staffA:'合成員工',shiftTime:'09:00-17:00'});
+ expect((await call('scan-attendance-cases',{empId:'SYNTH',yearMonth:month})).statusCode).toBe(200);
+ const cases=[...fake.data.entries()].filter(([k])=>k.startsWith('attendanceCases/')).map(([,v])=>v);
+ expect(cases.some(c=>c.type==='unscheduled-card'&&c.observation.outcome==='unknown')).toBe(true);
+});
+it('B2 incomplete source scan aborts atomically at the bounded read limit',async()=>{
+ for(let i=0;i<501;i++)fake.data.set('clockRecords/BOUND'+i,{...card(),id:'BOUND'+i});
+ const response=await call('scan-attendance-cases',{empId:'SYNTH',yearMonth:month});expect(response.statusCode).toBe(409);
+ expect([...fake.data.keys()].some(k=>k.startsWith('attendanceCases/')||k.startsWith('attendanceCaseOutbox/')||k.startsWith('payrollControl/'))).toBe(false);
+});
+it('B2 unknown scope cases keep distinct month identities instead of overwriting prior-month evidence',async()=>{
+ for(const yearMonth of [month,'2026-05'])expect((await call('scan-attendance-cases',{empId:'SYNTH',yearMonth})).statusCode).toBe(200);
+ const all=[...fake.data.entries()].filter(([k])=>k.startsWith('attendanceCases/')).map(([,v])=>v);
+ const a=all.find(c=>c.anchor==='scope:2026-04'&&c.type==='pending-request'),b=all.find(c=>c.anchor==='scope:2026-05'&&c.type==='pending-request');
+ expect(a).toBeTruthy();expect(b).toBeTruthy();expect(a.id).not.toBe(b.id);
+});

@@ -1,3 +1,4 @@
+import { CASE_ACTIONS, handleAttendanceCaseAction } from './utils/attendanceCaseService';
 import { makeupSourceKey } from './utils/makeupEvidence';
 import { evaluatePayrollMonth, assertPayrollReady, pendingRequestIssues, requestEmployeeIds, type PendingSources, type RequestKind } from './utils/payrollPreflight';
 import { validLeaveAllocations, getScheduleReviewGaps } from './utils/payroll';
@@ -670,9 +671,10 @@ const readSalaryMonth = async (month: string): Promise<SalaryDetail[]> => {
     const reviewedEmployees = await loadMonthlyPayrollEmployees(employees.docs.map(d => ({ ...d.data(), id: d.id })), month, db);
     const requests = await readPendingSources();
     const revisionSnap = await db.collection('attendanceRevisions').get();
+    const caseSnap = await db.collection('attendanceCases').get();
     const result = evaluatePayrollMonth({ month, employees: reviewedEmployees.filter(e => employeeInMonth(e, month)), schedules,
         records: cards.docs.map(d => ({ ...d.data(), id: d.id } as ClockRecord)),
-        leaves: leaves.docs.map(d => ({ ...d.data(), id: d.id } as LeaveRequest)), requests, revisions: revisionSnap.docs.map(d => ({ ...d.data(), id: d.id })) });
+        leaves: leaves.docs.map(d => ({ ...d.data(), id: d.id } as LeaveRequest)), requests, revisions: revisionSnap.docs.map(d => ({ ...d.data(), id: d.id })), cases: caseSnap.docs.map(d => ({ ...d.data(), id: d.id })) });
     const salaries = result.salaries;
     return selectSalaryResults(salaries, lock);
 };
@@ -762,6 +764,7 @@ export const handler: Handler = async (event) => {
     const isAdmin = currentUserRole === UserRole.Admin || isSuperAdmin;
 
     try {
+        if (CASE_ACTIONS.includes(action as any)) return ok(await handleAttendanceCaseAction(db, uid, action, data));
         switch (action) {
 
             // ==================== 打卡 ====================
@@ -1446,7 +1449,8 @@ export const handler: Handler = async (event) => {
                     const schedules = scheduleSnap.docs.filter(d => d.id.startsWith(yearMonth)).map(d => normalizeScheduleDoc(d.data(), d.id, ''));
                     const requests = await readPendingSources(tx);
                     const revisionSnap = await tx.get(db.collection('attendanceRevisions'));
-                    const preflight = evaluatePayrollMonth({ month: yearMonth, employees, schedules, records, leaves, requests, revisions: revisionSnap.docs.map(d => ({ ...d.data(), id: d.id })) });
+                    const caseSnap = await tx.get(db.collection('attendanceCases'));
+                    const preflight = evaluatePayrollMonth({ month: yearMonth, employees, schedules, records, leaves, requests, revisions: revisionSnap.docs.map(d => ({ ...d.data(), id: d.id })), cases: caseSnap.docs.map(d => ({ ...d.data(), id: d.id })) });
                     assertPayrollReady(preflight);
                     const salaries = preflight.salaries;
                     const createdAt = new Date().toISOString();
