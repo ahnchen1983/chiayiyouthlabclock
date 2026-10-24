@@ -33,3 +33,7 @@ R200：平日加班119分鐘=4760/9、120=1600/3、121=4850/9；休息480分鐘=
 ## 停止擴充 checkpoint
 
 使用者因額度要求交接，C2b2整合保存為獨立WIP。不得把新增但未執行的emulator/UI案例寫成已通過。完整範圍、未完成來源adapter及後續順序見 `docs/CLAUDE_HANDOFF.md`；本批未push，publisher只可選擇已review增量，不將此WIP混入已驗證PR。
+
+## Claude 接手驗證（2026-10-24）
+
+`overtimePreview` 改以最後一個 `@` 拆 reviewer／reviewedAt 並加回歸測試。修正後 typecheck、unit 767、emulator 85、build、E2E 85 均通過；仍非獨立 review，C2b 範圍缺口不變。詳 `docs/CLAUDE_HANDOFF.md` 末節。

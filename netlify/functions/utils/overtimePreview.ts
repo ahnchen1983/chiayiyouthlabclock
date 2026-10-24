@@ -5,6 +5,9 @@ import {evidenceHash} from './attendanceCaseLifecycle';
  * payload can supply wage proofs, day classifications, source versions or work.
  * C2b2 is a supplementary candidate: it does not add into netSalary or snapshots.
  */
+// approvalId is reviewer+'@'+ISO time; split on the last '@' since a reviewer id
+// may itself contain '@' but an ISO timestamp never does.
+const reviewProof=(id:string)=>{const at=id.lastIndexOf('@');return at>0?{reviewedBy:id.slice(0,at),reviewedAt:id.slice(at+1)}:{reviewedBy:'missing',reviewedAt:'invalid'};};
 export function overtimePreview(days:NormalPayDay[],intervals:NormalPayInterval[]):OTResult {
  const issues:string[]=[],configs=new Map<string,any>();
  for(const d of days){const p=d.policy,config=(p as any)?.overtime;
@@ -17,7 +20,7 @@ export function overtimePreview(days:NormalPayDay[],intervals:NormalPayInterval[
  const config=configs.size===1?[...configs.values()][0]:null;
  if(!config||config.schemaVersion!=='overtime-scope-v1')issues.push('完整日別／正常工資組成／跨月週界來源待核定');
  if(configs.size>1)issues.push('日別加給多版本範圍衝突，需明確合併覆核');
- const work:OTWork[]=intervals.filter(i=>i.kind==='work').map(i=>({id:i.sourceId,sourceVersion:i.sourceVersion,start:i.start,end:i.end,workdayId:i.workday?.id||'unmapped:'+i.sourceId,kind:'actual',version:i.sourceVersion,reviewedBy:i.approvalId.includes('@')?i.approvalId.slice(0,i.approvalId.indexOf('@')):'missing',reviewedAt:i.approvalId.includes('@')?i.approvalId.slice(i.approvalId.indexOf('@')+1):'invalid'}));
+ const work:OTWork[]=intervals.filter(i=>i.kind==='work').map(i=>({id:i.sourceId,sourceVersion:i.sourceVersion,start:i.start,end:i.end,workdayId:i.workday?.id||'unmapped:'+i.sourceId,kind:'actual',version:i.sourceVersion,...reviewProof(i.approvalId)}));
  // Approved leave allocations do not prove offsite work or the specific personal
  // leave compliance classification. Those need a source-bound dedicated adapter.
  if(intervals.some(i=>i.kind==='leave'))issues.push('假單12h合規分類／外勤來源專用投影待核；不得把假直接當actual');

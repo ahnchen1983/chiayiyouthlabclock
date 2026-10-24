@@ -87,3 +87,23 @@ C3：薪資 items、有效期、正常工資組成、法定工資基礎、保費
 ### 本輪最後實測與保存狀態
 
 已啟動的完整單元/API測試正常收尾：**766 passed、35 files、0 failed**，49.24秒，`c2b-unit.log`。此結果含最後來源保留修正；不涵蓋新增Firestore/E2E案例。定向35測試及較早typecheck均通過，最後小改後typecheck/build/emulator/E2E未重跑。工作檔與本文件一併保存在最新 `[skip netlify]` WIP commit，提交後應是乾淨工作樹；使用 `git status`/`git log`核對。無丟棄stash、無push、無部署。
+
+## Claude 接手第一輪（2026-10-24，基於 7078444）
+
+已核對：PR #13 head 仍為 `13717ca`、Draft、未合併；PR #14 head `7078444`、base 為 PR #13 分支、77 檔、無 comment、無 CI check（如上所述 CI 只監聽 main）。
+
+修正：`overtimePreview.ts` 拆 `approvalId`（reviewer+'@'+ISO時間）原用第一個 `@`；reviewer id 若含 `@` 會把時間拆壞而誤阻擋（fail closed，不會算錯金額）。改為最後一個 `@`，新增回歸測試（舊碼 1 fail，修後 pass）。
+
+本輪於修正後重跑（單機，非 CI、非獨立 review）：
+
+|項目|結果|
+|---|---|
+|`npm run typecheck`|通過|
+|`npm test -- --configLoader runner`|767 passed／35 files|
+|`npm run test:emulator:start`（demo-chiayi-payroll，loopback 8086）|85 passed／2 files|
+|`npm run build`|通過（首次因本機 node_modules 舊、缺 tailwindcss 失敗；`npm ci` 依 lock 重裝後通過，非程式問題）|
+|`npx playwright test`|85 passed（mock 後端）|
+
+仍未完成、不得視為通過：C2a fix／C2m／C2b 獨立 review；第 52 行列出的 BLOCKED 來源 adapter 與法遵引擎；正式資料唯讀核對；CI 未在本分支執行。正式計薪仍 NO GO。
+
+引擎自查待政策確認（未改程式）：時薪人員休息日 4/3、5/3、8/3 目前視為全額而非「原工資＋加給」，與月薪同一級距；時薪國定假日前 8h 採 2R。兩者需依核定制度或主管機關試算確認後才能定案。
