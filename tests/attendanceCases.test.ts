@@ -70,3 +70,5 @@ it('invalid employment ordering leaves uncertainty rather than outside-employmen
 
 it('incorrect stored date cannot hide a full timestamp intersecting the selected window',()=>{const i=fixture();const r=card('2026-03-01','09:00','17:00',false);r.clockInAt='2026-04-01T09:00:00+08:00';r.clockOutAt='2026-04-01T17:00:00+08:00';i.records=[r];expect(observations(i,'overnight-date').some(o=>o.outcome==='finding')).toBe(true);expect(observations(i,'unexplained-absence')[0].outcome).toBe('unknown');});
 it('partial raw attendance is not falsely labelled whole-shift unexplained absence',()=>{const i=fixture();i.records=[card(undefined,'09:00',null,false)];expect(observations(i,'unexplained-absence')[0].outcome).toBe('unknown');});
+
+ it('B5a candidate uses reviewed empty work, not a long raw span',()=>{const i=fixture();i.overtimes=[];const r=card('2026-04-01','08:00','19:00');r.workIntervals=[];i.records=[r];const matches=observations(i,'hours-difference').filter(o=>o.anchor==='overtime-candidate:2026-04-01');expect(matches).toHaveLength(1);expect(matches[0].outcome).toBe('clear');});

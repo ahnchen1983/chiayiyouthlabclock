@@ -4,7 +4,7 @@ import {APIError,apiAnomalyMutation,type AnomalyMutationAction} from '../service
 export interface AnomalyIntent {action:AnomalyMutationAction;command:Record<string,any> & {operationId:string;caseId:string}}
 const event='anomaly-workflow-pending',key=(uid:string)=>'anomaly-workflow-pending-v1:'+uid;
 let inFlight=false;
-const read=(uid:string):AnomalyIntent|null=>{const raw=sessionStorage.getItem(key(uid));if(!raw)return null;const p=JSON.parse(raw);if(!['act-leave-version','submit-anomaly-explanation','act-anomaly-explanation','submit-case-leave','link-case-leave','review-case-leave'].includes(p?.action)||typeof p.command?.operationId!=='string'||typeof p.command?.caseId!=='string')throw Error('invalid pending workflow');return p;};
+const read=(uid:string):AnomalyIntent|null=>{const raw=sessionStorage.getItem(key(uid));if(!raw)return null;const p=JSON.parse(raw);if(!['submit-overtime-request','act-overtime-request','act-leave-version','submit-anomaly-explanation','act-anomaly-explanation','submit-case-leave','link-case-leave','review-case-leave'].includes(p?.action)||typeof p.command?.operationId!=='string'||typeof p.command?.caseId!=='string')throw Error('invalid pending workflow');return p;};
 // Same confirmed-outcome discipline as B4a: GET does not clear an uncertain write.
 export function useAnomalyOperation(){
  const {user}=useAuth(),uid=user!.id;const [pending,setPending]=useState<AnomalyIntent|null>(null),[blocked,setBlocked]=useState(false),[busy,setBusy]=useState(false);

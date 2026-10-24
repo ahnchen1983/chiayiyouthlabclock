@@ -40,12 +40,13 @@ const loadInput=async(db:any,tx:any,empId:string,month:string,at:string):Promise
  const records=await rows(db,tx,'clockRecords',empId);
  const schedules=(await rows(db,tx,'dailySchedule')).map((d:any)=>normalizeScheduleDoc(d,d.id,''));
  // Read complete employee sources, including full cross-month evidence.
+ const overtimes=await rows(db,tx,'overtimeRequests',empId);
  const leaves=await rows(db,tx,'leaveRequests',empId),makeups=await rows(db,tx,'makeupRequests',empId),absences=await rows(db,tx,'leaveOfAbsenceRequests',empId);
  const swaps=(await rows(db,tx,'shiftSwapRequests')).filter((r:any)=>r.fromEmpId===empId||r.toEmpId===empId);
  const revisions=(await rows(db,tx,'attendanceRevisions')).filter((r:any)=>r.before?.empId===empId||r.after?.empId===empId);
  const review=e.payrollReview, p=review?.policy;
  return { employee:{id:empId,hireDate:e.hireDate||'',...(e.resignDate?{resignDate:e.resignDate}:{}),...(e.leaveOfAbsenceStart?{leaveOfAbsenceStart:e.leaveOfAbsenceStart}:{}),...(e.leaveOfAbsenceEnd?{leaveOfAbsenceEnd:e.leaveOfAbsenceEnd}:{})},
- window:monthWindow(month),asOf:Date.parse(at)/60000,records,schedules,leaves,makeups,absences,swaps,revisions,
+ window:monthWindow(month),asOf:Date.parse(at)/60000,records,schedules,leaves,makeups,overtimes,absences,swaps,revisions,
  coverage:{records:'complete',schedules:schedules.some((d:any)=>d.shifts.some((s:any)=>!s.empId))?'unknown':'complete',requests:'complete',employment:'complete',revisions:'complete',explanations:'unknown'},
  // Existing payroll policy does not attest attendance grace/close/break targets.
  // Keep those unknown; do not reinterpret general system defaults as approval.
@@ -171,12 +172,12 @@ export async function assertCurrentCaseSource(db:any,tx:any,c:any,at:string){
  const fresh=observed?retainAffectedWindow(c,observed):null;
  if(!fresh||fresh.evidenceVersion!==c.observation.evidenceVersion)error(409,'原始來源已變更，須重新掃描後覆核');
 }
-export async function planLeaveCaseRefresh(db:any,tx:any,empId:string,months:string[],leave:any,actor:string,at:string,otherLeaves:any[]=[]){
+export async function planLeaveCaseRefresh(db:any,tx:any,empId:string,months:string[],leave:any,actor:string,at:string,otherLeaves:any[]=[],collection:'leaves'|'overtimes'='leaves'){
  const existing=await rows(db,tx,'attendanceCases',empId),original=new Map(existing.map((c:any)=>[c.id,c]));
  const planned=new Map<string,any>();
  for(const month of months){
   const input=await loadInput(db,tx,empId,month,at);
-  const replacements=[...otherLeaves,leave];input.leaves=[...input.leaves.filter(r=>!replacements.some(n=>n.id===r.id)),...replacements];
+  const replacements=[...otherLeaves,leave];input[collection]=[...(input[collection]||[]).filter(r=>!replacements.some(n=>n.id===r.id)),...replacements];
   const sourceVersion=evidenceHash(input);
   for(const o of scanObservations(input,month).observations){
    const previous=planned.get(o.id)||original.get(o.id) as any;
@@ -188,3 +189,5 @@ export async function planLeaveCaseRefresh(db:any,tx:any,empId:string,months:str
  await assertTransactionMonths(db,tx,[...months,...[...planned.values()].flatMap(c=>affectedMonths(c.observation))]);
  return ()=>{for(const [id,next] of planned)persistCaseWorkflow(db,tx,original.get(id) as any,next);};
 }
+
+export const planOvertimeCaseRefresh=(db:any,tx:any,empId:string,months:string[],request:any,actor:string,at:string,previous:any[]=[])=>planLeaveCaseRefresh(db,tx,empId,months,request,actor,at,previous,'overtimes');

@@ -4,17 +4,17 @@ import { clockInterval, shiftIntervals, validDate, hhmmMinutes } from '../../../
 import { calculateSalaryForEmployee } from './payroll';
 
 export const PREFLIGHT_GAPS = ['OT_COMP_REQUEST_MODEL', 'PAYROLL_ITEM_REQUIREMENTS', 'MANUAL_DIFF_APPROVAL', 'ATTENDANCE_CASE_WORKFLOW', 'PRODUCTION_RECONCILIATION'] as const;
-export type RequestKind = 'anomalyExplanations' | 'leaveRequests' | 'makeupRequests' | 'leaveOfAbsenceRequests' | 'shiftSwapRequests';
+export type RequestKind = 'overtimeRequests' | 'anomalyExplanations' | 'leaveRequests' | 'makeupRequests' | 'leaveOfAbsenceRequests' | 'shiftSwapRequests';
 export type RequestEvidence = Record<string, any> & { id: string };
 export type PendingSources = Record<RequestKind, RequestEvidence[]>;
-const kinds: RequestKind[] = ['anomalyExplanations','leaveRequests', 'makeupRequests', 'leaveOfAbsenceRequests', 'shiftSwapRequests'];
-const labels: Record<RequestKind, string> = {anomalyExplanations:'異常說明', leaveRequests: '假單/外勤', makeupRequests: '補卡', leaveOfAbsenceRequests: '留停', shiftSwapRequests: '換班' };
-const finalStates: Record<RequestKind, string[]> = {
+const kinds: RequestKind[] = ['overtimeRequests','anomalyExplanations','leaveRequests', 'makeupRequests', 'leaveOfAbsenceRequests', 'shiftSwapRequests'];
+const labels: Record<RequestKind, string> = {overtimeRequests:'加班申請',anomalyExplanations:'異常說明', leaveRequests: '假單/外勤', makeupRequests: '補卡', leaveOfAbsenceRequests: '留停', shiftSwapRequests: '換班' };
+const finalStates: Record<RequestKind, string[]> = {overtimeRequests:['approved','partial-approved','rejected','cancelled','superseded'],
     anomalyExplanations:['accepted','rejected','cancelled','superseded'],
     leaveRequests: ['核准', '駁回', '已取消', '已取代'], makeupRequests: ['核准', '駁回', '已取消', '已取代'], leaveOfAbsenceRequests: ['核准', '駁回'],
     shiftSwapRequests: ['approved', 'rejected-by-peer', 'rejected-by-admin', 'cancelled'],
 };
-const pendingStates: Record<RequestKind, string[]> = {
+const pendingStates: Record<RequestKind, string[]> = {overtimeRequests:['submitted','needs-info','preauthorized'],
     anomalyExplanations:['submitted','needs-info'],
     leaveRequests: ['待審核','待補件'], makeupRequests: ['待審核', '待補件'], leaveOfAbsenceRequests: ['待審核'], shiftSwapRequests: ['awaiting-peer', 'awaiting-admin'],
 };
@@ -86,6 +86,7 @@ export const pendingRequestIssues = (month: string, empId: string, sources: Part
                     issues.push({ code: 'APPLICATION_UNVERIFIED', severity: 'NEEDS_REVIEW', source: kind, sourceId: request.id, message: `補卡 ${request.id} 核准套用證據或後續更正來源鏈待覆核` });
                 continue;
             }
+            if(kind==='overtimeRequests'&&['approved','partial-approved'].includes(request.status)&&requestAffectsMonth(kind,request,month,empId,records,schedules))issues.push({code:'APPLICATION_UNVERIFIED',severity:'NEEDS_REVIEW',source:kind,sourceId:request.id,message:'加班核准與依法應計／日別／薪資投影仍未核定；不得抹去已確認工作'});
             if (finalStates[kind].includes(request.status)) continue;
             if (!requestAffectsMonth(kind, request, month, empId, records, schedules)) continue;
             const pending = pendingStates[kind].includes(request.status);

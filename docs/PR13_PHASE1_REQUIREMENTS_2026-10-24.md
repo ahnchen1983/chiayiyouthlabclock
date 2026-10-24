@@ -305,3 +305,10 @@
 4.5：最小有效期政策與明示額度預占結構；僅已核政策執行期限／額度，未知保持待設定，不用推定餘額阻擋或默認無限制。未提供正式政策管理與啟用。
 6.1／6.3：pending/needs-info進preflight，cancelled/superseded原始歷史保留；跨月transaction guard與來源case重核維持，必要workflow gap未移除。已核更正／差額流程未完成，禁止直接取消已核或覆寫月結。
 8.1／8.3：2026-08全體人員正式核對未執行，storage/scanner、真通知、公司政策與正式發薪仍NO GO。本批驗收與合成假設見PR13_BATCH_B4D.md。
+
+
+### B5a 增量：加班申請（部分；不含補休／計薪）
+
+2.4：獨立overtimeRequests、事前授權／事後申請、本人撤回及新版本、指定主管補件／完整／部分核准。actual/requested/approved/statutory payable分離；未申請或駁回不清除confirmedWork。工作來源版本改變需新版本，已核不能直接取消。指定審核政策未知不開放任意全員或自核。
+2.1／2.5／6.1：沿12類detector記pending／approved-unapplied及超8h調查候選；preflight相同入口納入，sandbox outbox disabled且無正式scheduler。完整OT_COMP gap維持BLOCKED。
+3.3／3.4／4.4：日別、外勤歸屬、法遵上限實質規則、支付倍率與補休帳本仍待B5b/C，不以本批approvedMinutes替代依法應計。8.1／8.3正式資料仍未核對，NO GO。詳見PR13_BATCH_B5A.md。

@@ -1,3 +1,4 @@
+import OvertimeWorkflow from '../components/OvertimeWorkflow';
 
 import React, { useState, lazy, Suspense } from 'react';
 import { useAuth } from '../contexts/AuthContext';
@@ -59,7 +60,7 @@ const CompareIcon: React.FC<{ className?: string }> = ({ className }) => (
   </svg>
 );
 
-type AdminView = 'cases' | 'overview' | 'schedule' | 'attendance' | 'leave' | 'employees' | 'monthlyReport' | 'comparison' | 'salary' | 'auditLog' | 'systemSettings' | 'makeupApproval' | 'openShifts' | 'loaApproval' | 'shiftSwapApproval' | 'myClock' | 'myLeave' | 'myRecords' | 'mySalary' | 'myMakeup' | 'myLeaveBalance' | 'myPreferences' | 'myOpenShifts' | 'myLeaveOfAbsence';
+type AdminView = 'overtime' | 'cases' | 'overview' | 'schedule' | 'attendance' | 'leave' | 'employees' | 'monthlyReport' | 'comparison' | 'salary' | 'auditLog' | 'systemSettings' | 'makeupApproval' | 'openShifts' | 'loaApproval' | 'shiftSwapApproval' | 'myClock' | 'myLeave' | 'myRecords' | 'mySalary' | 'myMakeup' | 'myLeaveBalance' | 'myPreferences' | 'myOpenShifts' | 'myLeaveOfAbsence';
 
 const AdminDashboard: React.FC = () => {
   const { user, logout } = useAuth();
@@ -70,6 +71,7 @@ const AdminDashboard: React.FC = () => {
 
   const renderView = () => {
     switch (currentView) {
+      case 'overtime': return <OvertimeWorkflow />;
       case 'cases': return <AttendanceCaseCenter />;
       case 'overview': return <AdminOverview />;
       case 'schedule': return <ScheduleManager />;
@@ -138,7 +140,8 @@ const AdminDashboard: React.FC = () => {
             <NavItem view="comparison" icon={<CompareIcon className="w-6 h-6" />} label="排班對照表" />
             <NavItem view="cases" icon={<ListIcon className="w-6 h-6" />} label="異常待辦" />
             <NavItem view="attendance" icon={<ListIcon className="w-6 h-6" />} label="出勤紀錄" />
-            <NavItem view="leave" icon={<CheckSquareIcon className="w-6 h-6" />} label="請假/外勤審核" />
+            <NavItem view="overtime" icon={<SendIcon className="w-6 h-6" />} label="加班申請" />
+        <NavItem view="leave" icon={<CheckSquareIcon className="w-6 h-6" />} label="請假/外勤審核" />
             <NavItem view="shiftSwapApproval" icon={<CalendarIcon className="w-6 h-6" />} label="換班審核" />
             <NavItem view="loaApproval" icon={<CheckSquareIcon className="w-6 h-6" />} label="留停審核" />
             <NavItem view="makeupApproval" icon={<CheckSquareIcon className="w-6 h-6" />} label="補打卡審核" />

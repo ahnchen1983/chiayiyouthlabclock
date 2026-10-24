@@ -30,7 +30,7 @@ export interface DetectorInput {
     employee: Pick<Employee, 'id' | 'hireDate' | 'resignDate' | 'leaveOfAbsenceStart' | 'leaveOfAbsenceEnd'>;
     window: Window; asOf: number; // no implicit clock or implicit local timezone
     records: ClockRecord[]; schedules: ScheduleEvent[];
-    leaves: LeaveRequest[]; makeups: MakeupEvidenceRequest[];
+    overtimes?:any[]; leaves: LeaveRequest[]; makeups: MakeupEvidenceRequest[];
     absences: LeaveOfAbsenceRequest[]; swaps: ShiftSwapRequest[]; revisions: any[];
     // Trusted adapter assertions, NOT a client API. Incomplete collections can never clear cases.
     coverage: Record<'records' | 'schedules' | 'requests' | 'employment' | 'revisions' | 'explanations', 'complete' | 'unknown'>;

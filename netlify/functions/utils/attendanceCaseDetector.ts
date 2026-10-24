@@ -128,7 +128,15 @@ export const detectAttendanceCases = (input: DetectorInput): DetectionResult => 
         const incompleteLeave=relevantLeaves.some(l=>l.status===LeaveStatus.Approved && (!l.approver||!Number.isFinite(Date.parse(l.approvalDate || ''))||!validLeaveAllocations(l)));
         emit('work-leave-overlap',anchor,c.range,!known||!complete('requests')||c.work===null||incompleteLeave?'unknown':leaveOverlap.length?'finding':'clear','已核工作與核准假別分鐘相交；外勤不視為休假',[...refs,...leaveOverlap.map(e=>e.ref)]);
     }
-    const groups=[['makeupRequests',input.makeups],['leaveRequests',input.leaves],['leaveOfAbsenceRequests',input.absences],['shiftSwapRequests',input.swaps]] as const;
+    // Calendar-day candidate only, never a statutory day classification or pay decision.
+    if(input.overtimes){
+      const days=new Map<string,{ranges:Window[];refs:SourceRef[];unknown:boolean}>();
+      for(const r of input.records.filter(r=>r.empId===empId&&validDate(r.date))){const work=confirmedWork(r),base=midnight(r.date),span=clockInterval(r);const boundaries=work?.length?work:span?[span]:[{start:0,end:1440}];
+        for(const part of boundaries){let pos=base+part.start;while(pos<base+part.end){const date=taipeiDate(new Date(pos*60000)),end=Math.min(midnight(date)+1440,base+part.end),day=days.get(date)||{ranges:[],refs:[],unknown:false};day.unknown ||= work===null;day.refs.push(ref('clockRecords',r.id,r));if(work?.length)day.ranges.push({start:pos,end});days.set(date,day);pos=end;}}
+      }
+      for(const [date,day] of days){const w={start:midnight(date),end:midnight(date)+1440};if(overlap(w,input.window))emit('hours-difference','overtime-candidate:'+date,w,day.unknown||intervalMinutes(day.ranges)>480?'unknown':'clear','已核區間超過8小時或來源不完整須調查；日別、法遵上限與依法應付待獨立核定，不以無申請歸零',day.refs);}
+    }
+    const groups=[['overtimeRequests',input.overtimes||[]],['makeupRequests',input.makeups],['leaveRequests',input.leaves],['leaveOfAbsenceRequests',input.absences],['shiftSwapRequests',input.swaps]] as const;
     for(const [collection,requests] of groups)for(const r of requests){
         const q:any=r; if(collection==='shiftSwapRequests'?![q.fromEmpId,q.toEmpId].includes(empId):q.empId!==empId)continue;
         const requestRanges: Window[] = collection==='shiftSwapRequests'
@@ -139,9 +147,9 @@ export const detectAttendanceCases = (input: DetectorInput): DetectionResult => 
         const impactWindows=[input.window,...cards.map(c=>c.range),...allDayRanges];
         if(requestRanges.every(valid)&&!requestRanges.some(r=>impactWindows.some(w=>overlap(r,w))))continue;
         const refs=[ref(collection,q.id,q),...cards.map(c=>c.ref),...input.revisions.filter(r=>r.after?.empId===empId || r.before?.empId===empId).map(r=>ref('attendanceRevisions',r.id,r)),ref('employment',empId,input.employee)],anchor=collection+':'+q.id;
-        const pending=collection==='shiftSwapRequests'?['awaiting-peer','awaiting-admin'].includes(q.status):collection==='makeupRequests'?['待審核','待補件'].includes(q.status):['待審核','待補件'].includes(q.status);
-        const approved=collection==='shiftSwapRequests'?q.status==='approved':q.status==='核准';
-        const rejected=collection==='shiftSwapRequests'?['rejected-by-peer','rejected-by-admin','cancelled'].includes(q.status):collection==='makeupRequests'?['駁回','已取消','已取代'].includes(q.status):['駁回','已取消','已取代'].includes(q.status);
+        const pending=collection==='overtimeRequests'?['submitted','needs-info','preauthorized'].includes(q.status):collection==='shiftSwapRequests'?['awaiting-peer','awaiting-admin'].includes(q.status):collection==='makeupRequests'?['待審核','待補件'].includes(q.status):['待審核','待補件'].includes(q.status);
+        const approved=collection==='overtimeRequests'?['approved','partial-approved'].includes(q.status):collection==='shiftSwapRequests'?q.status==='approved':q.status==='核准';
+        const rejected=collection==='overtimeRequests'?['rejected','cancelled','superseded'].includes(q.status):collection==='shiftSwapRequests'?['rejected-by-peer','rejected-by-admin','cancelled'].includes(q.status):collection==='makeupRequests'?['駁回','已取消','已取代'].includes(q.status):['駁回','已取消','已取代'].includes(q.status);
         emit('pending-request',anchor,input.window,!complete('requests')||(!pending&&!approved&&!rejected)?'unknown':pending?'finding':'clear','申請狀態檢查；待審或未知不等於已解決',refs);
         let applied: boolean|null=null;
         if(approved&&collection==='makeupRequests'&&complete('records','revisions')) applied=hasAppliedMakeup(q,input.records,input.revisions);
