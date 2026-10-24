@@ -1,5 +1,14 @@
 node_modules/
+node_modules
 dist/
+.e2e-dist/
+.env
+.env.*
+!.env.example
+.verification/
+firestore-debug.log
+firebase-debug.log
+ui-debug.log
 .DS_Store
 
 # Local Netlify folder

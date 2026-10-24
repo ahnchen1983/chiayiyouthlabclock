@@ -168,10 +168,10 @@ const ClockIn: React.FC = () => {
                 </div>
 
                 <div className="grid grid-cols-2 gap-4 mt-4">
-                    <button onClick={handleClockIn} disabled={!!clockStatus.clockInTime || !!clockStatus.clockOutTime || isProcessing} className="w-full py-3 text-lg font-bold text-white rounded-lg bg-brand-green-dark hover:bg-brand-green-light disabled:bg-gray-400 transition-colors">
+                    <button onClick={handleClockIn} disabled={(!!clockStatus.clockInTime && !clockStatus.clockOutTime) || isProcessing} className="w-full py-3 text-lg font-bold text-white rounded-lg bg-brand-green-dark hover:bg-brand-green-light disabled:bg-gray-400 transition-colors">
                         上班打卡
                     </button>
-                    <button onClick={handleClockOut} disabled={!!clockStatus.clockOutTime || isProcessing} className="w-full py-3 text-lg font-bold text-white bg-status-error hover:bg-red-700 disabled:bg-gray-400 transition-colors">
+                    <button onClick={handleClockOut} disabled={!clockStatus.clockInTime || !!clockStatus.clockOutTime || isProcessing} className="w-full py-3 text-lg font-bold text-white bg-status-error hover:bg-red-700 disabled:bg-gray-400 transition-colors">
                         下班打卡
                     </button>
                 </div>

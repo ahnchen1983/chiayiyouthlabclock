@@ -1,3 +1,4 @@
+import { taipeiDate } from '../../utils/attendance';
 
 import React, { useState, useEffect } from 'react';
 import {
@@ -86,7 +87,7 @@ const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({ employee, onClose
         annualLeaveQuotaHours: employee?.annualLeaveQuotaHours ?? undefined,
         personalLeaveQuotaHours: employee?.personalLeaveQuotaHours ?? 14 * 8,
         sickLeaveQuotaHours: employee?.sickLeaveQuotaHours ?? 30 * 8,
-        hireDate: employee?.hireDate || new Date().toISOString().slice(0, 10),
+        hireDate: employee?.hireDate || taipeiDate(),
         resignDate: employee?.resignDate || undefined,
         status: employee?.status || '在職',
         position: employee?.position || '兼職人員',

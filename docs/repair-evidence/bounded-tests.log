@@ -1,0 +1,12 @@
+
+> chiayiyouthlabclock@0.0.0 test
+> vitest run --exclude tests/firestore-rules.test.ts --exclude 'tests/e2e/**' --configLoader runner
+
+
+ RUN  v4.1.6 <repair-checkout>
+
+
+ Test Files  14 passed (14)
+      Tests  254 passed (254)
+   Start at  16:56:26
+   Duration  7.33s (transform 1.05s, setup 0ms, import 2.65s, tests 1.48s, environment 6ms)

@@ -1,3 +1,6 @@
+import { formatHours } from '../../utils/format';
+import { sumKnownHours } from '../../utils/attendance';
+import { taipeiDate } from '../../utils/attendance';
 
 import React, { useMemo, useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
@@ -9,7 +12,7 @@ const MyRecords: React.FC = () => {
   const { user } = useAuth();
   const [records, setRecords] = useState<ClockRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
+  const [month, setMonth] = useState(taipeiDate().slice(0, 7)); // YYYY-MM
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
 
   useEffect(() => {
@@ -94,7 +97,7 @@ const MyRecords: React.FC = () => {
                   <td className="py-2 px-4 border-b">{record.date}</td>
                   <td className="py-2 px-4 border-b">{record.clockInTime}</td>
                   <td className="py-2 px-4 border-b">{record.clockOutTime || '-'}</td>
-                  <td className="py-2 px-4 border-b">{record.workHours?.toFixed(2) || '-'}</td>
+                  <td className="py-2 px-4 border-b">{formatHours(record.workHours)}</td>
                   <td className="py-2 px-4 border-b">{record.status}</td>
                 </tr>
               ))

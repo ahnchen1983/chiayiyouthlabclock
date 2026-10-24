@@ -79,6 +79,23 @@ Firebase 環境變數需在 Netlify Dashboard > Site settings > Environment vari
 
 ## Firestore Rules 部署（Phase 9.4）
 
+### PR13 修復驗證循環
+
+`npm run verify:pr13` 依序執行型別、單元／API、隔離 Firestore、瀏覽器與正式建置驗證。任一步驟失敗即停止；完整輸出、受測提交與程式雜湊保存在 `.verification/pr13/<時間>/`。若驗證途中程式改變，結果會判為失敗，修復後需重新跑。流程與責任分工見 [docs/PR13_REPAIR_LOOP.md](docs/PR13_REPAIR_LOOP.md)。
+
+前置需求：Node.js 24、Java、Firebase CLI、Playwright Chromium。驗證只允許本機 `127.0.0.1:8086` 的 `demo-chiayi-payroll` 模擬專案；不讀取正式服務帳號。第一次可執行 `npx playwright install chromium` 安裝測試瀏覽器。請先確認沒有另一個模擬器占用 8086。
+
+```sh
+npm ci
+npm run verify:pr13
+# 只跑隔離資料庫與規則驗證
+npm run test:emulator:start
+```
+
+計薪覆核入口：最高管理者 → 薪資計算 → 覆核計薪資料。各月份分開保存薪制、保費與排班差異覆核；薪資或任職基準變動後需重新覆核。未知政策保持空白，實際工作區間在出勤紀錄覆核，已核准請假／外勤逐日分配。午夜結束可填 `24:00`，跨日分成兩筆。全部確認後才可結算，歷史快照不解鎖覆寫。
+
+瀏覽器測試建置輸出到 `.e2e-dist`，正式建置輸出到 `dist`；樣式已隨網站本機打包，不依賴 Tailwind CDN。
+
 本專案 Firestore rules 採「**client 全 deny**」策略 — 所有資料讀寫必須走後端 API。
 前端任何 `db.collection(...).get()` 都會被 Firebase 拒絕，僅後端 service account
 （Firebase Admin SDK）能繞過 rules 操作資料。
@@ -86,8 +103,8 @@ Firebase 環境變數需在 Netlify Dashboard > Site settings > Environment vari
 ### 本機測試 rules
 
 ```bash
-# 需先安裝 Java 11+（macOS：brew install openjdk@17）
-npm run firebase:rules:test
+# 需先安裝 Java 與 Firebase CLI；啟動一次性隔離模擬器並驗證
+npm run test:emulator:start
 ```
 
 ### 部署 rules 到 production

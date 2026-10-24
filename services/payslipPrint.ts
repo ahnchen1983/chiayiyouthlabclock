@@ -1,12 +1,13 @@
+import { formatMoney } from '../utils/format';
 import { SalaryDetail } from '../types';
 
-const fmt = (n: number): string =>
-    new Intl.NumberFormat('zh-TW', { style: 'currency', currency: 'TWD', minimumFractionDigits: 0 }).format(n);
+const fmt = formatMoney;
 
 /**
  * 在新視窗開啟可列印的薪資條，使用者可在列印對話框另存為 PDF。
  */
 export const openPayslipPrintView = (salary: SalaryDetail): void => {
+    if (!["ready", "locked"].includes(salary.calculationStatus || "")) { alert("薪資待覆核，不能列印結算薪資條"); return; }
     const w = window.open('', '_blank', 'width=820,height=1000');
     if (!w) {
         alert('請允許彈出視窗以下載薪資條。');

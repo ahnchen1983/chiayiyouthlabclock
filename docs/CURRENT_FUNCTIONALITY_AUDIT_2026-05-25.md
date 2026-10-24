@@ -196,7 +196,7 @@
 
 | 優先 | 測試 | 重點 |
 |------|------|------|
-| P0 | ADMIN 登入 | `ADMIN / admin1234` 可進，不跳 TOTP |
+| P0 | ADMIN 登入 | `ADMIN / [已移除的舊預設密碼；禁止使用]` 可進，不跳 TOTP |
 | P0 | Firestore client deny | Console / Rules Playground 直接讀寫應被擋 |
 | P0 | 排班對照表 | 個別班段、部分請假、休館值班三種案例 |
 | P1 | 月結鎖定 | 鎖定後補打卡 / 留停 / 換班回寫應擋 423 |

@@ -20,6 +20,15 @@ export interface ClockStatus {
 export type ClockRecordStatus = '正常' | '遲到' | '早退' | '遲到+早退' | '異常' | '加班';
 
 export interface ClockRecord {
+  attendanceRevisionId?: string;
+  workIntervals?: { start: number; end: number }[];
+  workReview?: { sourceKey: string; reviewedBy: string; reviewedAt: string };
+  clockInAt?: string | null;
+  clockOutAt?: string | null;
+  rawMinutes?: number | null;
+  payableMinutes?: number | null;
+  reviewReasons?: string[];
+  calculationVersion?: string;
   id: string;
   empId: string;
   name: string;
@@ -48,6 +57,7 @@ export interface ClockRecord {
 export type StaffRole = 'staffA' | 'staffB' | 'partTime' | 'remoteWork' | 'businessTrip';
 
 export interface StaffShift {
+    endDateOffset?: 0 | 1; // Explicit next-day end; legacy overnight is not inferred.
     empId: string;       // 員工編號（必填）
     name: string;        // 姓名（冗餘儲存，方便顯示）
     role: StaffRole;
@@ -114,9 +124,26 @@ export enum LeaveStatus {
     Pending = '待審核',
     Approved = '核准',
     Rejected = '駁回',
+    NeedsInfo = '待補件',
+    Cancelled = '已取消',
+    Superseded = '已取代',
 }
 
 export interface LeaveRequest {
+    schemaVersion?: 'case-leave-v1'|'leave-version-v1';
+    supersedesId?:string; supersededBy?:string;
+    attachmentPolicyVersion?:string; attachments?:{id:string;revision:number;sha256:string;mime:string;size:number}[];
+    leavePolicyAssessment?:{status:string;issues:string[];policyVersion?:string;reservedMinutes?:number};
+    caseId?: string;
+    explanationId?: string|null;
+    revision?: number;
+    requestedSpanMinutes?: number;
+    policyStatus?: 'needs-review';
+    reviewIssues?: string[];
+    applicationEvidence?: {version:'case-leave-v1';revisionId:string;sourceKey:string;requiresPayrollAllocation:true};
+    history?: {id:string;revision:number;actor:string;at:string;from:string|null;to:string;reason:string}[];
+
+    payrollAllocations?: { date: string; from: string; to: string; minutes: number }[]; // Reviewed working-time allocation, not elapsed duration
     id: string;
     empId: string;
     name: string;
@@ -136,6 +163,8 @@ export interface LeaveRequest {
 export type EmployeeStatus = '在職' | '離職' | '留停';
 
 export interface Employee {
+    accountKind?: 'system-account';
+    payrollReview?: PayrollReview;
     id: string;
     name: string;
     phone: string;
@@ -170,9 +199,22 @@ export interface SystemConfig {
 }
 
 // 補打卡申請
-export type MakeupRequestStatus = '待審核' | '核准' | '駁回';
+export type MakeupRequestStatus = '待審核' | '核准' | '駁回' | '待補件' | '已取消' | '已取代';
 
 export interface ClockMakeupRequest {
+    schemaVersion?: 'makeup-request-v1';
+    attachmentPolicyVersion?: string;
+    attachments?: {id:string;revision:number;sha256:string;mime:string;size:number}[];
+    revision?: number;
+    recordId?: string | null;
+    requestedClockInAt?: string | null;
+    requestedClockOutAt?: string | null;
+    supersedesRequestId?: string | null;
+    supersededByRequestId?: string;
+    returnReason?: string;
+    workflowPolicyStatus?: 'needs-configuration';
+    history?: {id:string;operationId:string;revision:number;actor:string;at:string;from:string|null;to:string;reason:string}[];
+
     id: string;
     empId: string;
     name: string;
@@ -342,29 +384,50 @@ export interface DashboardStats {
 }
 
 // 薪資明細
+export interface PayrollPreflightIssue {
+    code: 'PENDING_REQUEST' | 'REQUEST_STATUS_UNKNOWN' | 'SOURCE_UNAVAILABLE' | 'CALCULATION_REVIEW' | 'CALCULATION_UNAVAILABLE' | 'APPLICATION_UNVERIFIED' | 'CAPABILITY_MISSING' | 'CASE_UNRESOLVED';
+    severity: 'BLOCKED' | 'NEEDS_REVIEW';
+    source: string;
+    sourceId?: string;
+    message: string;
+}
+export interface PayrollPreflight {
+    version: 'preflight-v1';
+    status: 'BLOCKED' | 'NEEDS_REVIEW' | 'READY';
+    scope: 'existing-models';
+    trialStatus?: 'BLOCKED' | 'NEEDS_REVIEW' | 'READY';
+    issues: PayrollPreflightIssue[];
+    gaps: string[];
+}
 export interface SalaryDetail {
+    preflight?: PayrollPreflight;
+    calculationVersion?: string;
+    calculationStatus?: "ready" | "needs-review" | "locked" | "legacy-review";
+    reviewReasons?: string[];
+    knownWorkMinutes?: number;
+    policyVersion?: string;
     empId: string;
     name: string;
     position: '專責人員' | '兼職人員';
     yearMonth: string;
     // 出勤統計
     totalWorkDays: number;
-    totalWorkHours: number;
+    totalWorkHours: number | null;
     totalLeaveHours: number;
     leaveDetails: { type: string; hours: number }[];
-    overtimeHours: number;
+    overtimeHours: number | null;
     // 薪資項目
-    baseSalary: number;
-    overtimePay: number;
-    grossSalary: number;
+    baseSalary: number | null;
+    overtimePay: number | null;
+    grossSalary: number | null;
     // 扣除項目（勞基法）
-    laborInsurance: number;
-    healthInsurance: number;
-    laborPensionSelf: number;
-    leaveDeduction: number;
-    totalDeductions: number;
+    laborInsurance: number | null;
+    healthInsurance: number | null;
+    laborPensionSelf: number | null;
+    leaveDeduction: number | null;
+    totalDeductions: number | null;
     // 最終
-    netSalary: number;
+    netSalary: number | null;
 }
 
 export type LoginResult =
@@ -373,6 +436,7 @@ export type LoginResult =
 
 // 月結鎖定（Phase 6.3）
 export interface MonthLock {
+    payrollRunId?: string;
     yearMonth: string;          // "YYYY-MM"（同時也是文件 ID）
     lockedBy: string;           // empId
     lockedByName: string;       // 操作者姓名（冗餘儲存供顯示）
@@ -411,6 +475,7 @@ export interface ScheduleVersion {
 
 // 月結報表（Phase 8.4）
 export interface MonthlyReportData {
+    reviewRequired?: boolean;
     yearMonth: string;
     lock: MonthLock | null;
     summary: {
@@ -450,3 +515,53 @@ export interface MonthlyReportData {
         workDays: number;
     }[];
 }
+
+// No production defaults: the payroll reviewer must explicitly confirm a month.
+export interface PayrollReview {
+    participation?: 'system-account';
+    participationReason?: string;
+    scheduleExceptions?: { date: string; reason: string; sourceKey: string }[];
+    yearMonth: string;
+    reviewedBy: string;
+    reviewedAt: string;
+    policy: {
+        version: string;
+        hoursBasis: 'actual';
+        moneyDecimals: 0 | 2; // Explicit settlement rounding, not a statutory default
+        workDateRule: 'clock-in-date';
+        dailyRegularMinutes: number;
+        // This first implementation only supports explicitly reviewed regular days.
+        regularDates: string[];
+        overtimeTiers: { minutes: number; numerator: number; denominator: number }[];
+        hourlyLeavePaidFraction: Partial<Record<LeaveType, number>>;
+        monthlyLeaveDeductionFraction: Partial<Record<LeaveType, number>>;
+        monthlyHourlyDivisor?: number;
+    };
+    insurance: { labor: number; health: number; pensionSelf: number };
+}
+export interface PayrollRun {
+    id: string;
+    yearMonth: string;
+    createdAt: string;
+    calculationVersion: string;
+    salaries: SalaryDetail[];
+    inputHash: string;
+    // Source snapshot retained for reproducibility, without passwords or credentials.
+    inputs: { employees: unknown[]; schedules: ScheduleEvent[]; records: ClockRecord[]; leaves: LeaveRequest[] };
+}
+
+export type PayrollReviewEmployee = Pick<Employee, 'id' | 'name' | 'role' | 'position' | 'status' | 'hourlyRate' | 'monthlySalary' | 'hireDate' | 'resignDate' | 'accountKind' | 'payrollReview'> & { employeeSourceKey?: string };
+export interface PayrollReviewInputs {
+    employees: PayrollReviewEmployee[];
+    leaves: LeaveRequest[];
+    locked: boolean;
+    scheduleGaps: PayrollScheduleGap[];
+}
+export interface PayrollScheduleGap {
+    empId: string;
+    date: string;
+    sourceKey: string;
+    scheduledMinutes: number;
+    coveredMinutes: number;
+}
+export type PayrollReviewSubmission = Omit<PayrollReview, 'reviewedBy' | 'reviewedAt' | 'policy' | 'insurance'> & Partial<Pick<PayrollReview, 'policy' | 'insurance'>>;
