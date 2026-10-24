@@ -28,19 +28,37 @@ export const TERMINATION_ACTIONS=['get-termination-settlement-version','open-ter
 async function source(db:any,tx:any,empId:string,month:string,exitDate:string|null){
  const raw=await doc(db,tx,'employees',empId),[emp]=await loadMonthlyPayrollEmployees([raw],month,db,tx);
  const start=month+'-01',prior=new Date(Date.parse(start+'T00:00:00Z')-86400000).toISOString().slice(0,10),last=new Date(Date.UTC(+month.slice(0,4),+month.slice(5),0)).toISOString().slice(0,10);
- const cq=await tx.get(db.collection('clockRecords').where('empId','==',empId).where('date','>=',prior).where('date','<=',nextDate(last)));
- const cards=cq.docs.map((d:any)=>({...d.data(),id:d.id}));
+ // A date-range query omits missing/invalid work dates, even when their absolute
+ // timestamps touch this month. Inventory this employee only; unknown dates are
+ // retained in the source hash and remain blockers, never inferred away.
+ const cq=await tx.get(db.collection('clockRecords').where('empId','==',empId).limit(10001));
+ if(cq.size>10000)fail(409,'員工打卡來源清冊技術容量超限，需受控覆核');
+ const cards=cq.docs.map((d:any)=>({...d.data(),id:d.id})).filter((c:any)=>!validDate(c.date)||c.date>=prior&&c.date<=nextDate(last)).sort((a:any,b:any)=>a.id.localeCompare(b.id));
+ const datedCards=cards.filter((c:any)=>validDate(c.date));
  const leaves=(await rows(db,tx,'leaveRequests',empId)).filter((l:any)=>typeof l.startDate!=='string'||typeof l.endDate!=='string'||!validDate(l.startDate.slice(0,10))||!validDate(l.endDate.slice(0,10))||!Number.isFinite(Date.parse(l.startDate))||!Number.isFinite(Date.parse(l.endDate))||l.startDate.slice(0,10)<=nextDate(last)&&l.endDate.slice(0,10)>=prior);
  if(cards.length>1000||leaves.length>1000)fail(409,'月份來源技術容量超限，需受控覆核');
  const requests:PendingSources={terminationSettlementDrafts:[],terminationAdjustmentCases:[],compRequests:[],compSettlementTasks:[],overtimeRequests:[],anomalyExplanations:[],leaveRequests:leaves,makeupRequests:[],leaveOfAbsenceRequests:[],shiftSwapRequests:[]};
  for(const kind of ['compRequests','compSettlementTasks','overtimeRequests','anomalyExplanations','makeupRequests','leaveOfAbsenceRequests'] as const)requests[kind]=await rows(db,tx,kind,empId);
  for(const field of ['fromEmpId','toEmpId']){const q=await tx.get(db.collection('shiftSwapRequests').where(field,'==',empId));for(const d of q.docs)if(!requests.shiftSwapRequests.some(r=>r.id===d.id))requests.shiftSwapRequests.push({...d.data(),id:d.id});}
- const revisions=await rows(db,tx,'attendanceRevisions',empId),cases=await rows(db,tx,'attendanceCases',empId);
- const pending=pendingRequestIssues(month,empId,requests,cards,[],revisions).map(i=>i.message);
+ // Real revisions have recordId plus before/after.empId, not a root empId.
+ // Single-field recordId queries retain the complete selected card chains and
+ // avoid a full revision-collection scan or a new composite index.
+ const revisions:any[]=[];
+ for(let offset=0;offset<cards.length;offset+=30){
+  const ids=cards.slice(offset,offset+30).map((c:any)=>c.id);
+  const rq=await tx.get(db.collection('attendanceRevisions').where('recordId','in',ids).limit(1001-revisions.length));
+  revisions.push(...rq.docs.map((d:any)=>({...d.data(),id:d.id})));
+  if(revisions.length>1000)fail(409,'打卡更正來源鏈技術容量超限，需受控覆核');
+ }
+ revisions.sort((a:any,b:any)=>a.id.localeCompare(b.id));
+ const cases=await rows(db,tx,'attendanceCases',empId);
+ const pending=pendingRequestIssues(month,empId,requests,datedCards,[],revisions).map(i=>i.message);
+ for(const c of cards)if(!validDate(c.date))pending.push('打卡日期來源無效，不能假定不影響本月：'+c.id);
+ for(const r of revisions)if(r.after?.empId!==empId||r.before&&r.before.empId!==empId)pending.push('打卡更正來源鏈員工歸屬無效：'+r.id);
  for(const l of leaves)if(typeof l.startDate!=='string'||typeof l.endDate!=='string'||!validDate(l.startDate.slice(0,10))||!validDate(l.endDate.slice(0,10))||!Number.isFinite(Date.parse(l.startDate))||!Number.isFinite(Date.parse(l.endDate))||Date.parse(l.endDate)<=Date.parse(l.startDate))pending.push('假單期間來源無效，不能假定不影響本月：'+l.id);
  const fromMinute=Date.parse(start+'T00:00:00+08:00')/60000,toMinute=Date.parse(nextDate(last)+'T00:00:00+08:00')/60000;
  for(const c of cases){const w=c.observation?.window;if(!['resolved','cancelled'].includes(c.status)&&(!w||!Number.isFinite(w.start)||!Number.isFinite(w.end)||w.start<toMinute&&w.end>fromMinute))pending.push('出勤案件尚未完成覆核：'+c.id);}
- const trial=normalPayPreview(emp,month,cards,leaves,validLeaveAllocations,pending);
+ const trial=normalPayPreview(emp,month,datedCards,leaves,validLeaveAllocations,pending);
  const issues=trial.issues.filter(s=>!s.startsWith('離職當月日期與薪資須人工輸入'));
  const a=emp.employmentAuthority;
  if(!exitDate||!a||a.kind!=='effective-master'||!['active','loa'].includes(employmentStateOn(emp,exitDate))||employmentStateOn(emp,nextDate(exitDate))!=='not-employed')issues.push('人工離職日期未與已核任職時間軸一致；請先走薪資有效期主檔變更／雙人核定');

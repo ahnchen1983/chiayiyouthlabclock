@@ -565,3 +565,30 @@ describe('C2m actual Firestore manual termination',()=>{
  it('locked original has only one separate adjustment case under race and is never rewritten',async()=>{await seed();const original={lockedAt:'2026-09-01T00:00:00Z',lockedBy:'EMULATOR_ADMIN',payrollRunId:'original'};await db.doc('monthLocks/2026-08').set(original);await db.doc('payrollRuns/original').set({immutable:'synthetic-original'});expect((await call('save-termination-draft',payload())).statusCode).toBe(423);const res=await Promise.all([call('open-termination-adjustment',{...payload(),operationId:'adjust-a'}),call('open-termination-adjustment',{...payload(),operationId:'adjust-b'})]);expect(res.map(r=>r.statusCode).sort()).toEqual([200,409]);expect((await db.collection('terminationAdjustmentCases').get()).size).toBe(1);expect((await db.doc('monthLocks/2026-08').get()).data()).toEqual(original);expect((await db.doc('payrollRuns/original').get()).data()).toEqual({immutable:'synthetic-original'});expect((await db.collection('terminationSettlementVersions').get()).size).toBe(0);});
 });
 it('C2m real pending correction is a persistent approval blocker, not a manual override',async()=>{for(const [key,value] of terminationSeed())await db.doc(key).set(value);await db.doc('makeupRequests/TERM_PENDING').set({empId:'TERM',date:'2026-08-02',status:'待審核'});await db.doc('leaveRequests/TERM_INVALID').set({empId:'TERM',status:'核准',startDate:'invalid',endDate:'invalid'});const body={empId:'TERM',month:'2026-08',exitDate:'2026-08-15',expectedRevision:0,operationId:'draft',reason:'合成未核補卡來源檢查',manual:terminationManual()};const saved=await call('save-termination-draft',body);expect(saved.statusCode).toBe(200);const r=JSON.parse(saved.body);expect(r.manual.issues.some((s:string)=>s.includes('補卡'))).toBe(true);expect(r.manual.issues.some((s:string)=>s.includes('假單期間來源無效'))).toBe(true);await call('submit-termination-draft',{...body,draftId:r.id,expectedRevision:1,operationId:'submit'});vi.mocked(adminAuth.verifyIdToken).mockResolvedValue({uid:'TERM_REVIEWER'} as any);expect((await call('review-termination-draft',{...body,draftId:r.id,expectedRevision:2,operationId:'approve',mode:'approve'})).statusCode).toBe(409);expect((await db.collection('terminationSettlementVersions').get()).size).toBe(2);});
+
+describe('C2m independent source-completeness on real Firestore',()=>{
+ const seed=async()=>{for(const [key,value] of terminationSeed())await db.doc(key).set(value);};
+ const body=()=>({empId:'TERM',month:'2026-08',exitDate:'2026-08-15',expectedRevision:0,operationId:'independent-draft',reason:'合成獨立離職來源覆核',manual:terminationManual()});
+ it('a card missing work-date after submission invalidates the source hash and cannot be approved',async()=>{
+  await seed();const payload=body(),saved=await call('save-termination-draft',payload);expect(saved.statusCode,saved.body).toBe(200);const draft=JSON.parse(saved.body);
+  expect((await call('submit-termination-draft',{...payload,draftId:draft.id,expectedRevision:1,operationId:'independent-submit'})).statusCode).toBe(200);
+  await db.doc('clockRecords/TERM_UNKNOWN').set({empId:'TERM',clockInAt:'2026-08-02T09:00:00+08:00',clockOutAt:null,clockInTime:'09:00',clockOutTime:null});
+  const read=await call('get-termination-settlement',{empId:'TERM',month:'2026-08',exitDate:'2026-08-15'});expect(read.statusCode,read.body).toBe(200);const source=JSON.parse(read.body).source;
+  expect(source.version).not.toBe(draft.source.version);expect(source.issues.some((issue:string)=>issue.includes('打卡日期來源無效'))).toBe(true);
+  vi.mocked(adminAuth.verifyIdToken).mockResolvedValue({uid:'TERM_REVIEWER'} as any);
+  expect((await call('review-termination-draft',{...payload,draftId:draft.id,expectedRevision:2,operationId:'independent-approve',mode:'approve'})).statusCode).toBe(409);
+  expect((await db.doc('terminationSettlementDrafts/'+draft.id).get()).data()?.status).toBe('pending');expect((await db.collection('terminationSettlementVersions').get()).size).toBe(2);
+ });
+ it('real makeup and work-review APIs produce before/after-only revisions that C2m can verify',async()=>{
+  await seed();await db.doc('clockRecords/TERM_C').set({id:'TERM_C',empId:'TERM',name:'合成離職員工',date:'2026-08-02',clockInTime:'09:00',clockOutTime:'16:00',clockInAt:'2026-08-02T09:00:00+08:00',clockOutAt:'2026-08-02T16:00:00+08:00',workHours:null,status:'正常'});
+  await db.doc('makeupRequests/TERM_M').set({empId:'TERM',name:'合成離職員工',date:'2026-08-02',requestedClockOut:'17:00',reason:'合成核准補卡來源',status:'待審核'});
+  const applied=await call('approve-makeup-request',{requestId:'TERM_M',status:'核准'});expect(applied.statusCode,applied.body).toBe(200);
+  const reviewed=await call('update-clock-record',{recordId:'TERM_C',workIntervals:[{start:540,end:1020}]});expect(reviewed.statusCode,reviewed.body).toBe(200);
+  const revisions=await db.collection('attendanceRevisions').where('recordId','==','TERM_C').get();expect(revisions.size).toBe(2);for(const revision of revisions.docs){expect(revision.data()).not.toHaveProperty('empId');expect(revision.data().after.empId).toBe('TERM');}
+  const payload=body(),saved=await call('save-termination-draft',payload);expect(saved.statusCode,saved.body).toBe(200);const draft=JSON.parse(saved.body);expect(draft.manual.issues).toEqual([]);
+  const pending=await call('submit-termination-draft',{...payload,draftId:draft.id,expectedRevision:1,operationId:'independent-submit'});expect(pending.statusCode,pending.body).toBe(200);
+  vi.mocked(adminAuth.verifyIdToken).mockResolvedValue({uid:'TERM_REVIEWER'} as any);
+  const approved=await call('review-termination-draft',{...payload,draftId:draft.id,expectedRevision:2,operationId:'independent-approve',mode:'approve'});expect(approved.statusCode,approved.body).toBe(200);expect(JSON.parse(approved.body)).toMatchObject({status:'approved',formalEligibility:'BLOCKED',paymentStatus:'not-paid',applicationStatus:'not-applied'});
+  expect((await db.collection('payrollRuns').get()).size).toBe(0);
+ });
+});

@@ -50,6 +50,8 @@ afterEach(()=>vi.useRealTimers());
 
 
 import {terminationSeed,terminationManual} from './fixtures/terminationSettlement';
+import {editClock} from '../netlify/functions/utils/clockMutation';
+import {makeupSourceKey} from '../netlify/functions/utils/makeupEvidence';
 const asTerm=async(uid:string,action:string,data:any={})=>{vi.mocked(adminAuth.verifyIdToken).mockResolvedValue({uid} as any);return call(action,{empId:'TERM',month:'2026-08',...data});};
 const command=(extra:any={})=>({operationId:crypto.randomUUID(),reason:'合成離職逐項核對原因',expectedRevision:0,exitDate:'2026-08-15',manual:terminationManual(),...extra});
 const save=async(extra:any={})=>asTerm('ADMIN','save-termination-draft',command(extra));
@@ -80,3 +82,55 @@ it('pending correction or unresolved case cannot be approved as manual salary ev
 it('an earlier editor cannot approve after a later editor resaves the draft',async()=>{fake.data.set('employees/EDITOR3',{id:'EDITOR3',role:UserRole.SuperAdmin});const r=JSON.parse((await save()).body);const second=await asTerm('TERM_REVIEWER','save-termination-draft',command({draftId:r.id,expectedRevision:1}));expect(second.statusCode).toBe(200);const third=await asTerm('EDITOR3','save-termination-draft',command({draftId:r.id,expectedRevision:2}));expect(third.statusCode).toBe(200);const p=JSON.parse((await asTerm('EDITOR3','submit-termination-draft',{...command(),draftId:r.id,expectedRevision:3})).body);expect((await approve(p)).statusCode).toBe(403);});
 it('approved-looking leave with invalid dates stays unknown instead of disappearing from manual source checks',async()=>{fake.data.set('leaveRequests/INVALID',{empId:'TERM',status:'核准',startDate:'invalid',endDate:'invalid'});const saved=await save();expect(saved.statusCode).toBe(200);const r=JSON.parse(saved.body);expect(r.manual.issues.some((s:string)=>s.includes('假單期間來源無效'))).toBe(true);const p=JSON.parse((await submit(r)).body);expect((await approve(p)).statusCode).toBe(409);});
 it('historical version API exposes immutable before values with employee/month scope, never live recomputation',async()=>{const r=JSON.parse((await save()).body);const manual=terminationManual();manual.items[0].amount='14999.00';manual.items[4].amount='14999.00';expect((await save({draftId:r.id,expectedRevision:1,manual})).statusCode).toBe(200);const first=await asTerm('ADMIN','get-termination-settlement-version',{draftId:r.id,revision:1});expect(first.statusCode).toBe(200);expect(JSON.parse(first.body).manual.items[0].amount).toBe('15000.00');expect((await asTerm('TERM','get-termination-settlement-version',{draftId:r.id,revision:1})).statusCode).toBe(403);expect((await asTerm('ADMIN','get-termination-settlement-version',{draftId:r.id,revision:1,month:'2026-09'})).statusCode).toBe(403);});
+
+describe('C2m independent source-completeness regressions',()=>{
+ it.each([undefined,'invalid',20260802])('keeps same-employee malformed work-date %s unknown and blocks approval',async date=>{
+  fake.data.set('clockRecords/UNKNOWN_TERM',{empId:'TERM',...(date!==undefined?{date}:{}),clockInAt:'2026-08-02T09:00:00+08:00',clockOutAt:null,clockInTime:'09:00',clockOutTime:null});
+  const saved=await save();expect(saved.statusCode).toBe(200);const draft=JSON.parse(saved.body);expect(draft.manual.issues.some((issue:string)=>issue.includes('打卡日期來源無效'))).toBe(true);
+  const pending=JSON.parse((await submit(draft)).body);expect((await approve(pending)).statusCode).toBe(409);
+ });
+ it('does not omit an unknown-date card added after submission from the source version',async()=>{
+  const draft=JSON.parse((await save()).body),pending=JSON.parse((await submit(draft)).body);
+  fake.data.set('clockRecords/NEW_UNKNOWN',{empId:'TERM',clockInAt:'2026-08-02T09:00:00+08:00',clockInTime:'09:00',clockOutTime:null});
+  const read=await asTerm('ADMIN','get-termination-settlement',{exitDate:'2026-08-15'});expect(read.statusCode).toBe(200);expect(JSON.parse(read.body).source.version).not.toBe(pending.source.version);
+  expect((await approve(pending)).statusCode).toBe(409);expect(fake.data.get('terminationSettlementDrafts/'+draft.id).status).toBe('pending');
+ });
+ it('loads real recordId/before/after revision chains without a synthetic root empId',async()=>{
+  const at='2026-08-03T01:00:00.000Z',request:any={id:'TERM_M',empId:'TERM',date:'2026-08-02',requestedClockOut:'17:00',status:'核准',approver:'ADMIN',approvalDate:at};
+  const before:any={id:'TERM_C',empId:'TERM',date:'2026-08-02',clockInTime:'09:00',clockOutTime:'16:00',clockInAt:'2026-08-02T09:00:00+08:00',clockOutAt:'2026-08-02T16:00:00+08:00'};
+  const after:any=editClock(before,{clockOutTime:'17:00'},'ADMIN',at);after.attendanceRevisionId='TERM_R1';
+  const first={recordId:'TERM_C',before,after,parentRevisionId:null,requestId:'TERM_M',requestSourceKey:makeupSourceKey(request),editedBy:'ADMIN',editedAt:at};
+  request.appliedEvidence={version:'makeup-application-v1',revisionId:'TERM_R1',recordId:'TERM_C',requestSourceKey:makeupSourceKey(request)};
+  const current:any=editClock(after,{workIntervals:[{start:540,end:1020}]},'ADMIN',at);current.attendanceRevisionId='TERM_R2';
+  const second={recordId:'TERM_C',before:after,after:current,parentRevisionId:'TERM_R1',editedBy:'ADMIN',editedAt:at};
+  expect(hasAppliedMakeup(request,[current],[{...first,id:'TERM_R1'},{...second,id:'TERM_R2'}])).toBe(true);
+  fake.data.set('makeupRequests/TERM_M',request);fake.data.set('clockRecords/TERM_C',current);fake.data.set('attendanceRevisions/TERM_R1',first);fake.data.set('attendanceRevisions/TERM_R2',second);
+  // A different employee's old malformed revision must not enter this employee's source.
+  fake.data.set('attendanceRevisions/UNRELATED',{recordId:'OTHER_C',before:{empId:'OTHER'},after:{empId:'OTHER'}});
+  const saved=await save();expect(saved.statusCode).toBe(200);const draft=JSON.parse(saved.body);expect(draft.manual.issues).toEqual([]);
+  const pending=JSON.parse((await submit(draft)).body);expect((await approve(pending)).statusCode).toBe(200);
+  expect(fake.data.get('attendanceRevisions/TERM_R1')).not.toHaveProperty('empId');expect(fake.data.get('attendanceRevisions/TERM_R2')).not.toHaveProperty('empId');
+ });
+ it('retains relevant revision changes in the source version and bounds chain inventory atomically',async()=>{
+  const r=card('2026-08-02');r.empId='TERM';fake.data.set('clockRecords/TERM_C',r);
+  const source=JSON.parse((await asTerm('ADMIN','get-termination-settlement',{exitDate:'2026-08-15'})).body).source.version;
+  fake.data.set('attendanceRevisions/TERM_R',{recordId:'TERM_C',before:{empId:'TERM'},after:{empId:'TERM'},editedBy:'ADMIN',editedAt:'2026-08-03T01:00:00Z'});
+  const changed=JSON.parse((await asTerm('ADMIN','get-termination-settlement',{exitDate:'2026-08-15'})).body).source.version;expect(changed).not.toBe(source);
+  for(let n=0;n<1001;n++)fake.data.set('attendanceRevisions/LIMIT_'+n,{recordId:'TERM_C',before:{empId:'TERM'},after:{empId:'TERM'}});
+  expect((await save()).statusCode).toBe(409);expect([...fake.data.keys()].some(key=>key.startsWith('terminationSettlementDrafts/')||key.startsWith('terminationSettlementVersions/')||key.startsWith('terminationSettlementCommands/'))).toBe(false);
+ });
+ it('does not mistake unrelated older cards for this month while bounding the employee-only inventory',async()=>{
+  for(let n=0;n<1001;n++)fake.data.set('clockRecords/HISTORY_'+n,{empId:'TERM',date:'2025-01-01'});
+  fake.data.set('clockRecords/OTHER_UNKNOWN',{empId:'OTHER'});
+  const saved=await save();expect(saved.statusCode).toBe(200);expect(JSON.parse(saved.body).manual.issues).toEqual([]);
+  for(let n=1001;n<10001;n++)fake.data.set('clockRecords/HISTORY_'+n,{empId:'TERM',date:'2025-01-01'});
+  const before=[...fake.data.keys()].filter(key=>key.startsWith('terminationSettlement')).length;
+  expect((await save()).statusCode).toBe(409);expect([...fake.data.keys()].filter(key=>key.startsWith('terminationSettlement')).length).toBe(before);
+ });
+ it('does not trust selected revision evidence whose nested employee has changed',async()=>{
+  fake.data.set('clockRecords/TERM_C',{...card('2026-08-02'),empId:'TERM'});
+  fake.data.set('attendanceRevisions/CROSS_OWNER',{recordId:'TERM_C',before:{empId:'OTHER'},after:{empId:'TERM'}});
+  const saved=await save();expect(saved.statusCode).toBe(200);const draft=JSON.parse(saved.body);expect(draft.manual.issues.some((issue:string)=>issue.includes('來源鏈員工歸屬無效'))).toBe(true);
+  expect((await approve(JSON.parse((await submit(draft)).body))).statusCode).toBe(409);
+ });
+});
