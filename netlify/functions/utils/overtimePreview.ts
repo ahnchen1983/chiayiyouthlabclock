@@ -26,6 +26,7 @@ export function overtimePreview(days:NormalPayDay[],intervals:NormalPayInterval[
  if(intervals.some(i=>i.kind==='leave'))issues.push('假單12h合規分類／外勤來源專用投影待核；不得把假直接當actual');
  const input:OTInput={workdays:Array.isArray(config?.workdays)?config.workdays:[],wages:Array.isArray(config?.wages)?config.wages:[],weeks:Array.isArray(config?.weeks)?config.weeks:[],work,comp:[],compEvidenceComplete:false};
  for(const w of input.workdays){const d=days.find(d=>d.date===w?.date);if(d&&(d.dayType!==w.dayType||intervals.some(i=>i.workday?.id===w.id&&i.workday.date!==w.date)))issues.push('核定主檔日別／工日與加給範圍不一致');}
+ for(const w of input.workdays){const d=days.find(d=>d.date===w?.date);if(d?.policy&&w?.regime!==d.policy.workRegime)issues.push('日別加給工時制度與正常薪資政策不一致');}
  for(const wage of input.wages){if(days.some(d=>{const start=Date.parse(d.date+'T00:00:00+08:00')/60000;return wage?.start<start+1440&&wage?.end>start&&d.payBasis!==wage.payBasis;}))issues.push('工資來源薪制與有效主檔不一致');}
  let result:OTResult;try{result=calculateOvertime(input);}catch{result=calculateOvertime({workdays:[],work:[],wages:[],weeks:[],comp:[],compEvidenceComplete:false});issues.push('日別加給範圍資料格式無效，不能計為零');}
  result.issues=[...new Set([...result.issues,...issues,'跨月完整週工作來源、補休原日帳本逐段對帳與月／三月法遵尚未接入，不能正式計付'])];result.status='needs-review';

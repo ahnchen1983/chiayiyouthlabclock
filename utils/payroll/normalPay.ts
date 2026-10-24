@@ -5,6 +5,9 @@ export interface NormalPayPolicy {
  overtime?:{schemaVersion:'overtime-scope-v1';workdays:OTWorkday[];wages:OTWage[];weeks:OTWeek[]};
  version:string;status:'approved';approvedBy:string;approvedAt:string;
  dateRule:'taipei-calendar';employmentDates:'inclusive';restDays:'calendar-paid';dailyNormalMinutes:480;
+ // Statutory work regime from the approved policy source. Only standard-8-40 is
+ // implemented; monthly rostering alone never establishes a variable/84-1 regime.
+ workRegime?:'standard-8-40'|'variable'|'84-1'|'unknown';
  monthlyStrategy:'calendar-earned'|'calendar-base-minus-30-unpaid-days';
  fullMonth:'contract-amount';loa:{method:'daily-base-fraction';numerator:number;denominator:number};
  monthlyLeaveHourlyDivisor:string;leavePaidFractions:Record<string,{numerator:number;denominator:number}>;
@@ -44,6 +47,8 @@ export function calculateNormalPay(employeeId:string,month:string,days:NormalPay
  for(let n=1;n<=count;n++){
   const dkey=month+'-'+String(n).padStart(2,'0'),rows=days.filter(d=>d.date===dkey);if(rows.length!==1){invalid(dkey+' 有效主檔缺口或重疊');continue;}const d=rows[0],p=d.policy;
   if(!validPolicy(p)||typeof d.payVersion!=='string'||!d.payVersion||typeof d.policyId!=='string'||!d.policyId||!['normal','rest','regular-holiday','national-holiday','special'].includes(d.dayType)){invalid(dkey+' 正常薪資／折算／rounding政策尚未核定');continue;}
+  // Missing/unsupported regime keeps computing evidence below but can never be ready.
+  if(p.workRegime!=='standard-8-40')invalid(dkey+' 工時制度來源未核定或尚未支援（'+(p.workRegime||'未提供')+'）；固定8小時模型不能當正式結果');
   if(rounding&&JSON.stringify(rounding)!==JSON.stringify(p.rounding)){invalid('月份跨 rounding 政策，需明確分項結算規則');continue;}rounding=p.rounding;
   let rate:Rational;try{rate=decimal(d.amount);if(rate.n<0n)throw Error();}catch{invalid(dkey+' 薪額無效');continue;}
   if(!['active','loa','not-employed'].includes(d.employmentState)||!['monthly','hourly'].includes(d.payBasis)){invalid(dkey+' 薪制／雇用狀態待核');continue;}
