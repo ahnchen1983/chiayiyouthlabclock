@@ -513,6 +513,19 @@ chiayiyouthlabclock/
 
 文件 ID 為 empId。失敗達 5 次後 15 分鐘內拒絕登入；登入成功自動刪除此文件。
 
+#### `dayTypeDesignations` / `dayTypeCalendars` / `dayTypeCalendarHeads` — 個人例假／休息日（PR13，2026-10-25）
+
+公司確認例假與休息日由每人在「偏好設定」逐月指定。
+
+| Collection | 文件 ID | 內容 |
+|---|---|---|
+| `dayTypeDesignations` | `{empId}_{YYYY-MM}` | 員工送出（或管理者附原因代為補錄）的 `regularHolidays[]`、`restDays[]`、`warnings[]`、`status`（submitted／approved／returned）、`revision`、`history[]` |
+| `dayTypeCalendars` | `dtc_{hash}` | 核定後不可覆寫的日曆版本：`days{date: normal/rest/regular-holiday/national-holiday}`、`nationalHolidays[]`、`approvedBy/At`、`source`（指定版本與送出人）、`previousCalendarId` |
+| `dayTypeCalendarHeads` | `{empId}_{YYYY-MM}` | 該員該月目前生效的 `currentCalendarId` 與 `revision` |
+| `dayTypeDesignationCommands` | hash(uid, operationId) | 重播保護收據 |
+
+規則：同日不可兼為例假與休息日；國定假日與例假／休息日重疊時拒絕（需另行核定補假）；核定者不得是本人或送出者；核定須明確確認「其餘日期為一般工作日」，有法遵提醒（第36條每7日1例1休、連續工作超過6日）時須另確認已核對；鎖月拒絕（423）。薪資主檔期間的 `dayTypeCalendarId` 填 `personal-monthly` 時，`effectiveMaster` 逐月改讀 `dayTypeCalendarHeads/{empId}_{月}`，日曆 `yearMonth` 不符即視為未核定。未核定前日別為 `unknown`，不推定為一般日。
+
 #### `systemConfig` — 系統設定（v1.5 新增 / Phase 3.1）
 文件 ID `salary` 內含薪資相關費率與規則：
 | 欄位 | 型別 | 預設值 | 說明 |
@@ -669,6 +682,11 @@ chiayiyouthlabclock/
 | `claim-open-shift` | `shiftId` | `boolean` | 員工認領班次（Transaction） |
 | `release-open-shift` | `shiftId` | `boolean` | 員工釋出班次 |
 | `delete-open-shift` | `shiftId` | `boolean` | 刪除開放排班（限 Admin） |
+| **個人例假／休息日（PR13）** | | | |
+| `get-daytype-designation` | `yearMonth`, `empId?` | `{designation, calendar, headRevision, canReview}` | 本人或管理者讀取 |
+| `list-daytype-designations` | `yearMonth` | `{designations[]}` | 限 Admin／SuperAdmin |
+| `submit-daytype-designation` | `yearMonth`, `empId?`, `regularHolidays[]`, `restDays[]`, `expectedRevision`, `operationId`, `reason?` | 指定文件 | 本人送出；管理者代為補錄需原因 ≥5 字 |
+| `review-daytype-designation` | `yearMonth`, `empId`, `mode`(approve/return), `expectedRevision`, `operationId`, `reason`, `nationalHolidays?`, `confirmRemainingNormal`, `acknowledgeWarnings?` | 指定文件 | 另一位 Admin／SuperAdmin 核定，產生日曆版本 |
 
 ---
 

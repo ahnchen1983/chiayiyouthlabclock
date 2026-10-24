@@ -1,6 +1,7 @@
 import {TERMINATION_ACTIONS,handleTerminationAction} from './utils/terminationSettlement';
 import {employmentWindowStates} from '../../utils/employmentAuthority';
 import {effectiveMasterForMonth} from './utils/effectiveMaster';
+import {DAYTYPE_ACTIONS,handleDayTypeAction} from './utils/dayTypeDesignation';
 import {MASTER_ACTIONS,handleMasterAction} from './utils/masterWorkflow';
 import {COMP_ACTIONS,handleCompAction} from './utils/compWorkflow';
 import {foldCompLedger} from './utils/compLedger';
@@ -791,6 +792,7 @@ export const handler: Handler = async (event) => {
     try {
         if(TERMINATION_ACTIONS.includes(action as any))return ok(await handleTerminationAction(db,uid,action,data));
         if(MASTER_ACTIONS.includes(action as any))return ok(await handleMasterAction(db,uid,action,data));
+        if(DAYTYPE_ACTIONS.includes(action as any))return ok(await handleDayTypeAction(db,uid,action,data));
         if(COMP_ACTIONS.includes(action as any))return ok(await handleCompAction(db,uid,action,data));
         if(OVERTIME_ACTIONS.includes(action as any))return ok(await handleOvertimeAction(db,uid,action,data));
         if(LEAVE_LIFECYCLE_ACTIONS.includes(action as any)) return ok(await handleLeaveLifecycle(db,uid,action,data));

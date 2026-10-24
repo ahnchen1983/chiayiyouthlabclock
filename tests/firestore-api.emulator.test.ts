@@ -592,3 +592,17 @@ describe('C2m independent source-completeness on real Firestore',()=>{
   expect((await db.collection('payrollRuns').get()).size).toBe(0);
  });
 });
+describe('personal 例假／休息日 designation on real Firestore',()=>{
+ const body=(extra:any={})=>({yearMonth:'2026-08',regularHolidays:['2026-08-02','2026-08-09','2026-08-16','2026-08-23','2026-08-30'],restDays:['2026-08-01','2026-08-08','2026-08-15','2026-08-22','2026-08-29'],expectedRevision:0,operationId:'emu-daytype-submit',...extra});
+ it('employee submit and different-admin approval create one immutable calendar version atomically',async()=>{await db.collection('employees').doc(employee.id).update({role:UserRole.Employee});
+  const s=await call('submit-daytype-designation',body(),'synthetic-employee');expect(s.statusCode,s.body).toBe(200);
+  const replay=await call('submit-daytype-designation',body(),'synthetic-employee');expect(JSON.parse(replay.body).revision).toBe(1);
+  const self=await call('review-daytype-designation',{yearMonth:'2026-08',empId:employee.id,expectedRevision:1,operationId:'emu-self',mode:'approve',reason:'自我核定測試',confirmRemainingNormal:true},'synthetic-employee');expect(self.statusCode).toBe(403);
+  const a=await call('review-daytype-designation',{yearMonth:'2026-08',empId:employee.id,expectedRevision:1,operationId:'emu-approve',mode:'approve',reason:'合成核定原因',confirmRemainingNormal:true});expect(a.statusCode,a.body).toBe(200);
+  const calendars=await db.collection('dayTypeCalendars').get();expect(calendars.size).toBe(1);const c=calendars.docs[0].data();expect(c.days['2026-08-02']).toBe('regular-holiday');expect(c.approvedBy).toBe('EMULATOR_ADMIN');
+  expect((await db.doc(`dayTypeCalendarHeads/${employee.id}_2026-08`).get()).data()?.currentCalendarId).toBe(calendars.docs[0].id);
+  await db.collection('monthLocks').doc('2026-08').set({yearMonth:'2026-08',lockedAt:'2026-09-05T00:00:00Z',lockedBy:'EMULATOR_ADMIN'});
+  const locked=await call('submit-daytype-designation',body({expectedRevision:2,operationId:'emu-after-lock'}),'synthetic-employee');expect(locked.statusCode).toBe(423);
+  expect((await db.collection('dayTypeCalendars').get()).size).toBe(1);
+ });
+});
