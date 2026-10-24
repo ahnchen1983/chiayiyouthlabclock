@@ -34,6 +34,15 @@ const proof=(p:any)=>p&&text(p.version)&&text(p.reviewedBy)&&text(p.reviewedAt)&
 const span=(p:any)=>p&&Number.isSafeInteger(p.start)&&Number.isSafeInteger(p.end)&&p.end>p.start;
 const midnight=(d:string)=>Date.parse(d+'T00:00:00+08:00')/60000;
 const duration=(a:Array<{start:number;end:number}>)=>{let stop=-Infinity,n=0;for(const x of [...a].sort((x,y)=>x.start-y.start)){n+=Math.max(0,x.end-Math.max(stop,x.start));stop=Math.max(stop,x.end);}return n;};
+const wageFor=(wages:OTWage[],start:number,end:number):{basis:OTWage|null;rate:Rational|null}=>{
+ const wage=wages.filter(w=>span(w)&&w.start<=start&&w.end>=end);let basis:OTWage|null=null,rate:Rational|null=null;
+ if(wage.length===1&&proof(wage[0])&&text(wage[0].id)&&wage[0].componentsComplete&&Array.isArray(wage[0].components)&&wage[0].components.length&&['monthly','hourly'].includes(wage[0].payBasis)){
+  basis=wage[0];try{const codes=new Set<string>();const components=basis.components.map(c=>{if(!text(c.code)||!text(c.sourceId)||codes.has(c.code))throw Error();codes.add(c.code);const v=decimal(c.amount);if(v.n<0n)throw Error();return v;});rate=sum(components);if(rate.n<=0n)throw Error();if(basis.payBasis==='monthly'){if(!basis.monthly240Applicable)throw Error();rate=mul(rate,rational(1n,240n));}}catch{rate=null;}
+ }
+ return {basis,rate};
+};
+// Sort each source tuple once, so the parallel arrays retain ID/version pairing.
+const sourceRefs=(sources:OTWork[])=>sources.map(w=>({id:w.id,version:w.sourceVersion})).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:a.version<b.version?-1:a.version>b.version?1:0);
 export function calculateOvertime(input:OTInput):OTResult {
  const issues=new Set<string>(),compliance=new Set<string>(),lines:OTLine[]=[],values:Rational[]=[],weekNormalMinutes:Record<string,number>={};
  let actualWorkMinutes=0,personalLeaveComplianceMinutes=0,statutoryComplianceMinutes=0,normalMinutes=0,contractExtraMinutes=0;
@@ -61,25 +70,29 @@ export function calculateOvertime(input:OTInput):OTResult {
   if(['rest','national-holiday'].includes(day.dayType)&&minutes&&day.holidayConsent!=='confirmed')compliance.add(day.id+':假日出勤同意證據缺失；給付不因此歸零');
   const n=day.dayType==='normal'?Math.min(480,minutes):0;normalMinutes+=n;contractExtraMinutes+=day.dayType==='normal'?Math.max(0,n-day.contractMinutes):0;weekNormalMinutes[day.weekId]=(weekNormalMinutes[day.weekId]||0)+n;
   const cuts=[...new Set(work.flatMap(w=>[w.start,w.end]).concat(input.wages.filter(span).flatMap(w=>[w.start,w.end])))].sort((a,b)=>a-b);
-  let used=0,holidayDayPaid=false;const holidayRates=new Set<string>();
-  for(let k=0;k<cuts.length-1;k++){
-   const start=cuts[k],end=cuts[k+1],sources=work.filter(w=>w.start<end&&w.end>start);if(!sources.length)continue;
-   const wage=input.wages.filter(w=>span(w)&&w.start<=start&&w.end>=end);let basis:OTWage|null=null,rate:Rational|null=null;
-   if(wage.length===1&&proof(wage[0])&&text(wage[0].id)&&wage[0].componentsComplete&&Array.isArray(wage[0].components)&&wage[0].components.length&&['monthly','hourly'].includes(wage[0].payBasis)){
-    basis=wage[0];try{const codes=new Set<string>();const components=basis.components.map(c=>{if(!text(c.code)||!text(c.sourceId)||codes.has(c.code))throw Error();codes.add(c.code);const v=decimal(c.amount);if(v.n<0n)throw Error();return v;});rate=sum(components);if(rate.n<=0n)throw Error();if(basis.payBasis==='monthly'){if(!basis.monthly240Applicable)throw Error();rate=mul(rate,rational(1n,240n));}}catch{rate=null;}
-   }
-   if(rate&&basis?.payBasis==='monthly'&&['national-holiday','regular-holiday'].includes(day.dayType)){holidayRates.add(JSON.stringify(evidence(rate)));if(holidayRates.size>1)problem(day.id+':同一假日跨工資基礎，整日加給基礎須另核，不以首段自動定案');}
+  const parts=cuts.slice(0,-1).map((start,k)=>{const end=cuts[k+1];return {start,end,sources:work.filter(w=>w.start<end&&w.end>start),...wageFor(input.wages,start,end)};}).filter(p=>p.sources.length);
+  const emit=(from:number,to:number,kind:string,mult:Rational|null,rate:Rational|null,basis:OTWage|null,sources:OTWork[],paidMinutes=to-from)=>{const value=rate&&mult?mul(mul(rate,mult),rational(BigInt(paidMinutes),60n)):null,refs=sourceRefs(sources);if(value)values.push(value);lines.push({workdayId:day.id,date:day.date,dayType:day.dayType,start:from,end:to,minutes:to-from,kind,basisId:basis?.id||null,basisVersion:basis?.version||null,hourlyBasis:rate?evidence(rate):null,multiplier:mult?evidence(mult):null,exact:value?evidence(value):null,sourceIds:refs.map(r=>r.id),sourceVersions:refs.map(r=>r.version)});};
+  // A whole-day addition cannot take its basis from the first work segment.
+  // Check every worked segment before emitting it, including gaps, overlapping
+  // wage sources and switches between monthly and hourly pay. Known segment OT
+  // remains separate even when the whole-day addition has no established basis.
+  if(['national-holiday','regular-holiday'].includes(day.dayType)&&parts.some(p=>input.wages.some(w=>span(w)&&w.payBasis==='monthly'&&w.start<p.end&&w.end>p.start))){
+   const first=parts[0],rate=first.rate;
+   const sameMonthlyRate=!!rate&&parts.every(p=>p.basis?.payBasis==='monthly'&&!!p.rate&&p.rate.n===rate.n&&p.rate.d===rate.d);
+   if(!sameMonthlyRate)problem(day.id+':同一假日整日加給基礎不完整或跨工資基礎，須另核，不以首段自動定案');
+   emit(first.start,first.start,'monthly-holiday-additional-day',rational(1n),sameMonthlyRate?rate:null,sameMonthlyRate?first.basis:null,work,480);
+  }
+  let used=0;
+  for(const {start,end,sources,basis,rate} of parts){
    if(!rate)problem(day.id+':完整正常工資組成／有效薪制／240適用證據缺失或重疊');
-   const emit=(from:number,to:number,kind:string,mult:Rational|null,paidMinutes=to-from)=>{const value=rate&&mult?mul(mul(rate,mult),rational(BigInt(paidMinutes),60n)):null;if(value)values.push(value);lines.push({workdayId:day.id,date:day.date,dayType:day.dayType,start:from,end:to,minutes:to-from,kind,basisId:basis?.id||null,basisVersion:basis?.version||null,hourlyBasis:rate?evidence(rate):null,multiplier:mult?evidence(mult):null,exact:value?evidence(value):null,sourceIds:sources.map(w=>w.id).sort(),sourceVersions:sources.map(w=>w.sourceVersion).sort()});};
    let cursor=start;
    while(cursor<end){
     let limit:number,mult:Rational|null,kind:string;
     if(day.dayType==='normal'){limit=used<480?480:used<600?600:used<720?720:Infinity;mult=used<480?rational(0n):used<600?rational(4n,3n):used<720?rational(5n,3n):null;kind=used<480?'normal-paid-separately':'weekday-overtime';}
     else if(day.dayType==='rest'){limit=used<120?120:used<480?480:used<720?720:Infinity;mult=used<120?rational(4n,3n):used<480?rational(5n,3n):used<720?rational(8n,3n):null;kind='rest-day-additional';}
     else {limit=used<480?480:used<600?600:used<720?720:Infinity;kind='holiday-work';mult=used<480?(basis?.payBasis==='monthly'?rational(0n):rational(2n)):(day.dayType==='regular-holiday'?null:used<600?rational(4n,3n):used<720?rational(5n,3n):null);
-     if(basis?.payBasis==='monthly'&&!holidayDayPaid){emit(cursor,cursor,'monthly-holiday-additional-day',rational(1n),480);holidayDayPaid=true;}
     }
-    const take=Math.min(end-cursor,limit-used);if(mult===null)problem(day.id+':超出已實作給付級距；已核工時保留，給付不可當0');emit(cursor,cursor+take,kind,mult);cursor+=take;used+=take;
+    const take=Math.min(end-cursor,limit-used);if(mult===null)problem(day.id+':超出已實作給付級距；已核工時保留，給付不可當0');emit(cursor,cursor+take,kind,mult,rate,basis,sources);cursor+=take;used+=take;
    }
   }
  }
