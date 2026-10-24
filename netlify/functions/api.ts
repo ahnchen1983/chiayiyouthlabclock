@@ -1,3 +1,5 @@
+import { makeupSourceKey } from './utils/makeupEvidence';
+import { evaluatePayrollMonth, assertPayrollReady, pendingRequestIssues, requestEmployeeIds, type PendingSources, type RequestKind } from './utils/payrollPreflight';
 import { validLeaveAllocations, getScheduleReviewGaps } from './utils/payroll';
 import { validatePayrollReview, payrollReviewFields } from './utils/payrollReviewValidation';
 import { loadMonthlyPayrollEmployees, makeStoredPayrollReview, payrollReviewDocumentId, employeePayrollSourceKey } from './utils/payrollReviewStorage';
@@ -621,6 +623,42 @@ const displayAttendance = async (records: ClockRecord[], month: string): Promise
 const employeeInMonth = (e: any, month: string): boolean => e.accountKind !== 'system-account' && !(e.payrollReview?.yearMonth === month && e.payrollReview?.participation === 'system-account' && e.payrollReview?.participationReason?.trim() && e.payrollReview?.reviewedBy && e.payrollReview?.reviewedAt) && (!e.hireDate || e.hireDate.slice(0, 7) <= month) && (!e.resignDate || e.resignDate.slice(0, 7) >= month);
 const payrollEmployee = (e: any) => ({ id: e.id, accountKind: e.accountKind || null, name: e.name, role: e.role ?? null, position: e.position, status: e.status,
     hourlyRate: e.hourlyRate ?? null, monthlySalary: e.monthlySalary ?? null, hireDate: e.hireDate || '', resignDate: e.resignDate || '', leaveOfAbsenceStart: e.leaveOfAbsenceStart || '', leaveOfAbsenceEnd: e.leaveOfAbsenceEnd || '', payrollReview: payrollReviewFields(e.payrollReview) });
+const pendingCollections: RequestKind[] = ['leaveRequests', 'makeupRequests', 'leaveOfAbsenceRequests', 'shiftSwapRequests'];
+const readPendingSources = async (tx?: any): Promise<PendingSources> => {
+    const result = {} as PendingSources;
+    // Sequential transaction queries: collection reads also detect changes to request status.
+    for (const name of pendingCollections) {
+        const ref = db.collection(name), snap = tx ? await tx.get(ref) : await ref.get();
+        result[name] = snap.docs.map(d => ({ ...d.data(), id: d.id }));
+    }
+    return result;
+};
+
+// Submission and settlement share the revision gate. A new pending request can
+// neither slip past a concurrent lock nor retroactively affect an already locked run.
+const createPendingPayrollRequest = async (kind: RequestKind, value: any, ref = db.collection(kind).doc()) => {
+    await runPayrollMutation(db, [], async tx => {
+        const locks = await tx.get(db.collection('monthLocks'));
+        const cards = await tx.get(db.collection('clockRecords'));
+        const days = await tx.get(db.collection('dailySchedule'));
+        const records = cards.docs.map(d => ({ ...d.data(), id: d.id } as ClockRecord));
+        const schedules = days.docs.map(d => normalizeScheduleDoc(d.data(), d.id, ''));
+        const request = { ...value, id: ref.id };
+        const sources: PendingSources = { leaveRequests: [], makeupRequests: [], leaveOfAbsenceRequests: [], shiftSwapRequests: [] };
+        sources[kind] = [request];
+        for (const lock of locks.docs) {
+            if (!isMonthLocked(lock.data())) continue;
+            for (const empId of requestEmployeeIds(kind, request)) {
+                if (pendingRequestIssues(lock.id, empId, sources, records, schedules).length) {
+                    const error: any = new Error(`${lock.id} 月結已鎖定，請走差額覆核`); error.statusCode = 423; throw error;
+                }
+            }
+        }
+        tx.set(ref, value);
+    });
+    return ref;
+};
+
 const readSalaryMonth = async (month: string): Promise<SalaryDetail[]> => {
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month || '')) throw new Error('月份無效');
     const lock = await getMonthLock(month);
@@ -630,8 +668,12 @@ const readSalaryMonth = async (month: string): Promise<SalaryDetail[]> => {
     }
     const [schedules, employees, cards, leaves] = await Promise.all([getMonthlyDailySchedule(month), db.collection('employees').get(), db.collection('clockRecords').get(), db.collection('leaveRequests').get()]);
     const reviewedEmployees = await loadMonthlyPayrollEmployees(employees.docs.map(d => ({ ...d.data(), id: d.id })), month, db);
-    const salaries = reviewedEmployees.filter(e => employeeInMonth(e, month)).map(e => calculateSalaryForEmployee(e, month, schedules,
-        cards.docs.map(d => ({ ...d.data(), id: d.id } as ClockRecord)), leaves.docs.map(d => ({ ...d.data(), id: d.id } as LeaveRequest))));
+    const requests = await readPendingSources();
+    const revisionSnap = await db.collection('attendanceRevisions').get();
+    const result = evaluatePayrollMonth({ month, employees: reviewedEmployees.filter(e => employeeInMonth(e, month)), schedules,
+        records: cards.docs.map(d => ({ ...d.data(), id: d.id } as ClockRecord)),
+        leaves: leaves.docs.map(d => ({ ...d.data(), id: d.id } as LeaveRequest)), requests, revisions: revisionSnap.docs.map(d => ({ ...d.data(), id: d.id })) });
+    const salaries = result.salaries;
     return selectSalaryResults(salaries, lock);
 };
 
@@ -927,7 +969,7 @@ export const handler: Handler = async (event) => {
                         return fail(400, `${data.leaveType}剩餘 ${bal.remainingHours} 小時，不足以申請 ${hours} 小時`);
                     }
                 }
-                await db.collection('leaveRequests').add({
+                await createPendingPayrollRequest('leaveRequests', {
                     empId: uid, name, hours,
                     leaveType: data.leaveType,
                     startDate: data.startDate,
@@ -1402,7 +1444,11 @@ export const handler: Handler = async (event) => {
                     const records = selectPayrollClockEvidence(clockSnap.docs.map(d => ({ ...d.data(), id: d.id } as ClockRecord)), yearMonth, employees.map(e => e.id));
                     const leaves = selectPayrollLeaveEvidence(leaveSnap.docs.map(d => ({ ...d.data(), id: d.id } as LeaveRequest)), yearMonth, employees.map(e => e.id));
                     const schedules = scheduleSnap.docs.filter(d => d.id.startsWith(yearMonth)).map(d => normalizeScheduleDoc(d.data(), d.id, ''));
-                    const salaries = employees.map(e => calculateSalaryForEmployee(e, yearMonth, schedules, records, leaves));
+                    const requests = await readPendingSources(tx);
+                    const revisionSnap = await tx.get(db.collection('attendanceRevisions'));
+                    const preflight = evaluatePayrollMonth({ month: yearMonth, employees, schedules, records, leaves, requests, revisions: revisionSnap.docs.map(d => ({ ...d.data(), id: d.id })) });
+                    assertPayrollReady(preflight);
+                    const salaries = preflight.salaries;
                     const createdAt = new Date().toISOString();
                     const run = makePayrollRun(runRef.id, yearMonth, createdAt, salaries, { employees, schedules, records, leaves });
                     // Firestore documents have a size limit; fail before writing, never partially lock.
@@ -1599,7 +1645,7 @@ export const handler: Handler = async (event) => {
                     status: 'awaiting-peer',
                     createdAt: new Date().toISOString(),
                 };
-                await docRef.set(request);
+                await createPendingPayrollRequest('shiftSwapRequests', request, docRef);
                 await writeNotification(toEmpId, 'shift-swap-requested', '新的換班確認', `${fromName} 想與你交換 ${fromDate} 與 ${toDate} 的班次`);
                 await writeAuditLog(uid, '提交換班申請', docRef.id, `${fromName} ${fromDate}[${fromShiftIndex}] ⇄ ${toName} ${toDate}[${toShiftIndex}]`);
                 return ok(request);
@@ -1769,7 +1815,7 @@ export const handler: Handler = async (event) => {
                     requestDate: new Date().toISOString(),
                     status: '待審核',
                 };
-                const refNew = await db.collection('leaveOfAbsenceRequests').add(reqDoc);
+                const refNew = await createPendingPayrollRequest('leaveOfAbsenceRequests', reqDoc);
 
                 // 通知系統管理員（單一 ADMIN；廣播改進列為 follow-up）
                 await writeNotification('ADMIN', 'loa-submitted', '新的留停申請', `${emp.name} 申請留停 ${startDate}${endDate ? ` ~ ${endDate}` : ' 起'}`);
@@ -1862,8 +1908,10 @@ export const handler: Handler = async (event) => {
                     const before = { id: snap.id, ...snap.data() } as ClockRecord;
                     if (clockSourceKey(before) !== clockSourceKey(orig)) throw new Error('打卡已更新，請重新載入');
                     const after = editClock(before, data, uid, new Date().toISOString());
+                    const revisionRef = db.collection('attendanceRevisions').doc();
+                    after.attendanceRevisionId = revisionRef.id;
                     tx.set(ref, after);
-                    tx.create(db.collection('attendanceRevisions').doc(), { recordId: ref.id, before, after, editedBy: uid, editedAt: after.editedAt });
+                    tx.create(revisionRef, { recordId: ref.id, before, after, parentRevisionId: before.attendanceRevisionId || null, editedBy: uid, editedAt: after.editedAt });
                 });
                 return ok(true);
             }
@@ -1890,7 +1938,7 @@ export const handler: Handler = async (event) => {
                     status: '待審核',
                     requestDate: new Date().toISOString(),
                 };
-                const refNew = await db.collection('makeupRequests').add(reqDoc);
+                const refNew = await createPendingPayrollRequest('makeupRequests', reqDoc);
                 return ok({ id: refNew.id, ...reqDoc });
             }
 
@@ -1920,6 +1968,8 @@ export const handler: Handler = async (event) => {
                     const req = snap.data()!;
                     if (req.status === data.status) return false;
                     if (req.status !== '待審核') throw new Error('申請已審核，請另建更正申請');
+                    let appliedEvidence: any;
+                    const approvedAt = new Date().toISOString();
                     if (data.status === '核准') {
                         const cards = await tx.get(db.collection('clockRecords').where('empId', '==', req.empId).where('date', '==', req.date));
                         const selected = req.recordId ? cards.docs.find(d => d.id === req.recordId) : (cards.docs.length === 1 ? cards.docs[0] : undefined);
@@ -1934,11 +1984,15 @@ export const handler: Handler = async (event) => {
                         if (req.requestedClockOutAt) patch.clockOutAt = req.requestedClockOutAt;
                         else if (req.requestedClockOut) patch.clockOutTime = req.requestedClockOut;
                         const empty = { id: ref.id, empId: req.empId, name: req.name, date: req.date, clockInTime: null, clockOutTime: null, workHours: null, status: '異常', source: 'makeup', verificationMethod: 'IP', verificationData: 'makeup' } as ClockRecord;
-                        const after = editClock(before || empty, patch, uid, new Date().toISOString());
+                        const after = editClock(before || empty, patch, uid, approvedAt);
+                        const revisionRef = db.collection('attendanceRevisions').doc();
+                        after.attendanceRevisionId = revisionRef.id;
+                        const requestSourceKey = makeupSourceKey(req);
+                        appliedEvidence = { version: 'makeup-application-v1', revisionId: revisionRef.id, recordId: ref.id, requestSourceKey };
                         tx.set(ref, after);
-                        tx.create(db.collection('attendanceRevisions').doc(), { recordId: ref.id, before, after, requestId: data.requestId, editedBy: uid });
+                        tx.create(revisionRef, { recordId: ref.id, before, after, parentRevisionId: before?.attendanceRevisionId || null, requestId: data.requestId, requestSourceKey, editedBy: uid, editedAt: approvedAt });
                     }
-                    tx.update(reqRef, { status: data.status, approver: uid, approvalDate: new Date().toISOString(), rejectReason: data.rejectReason || '' });
+                    tx.update(reqRef, { status: data.status, approver: uid, approvalDate: approvedAt, ...(appliedEvidence ? { appliedEvidence } : {}), rejectReason: data.rejectReason || '' });
                     return true;
                 };
                 let changed: boolean;

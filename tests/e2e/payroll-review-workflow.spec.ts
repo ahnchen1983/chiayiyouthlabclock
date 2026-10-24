@@ -161,3 +161,26 @@ test('same-page settlement immediately makes the mounted review form read-only',
     await expect(page.getByLabel('政策版本／依據')).toBeDisabled();
     await expect(page.getByRole('button', { name: '儲存計薪覆核', exact: true })).toBeDisabled();
 });
+
+test('pending resolution restores trial completeness but formal settlement stays blocked', async ({ page }) => {
+    await setup(page);
+    let blocked = true;
+    await page.route('**/.netlify/functions/api', async route => {
+        const body = route.request().postDataJSON();
+        if (body.action !== 'get-all-salary-details') return route.fallback();
+        return route.fulfill({ json: [{ ...readySalary,
+            calculationStatus: blocked ? 'needs-review' : 'ready',
+            reviewReasons: blocked ? ['補卡 SYNTH-PENDING 待處理，不能月結'] : [],
+            preflight: { status: 'BLOCKED', trialStatus: blocked ? 'BLOCKED' : 'READY', scope: 'existing-models', version: 'preflight-v1', issues: [], gaps: ['OT_COMP_REQUEST_MODEL'] },
+        }] });
+    });
+    await page.getByLabel('薪資月份').fill('2026-05');
+    await expect(page.getByRole('status').filter({ hasText: '月結預檢：BLOCKED' })).toBeVisible();
+    await expect(page.getByText('補卡 SYNTH-PENDING 待處理，不能月結', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: /結算並鎖定/ })).toBeDisabled();
+    blocked = false;
+    await page.getByLabel('薪資月份').fill(month);
+    await expect(page.getByRole('status').filter({ hasText: '試算完整度：READY' })).toBeVisible();
+    await expect(page.getByRole('button', { name: /結算並鎖定/ })).toBeDisabled();
+    await expect(page.getByText(/READY 不代表已核准正式發薪/)).toBeVisible();
+});

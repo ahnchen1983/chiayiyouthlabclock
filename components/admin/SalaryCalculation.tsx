@@ -210,7 +210,7 @@ const SalaryCalculation: React.FC = () => {
     useEffect(() => { setSalaries([]); setMonthLock(null); setSelectedSalary(null); fetchData().catch(() => {}); }, [fetchData]);
 
     const handleLock = async () => {
-        if (!salaries.length || salaries.some(s => s.calculationStatus !== 'ready')) { alert('請先完成全部薪資覆核'); return; }
+        if (!salaries.length || salaries.some(s => s.calculationStatus !== 'ready' || (s.preflight && s.preflight.status !== 'READY'))) { alert('請先完成全部薪資覆核'); return; }
         const totalGrossNow = salaries.reduce((s, x) => s + x.grossSalary, 0);
         const confirmed = window.confirm(
             `確定要結算並鎖定 ${month}?\n\n` +
@@ -302,7 +302,7 @@ const SalaryCalculation: React.FC = () => {
                     {isSuperAdmin && !isLocked && salaries.length > 0 && (
                         <button
                             onClick={handleLock}
-                            disabled={lockBusy || reviewBusy || loading || salaries.some(s => s.calculationStatus !== 'ready')}
+                            disabled={lockBusy || reviewBusy || loading || salaries.some(s => s.calculationStatus !== 'ready' || (s.preflight && s.preflight.status !== 'READY'))}
                             className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 transition-colors"
                         >
                             🔐 結算並鎖定

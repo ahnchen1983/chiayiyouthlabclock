@@ -20,6 +20,7 @@ export interface ClockStatus {
 export type ClockRecordStatus = '正常' | '遲到' | '早退' | '遲到+早退' | '異常' | '加班';
 
 export interface ClockRecord {
+  attendanceRevisionId?: string;
   workIntervals?: { start: number; end: number }[];
   workReview?: { sourceKey: string; reviewedBy: string; reviewedAt: string };
   clockInAt?: string | null;
@@ -354,7 +355,23 @@ export interface DashboardStats {
 }
 
 // 薪資明細
+export interface PayrollPreflightIssue {
+    code: 'PENDING_REQUEST' | 'REQUEST_STATUS_UNKNOWN' | 'SOURCE_UNAVAILABLE' | 'CALCULATION_REVIEW' | 'CALCULATION_UNAVAILABLE' | 'APPLICATION_UNVERIFIED' | 'CAPABILITY_MISSING';
+    severity: 'BLOCKED' | 'NEEDS_REVIEW';
+    source: string;
+    sourceId?: string;
+    message: string;
+}
+export interface PayrollPreflight {
+    version: 'preflight-v1';
+    status: 'BLOCKED' | 'NEEDS_REVIEW' | 'READY';
+    scope: 'existing-models';
+    trialStatus?: 'BLOCKED' | 'NEEDS_REVIEW' | 'READY';
+    issues: PayrollPreflightIssue[];
+    gaps: string[];
+}
 export interface SalaryDetail {
+    preflight?: PayrollPreflight;
     calculationVersion?: string;
     calculationStatus?: "ready" | "needs-review" | "locked" | "legacy-review";
     reviewReasons?: string[];

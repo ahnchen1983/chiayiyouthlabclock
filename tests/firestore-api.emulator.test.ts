@@ -1,3 +1,11 @@
+// Snapshot transaction contract tests isolate formal eligibility below. Separate
+// unmocked eligibility regressions assert that production lock-month always blocks.
+vi.mock('../netlify/functions/utils/payrollPreflight', async importOriginal => {
+    const actual = await importOriginal<typeof import('../netlify/functions/utils/payrollPreflight')>();
+    return { ...actual, assertPayrollReady: vi.fn() };
+});
+import { assertPayrollReady } from '../netlify/functions/utils/payrollPreflight';
+const trialTransactionGate = (r: any) => { if (r.trialStatus !== 'READY') { const e: any = new Error('BLOCKED trial inputs'); e.statusCode = 409; throw e; } };
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PayrollRun } from '../types';
 import { UserRole } from '../types';
@@ -27,13 +35,13 @@ vi.mock('../netlify/functions/utils/firebaseAdmin', async () => {
     };
 });
 
-import { db } from '../netlify/functions/utils/firebaseAdmin';
+import { db, adminAuth } from '../netlify/functions/utils/firebaseAdmin';
 import { handler } from '../netlify/functions/api';
 
-const call = async (action: string, body: Record<string, unknown> = {}) => {
+const call = async (action: string, body: Record<string, unknown> = {}, token = 'emulator-only-synthetic-token') => {
     const response = await handler({
         httpMethod: 'POST',
-        headers: { authorization: 'Bearer emulator-only-synthetic-token' },
+        headers: { authorization: `Bearer ${token}` },
         body: JSON.stringify({ action, ...body }),
     } as any, {} as any);
     if (!response || typeof response.statusCode !== 'number' || typeof response.body !== 'string') {
@@ -67,6 +75,8 @@ const storedRun = async (): Promise<PayrollRun> => {
 };
 
 beforeEach(async () => {
+    vi.mocked(assertPayrollReady).mockImplementation(trialTransactionGate);
+    vi.mocked(adminAuth.verifyIdToken).mockImplementation(async token => ({ uid: token === 'synthetic-employee' ? employee.id : 'EMULATOR_ADMIN' }) as any);
     await clearEmulator();
     const batch = db.batch();
     batch.set(db.collection('employees').doc('EMULATOR_ADMIN'), {
@@ -225,5 +235,75 @@ describe('actual API against a disposable Firestore emulator', () => {
         expect(response.statusCode, response.body).toBe(409);
         const snapshots = await Promise.all(['monthLocks', 'payrollRuns', 'payrollControl', 'auditLogs'].map(name => db.collection(name).get()));
         expect(snapshots.map(s => s.size)).toEqual([0, 0, 0, 0]);
+    });
+});
+
+
+describe('pending request settlement barrier with actual Firestore transactions', () => {
+    it('pending correction blocks lock atomically, then rejection allows settlement', async () => {
+        const submitted = await call('submit-makeup-request', { date: '2026-04-01', type: '補下班', reason: '合成案例核實下班時間', recordId: 'C1', requestedClockOut: '17:00' }, 'synthetic-employee');
+        expect(submitted.statusCode, submitted.body).toBe(200);
+        const lock = await call('lock-month', { yearMonth: month });
+        expect(lock.statusCode, lock.body).toBe(409);
+        expect((await db.collection('monthLocks').get()).empty).toBe(true);
+        expect((await db.collection('payrollRuns').get()).empty).toBe(true);
+        await db.collection('makeupRequests').doc(JSON.parse(submitted.body).id).update({ status: '駁回' });
+        const retry = await call('lock-month', { yearMonth: month });
+        expect(retry.statusCode, retry.body).toBe(200);
+        expect((await storedRun()).salaries[0].grossSalary).toBe(1600);
+    });
+
+    it.each(['lock-first', 'request-first'])('concurrent pending correction and settlement cannot both commit (%s)', async order => {
+        const lock = () => call('lock-month', { yearMonth: month });
+        const submit = () => call('submit-makeup-request', { date: '2026-04-01', type: '補下班', reason: '合成案例核實下班時間', recordId: 'C1', requestedClockOut: '17:00' }, 'synthetic-employee');
+        const responses = await Promise.all(order === 'lock-first' ? [lock(), submit()] : [submit(), lock()]);
+        const [locked, submitted] = order === 'lock-first' ? responses : [...responses].reverse();
+        expect([200, 409], locked.body).toContain(locked.statusCode);
+        expect([200, 423], submitted.body).toContain(submitted.statusCode);
+        expect(responses.filter(x => x.statusCode === 200)).toHaveLength(1);
+        expect((await db.collection('payrollRuns').get()).size).toBe(locked.statusCode === 200 ? 1 : 0);
+        expect((await db.collection('monthLocks').get()).size).toBe(locked.statusCode === 200 ? 1 : 0);
+        expect((await db.collection('makeupRequests').get()).size).toBe(submitted.statusCode === 200 ? 1 : 0);
+        expect((await db.collection('payrollControl').doc('revision').get()).data()?.revision).toBe(1);
+    });
+});
+
+describe('actual formal gate and application evidence against emulator', () => {
+    beforeEach(async () => {
+        const actual = await vi.importActual<typeof import('../netlify/functions/utils/payrollPreflight')>('../netlify/functions/utils/payrollPreflight');
+        vi.mocked(assertPayrollReady).mockImplementation(actual.assertPayrollReady);
+    });
+    it('complete trial still cannot write formal settlement while mandatory capabilities are absent', async () => {
+        const response = await call('lock-month', { yearMonth: month, skipGaps: true });
+        expect(response.statusCode, response.body).toBe(409);
+        for (const name of ['monthLocks', 'payrollRuns', 'payrollControl']) expect((await db.collection(name).get()).empty).toBe(true);
+    });
+    it('approval and repeated approval preserve immutable evidence and reconcile newer correction', async () => {
+        const raw = (await db.collection('clockRecords').doc('C1').get()).data();
+        const submitted = await call('submit-makeup-request', { date: '2026-04-01', type: '補下班', reason: '合成核實下班更正', recordId: 'C1', requestedClockOut: '18:00' }, 'synthetic-employee');
+        const requestId = JSON.parse(submitted.body).id;
+        const approve = () => call('approve-makeup-request', { requestId, status: '核准' });
+        const responses = await Promise.all([approve(), approve()]);
+        expect(responses.map(x => x.statusCode)).toEqual([200, 200]);
+        const revisions = await db.collection('attendanceRevisions').get();
+        expect(revisions.size).toBe(1); expect(revisions.docs[0].data().before).toEqual(raw);
+        const savedEvidence = revisions.docs[0].data();
+        const edited = await call('update-clock-record', { recordId: 'C1', clockInTime: '09:00', clockOutTime: '17:00', workIntervals: [{ start: 540, end: 1020 }] });
+        expect(edited.statusCode, edited.body).toBe(200);
+        const salaryResponse = await call('get-all-salary-details', { yearMonth: month });
+        const salary = JSON.parse(salaryResponse.body)[0];
+        expect(salary.preflight).toMatchObject({ status: 'BLOCKED', trialStatus: 'READY' });
+        expect(salary.netSalary).toBe(1600);
+        expect((await revisions.docs[0].ref.get()).data()).toEqual(savedEvidence);
+        expect((await call('lock-month', { yearMonth: month })).statusCode).toBe(409);
+    });
+    it('failed approval transaction leaves original card and pending request intact', async () => {
+        await db.collection('monthLocks').doc(month).set({ yearMonth: month, lockedAt: review.reviewedAt, lockedBy: 'EMULATOR_ADMIN' });
+        await db.collection('makeupRequests').doc('P').set({ empId: employee.id, date: '2026-04-01', recordId: 'C1', status: '待審核', requestedClockOut: '18:00' });
+        const before = (await db.collection('clockRecords').doc('C1').get()).data();
+        expect((await call('approve-makeup-request', { requestId: 'P', status: '核准' })).statusCode).toBe(423);
+        expect((await db.collection('clockRecords').doc('C1').get()).data()).toEqual(before);
+        expect((await db.collection('makeupRequests').doc('P').get()).data()?.status).toBe('待審核');
+        expect((await db.collection('attendanceRevisions').get()).empty).toBe(true);
     });
 });
