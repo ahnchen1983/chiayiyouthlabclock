@@ -1,3 +1,4 @@
+import LeaveLifecyclePanel from '../LeaveLifecyclePanel';
 import CaseLeaveReviewActions from '../CaseLeaveReviewActions';
 import AnomalyOperationRecovery from '../AnomalyOperationRecovery';
 import { contextLeaveMatches, type CaseFormContext } from '../../utils/caseFormContext';
@@ -87,6 +88,7 @@ const LeaveApprovalQueue: React.FC<{caseContext?:CaseFormContext;requestId?:stri
                                 </div>
                             </div>
 
+                            <LeaveLifecyclePanel requestId={req.id} onChanged={()=>void fetchRequests()}/>
                             {req.schemaVersion==='case-leave-v1'&&<CaseLeaveReviewActions request={req} onChanged={()=>void fetchRequests()}/>}
                             {!req.schemaVersion && req.status === LeaveStatus.Pending && rejectingId !== req.id && (
                                 <div className="flex justify-end space-x-3 mt-4">

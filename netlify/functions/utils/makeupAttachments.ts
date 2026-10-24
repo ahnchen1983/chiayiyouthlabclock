@@ -2,7 +2,7 @@ import {createHash,randomBytes} from 'node:crypto';
 import {UserRole} from '../../../types';
 import {validDate} from '../../../utils/attendance';
 import {runPayrollMutation,assertTransactionMonths} from './monthGuard';
-import {getMakeupAttachmentRuntime,ATTACHMENT_TECH_LIMITS,type AttachmentRuntime} from './makeupAttachmentRuntime';
+import {getMakeupAttachmentRuntime,getLeaveAttachmentRuntime,ATTACHMENT_TECH_LIMITS,type AttachmentRuntime} from './makeupAttachmentRuntime';
 const fail=(statusCode:number,message:string):never=>{throw Object.assign(new Error(message),{statusCode});};
 const hash=(v:Buffer|string)=>createHash('sha256').update(v).digest('hex');
 const validId=(v:any)=>typeof v==='string'&&v.length>0&&v.length<=150&&!v.includes('/')&&!['.','..'].includes(v);
@@ -26,15 +26,15 @@ const sniff=(b:Buffer)=>{
  if(b.length>=12&&b.subarray(0,5).toString()==='%PDF-'&&b.subarray(-32).toString().includes('%%EOF'))return 'application/pdf';
  return fail(400,'不支援或無法辨識的檔案內容');
 };
-const publicMeta=(m:any)=>({id:m.id,draftId:m.draftId,requestId:m.requestId,owner:m.owner,name:m.name,mime:m.mime,size:m.size,sha256:m.sha256,status:m.status,uploadComplete:m.uploadComplete,scan:m.scan,revision:m.revision,createdAt:m.createdAt,updatedAt:m.updatedAt});
+const publicMeta=(m:any)=>({subjectType:m.subjectType||'makeup',subjectId:m.requestId||m.draftId,id:m.id,draftId:m.draftId,requestId:m.requestId,owner:m.owner,name:m.name,mime:m.mime,size:m.size,sha256:m.sha256,status:m.status,uploadComplete:m.uploadComplete,scan:m.scan,revision:m.revision,createdAt:m.createdAt,updatedAt:m.updatedAt});
 const audit=(db:any,tx:any,m:any,uid:string,reason:string)=>tx.create(db.collection('makeupAttachmentEvents').doc(`${m.id}_${m.revision}`),{attachmentId:m.id,draftId:m.draftId,requestId:m.requestId,owner:m.owner,revision:m.revision,status:m.status,actor:uid,at:m.updatedAt,reason});
-const save=(db:any,tx:any,m:any,uid:string,reason:string)=>{tx.set(ref(db,'makeupAttachments',m.id),m);audit(db,tx,m,uid,reason);};
+const save=(db:any,tx:any,m:any,uid:string,reason:string)=>{tx.set(ref(db,'makeupAttachments',m.id),{...m,subjectType:db.attachmentSubject||'makeup',subjectId:m.requestId||m.draftId});audit(db,tx,m,uid,reason);};
 const all=async(db:any,tx:any,draftId:string)=>{const s=await tx.get(db.collection('makeupAttachments').where('draftId','==',draftId).limit(51));if(s.size>50)fail(409,'附件歷程容量超限，未部分處理');return s.docs.map((d:any)=>({...d.data(),id:d.id}));};
 const checkReady=(m:any)=>{if(m.status!=='ready'||m.uploadComplete!==true||m.scan?.verdict!=='clean'||!m.scan.engine||!m.scan.version||m.scan.hash!==m.sha256||m.scan.mime!==m.mime)fail(409,'附件未完成上傳或尚未通過掃描');};
 export const ATTACHMENT_ACTIONS=['get-makeup-attachment-capability','create-makeup-attachment-draft','list-makeup-attachments','upload-makeup-attachment','withdraw-makeup-attachment','issue-makeup-attachment-access','download-makeup-attachment'] as const;
 /** Reads first; caller invokes commit only after all other transaction reads/guards. */
-export async function prepareAttachmentSubmission(db:any,tx:any,uid:string,data:any,requestId:string,date:string){
- const rt=getMakeupAttachmentRuntime(),p=policy(rt);
+export async function prepareAttachmentSubmission(db:any,tx:any,uid:string,data:any,requestId:string,date:string,subject:'makeup'|'leave'='makeup'){
+ db=subjectDb(db,subject);const rt=subject==='leave'?getLeaveAttachmentRuntime():getMakeupAttachmentRuntime(),p=policy(rt);
  if(!data.attachmentDraftId){if(p.required)fail(409,'此政策要求附件，請完成上傳與掃描');return {fields:{attachmentPolicyVersion:p.version,attachments:[]},commit:()=>{}};}
  enabled(rt);const d=await read(db,tx,'makeupAttachmentDrafts',data.attachmentDraftId);own({id:uid},d.owner);
  if(d.status!=='draft'||d.date!==date||d.policyVersion!==p.version||d.revision!==data.expectedAttachmentDraftRevision)fail(409,'附件草稿版本／日期已變更');
@@ -45,17 +45,17 @@ export async function prepareAttachmentSubmission(db:any,tx:any,uid:string,data:
  const at=new Date().toISOString();
  return {fields:{attachmentPolicyVersion:p.version,attachments:items.map(m=>({id:m.id,revision:m.revision+1,sha256:m.sha256,mime:m.mime,size:m.size}))},commit:()=>{
   tx.update(ref(db,'makeupAttachmentDrafts',d.id),{status:'submitted',requestId,revision:d.revision+1,updatedAt:at});
-  for(const m of items)save(db,tx,{...m,requestId,revision:m.revision+1,updatedAt:at},uid,'綁定補卡申請');
+  for(const m of items)save(db,tx,{...m,requestId,revision:m.revision+1,updatedAt:at},uid,'綁定私有申請附件');
  }};
 }
-export async function assertRequestAttachmentEvidence(db:any,tx:any,request:any){
- if(!request.attachmentPolicyVersion&&!request.attachments)return; // Legacy stays explicitly unverified, never manufactures attachment evidence.
+export async function assertRequestAttachmentEvidence(db:any,tx:any,request:any,subject:'makeup'|'leave'='makeup'){
+ db=subjectDb(db,subject);if(!request.attachmentPolicyVersion&&!request.attachments)return; // Legacy stays explicitly unverified, never manufactures attachment evidence.
  if(!Array.isArray(request.attachments))fail(409,'附件證據不完整');
  for(const e of request.attachments){const m=await read(db,tx,'makeupAttachments',e.id);checkReady(m);if(m.requestId!==request.id||m.owner!==request.empId||m.policyVersion!==request.attachmentPolicyVersion||m.revision!==e.revision||m.sha256!==e.sha256||m.mime!==e.mime||m.size!==e.size)fail(409,'附件來源鏈不一致');}
 }
-export async function handleMakeupAttachmentAction(db:any,uid:string,action:string,data:any){
- if(['owner','storageKey','url','hash','sha256','scan','scanState','status','uploadComplete','requestId','actor'].some(k=>k in data))fail(400,'不可提交伺服器擁有的附件欄位');
- const rt=getMakeupAttachmentRuntime();
+export async function handleMakeupAttachmentAction(db:any,uid:string,action:string,data:any,subject:'makeup'|'leave'='makeup'){
+ db=subjectDb(db,subject);if(data.subjectType&&data.subjectType!==subject)fail(400,'附件主體型別不符');if(['owner','storageKey','url','hash','sha256','scan','scanState','status','uploadComplete','requestId','actor'].some(k=>k in data))fail(400,'不可提交伺服器擁有的附件欄位');
+ const rt=subject==='leave'?getLeaveAttachmentRuntime():getMakeupAttachmentRuntime();
  if(action==='get-makeup-attachment-capability'){
   await actor(db,null,uid);let reason='';try{enabled(rt);}catch(e:any){reason=e.message;}
   return {enabled:!reason,mode:rt.mode,reason,policy:rt.policy?{version:rt.policy.version,required:rt.policy.required,maxFiles:rt.policy.maxFiles,maxBytes:rt.policy.maxBytes,allowedMime:rt.policy.allowedMime}:null,technicalLimits:ATTACHMENT_TECH_LIMITS,productionConfigured:false};
@@ -69,17 +69,17 @@ export async function handleMakeupAttachmentAction(db:any,uid:string,action:stri
  const p=enabled(rt);
  if(action==='create-makeup-attachment-draft'){
   if(!validId(data.operationId)||!validDate(data.date))fail(400,'草稿日期與操作識別必填');
-  const key='draft_'+hash(JSON.stringify([uid,data.operationId]));return runPayrollMutation(db,[data.date.slice(0,7)],async tx=>{
+  const key='draft_'+hash(JSON.stringify(subject==='makeup'?[uid,data.operationId]:[subject,uid,data.operationId]));return runPayrollMutation(db,[data.date.slice(0,7)],async tx=>{
    await actor(db,tx,uid);const r=ref(db,'makeupAttachmentDrafts',key),s=await tx.get(r);
    if(s.exists){const d=s.data();if(d.owner!==uid||d.date!==data.date)fail(409,'草稿操作內容不符');return {id:key,revision:d.revision,status:d.status,date:d.date};}
-   const at=new Date().toISOString(),d={id:key,owner:uid,date:data.date,status:'draft',revision:1,policyVersion:p.version,createdAt:at,updatedAt:at};tx.create(r,d);return {id:key,revision:1,status:'draft',date:d.date};
+   const at=new Date().toISOString(),d={id:key,subjectType:subject,subjectId:key,owner:uid,date:data.date,status:'draft',revision:1,policyVersion:p.version,createdAt:at,updatedAt:at};tx.create(r,d);return {id:key,revision:1,status:'draft',date:d.date};
   });
  }
  if(action==='upload-makeup-attachment'){
   if(!validId(data.operationId))fail(400,'上傳操作識別必填');const name=cleanName(data.name),bytes=decode(data.contentBase64),mime=sniff(bytes),sha256=hash(bytes);
   if(mime!==data.mime||!p.allowedMime.includes(mime)||bytes.length>p.maxBytes)fail(400,'內容型別或大小不符政策');
   const ext=mime==='image/png'?/\.png$/i:mime==='image/jpeg'?/\.jpe?g$/i:/\.pdf$/i;if(!ext.test(name))fail(400,'檔名副檔名與內容不符');
-  const key='attachment_'+hash(JSON.stringify([uid,data.operationId])),intentHash=hash(JSON.stringify([data.draftId,name,mime,sha256]));
+  const key='attachment_'+hash(JSON.stringify(subject==='makeup'?[uid,data.operationId]:[subject,uid,data.operationId])),intentHash=hash(JSON.stringify([data.draftId,name,mime,sha256]));
   const reserved=await runPayrollMutation(db,[],async tx=>{
    const a=await actor(db,tx,uid),d=await read(db,tx,'makeupAttachmentDrafts',data.draftId);own(a,d.owner);
    const r=ref(db,'makeupAttachments',key),old=await tx.get(r);await assertTransactionMonths(db,tx,[d.date.slice(0,7)]);
@@ -126,3 +126,7 @@ export async function handleMakeupAttachmentAction(db:any,uid:string,action:stri
  }
  return fail(400,'未知附件操作');
 }
+
+function subjectDb(db:any,subject:'makeup'|'leave'){if(subject==='makeup')return db;return {attachmentSubject:'leave',collection:(name:string)=>db.collection(name==='makeupRequests'?'leaveRequests':name.startsWith('makeupAttachment')?name.replace('makeupAttachment','leaveAttachment'):name),runTransaction:(fn:any)=>db.runTransaction(fn)};}
+export const LEAVE_ATTACHMENT_ACTIONS=ATTACHMENT_ACTIONS.map(a=>a.replace('makeup','leave'));
+export const handleLeaveAttachmentAction=(db:any,uid:string,action:string,data:any)=>handleMakeupAttachmentAction(db,uid,action.replace('leave','makeup'),{...data,...(data.leaveRequestId?{makeupRequestId:data.leaveRequestId}:{})},'leave');

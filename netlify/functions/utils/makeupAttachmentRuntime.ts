@@ -10,3 +10,5 @@ export interface AttachmentRuntime {
 }
 export const ATTACHMENT_TECH_LIMITS={bytes:2*1024*1024,files:5,grantSeconds:60};
 export const getMakeupAttachmentRuntime=():AttachmentRuntime=>({mode:'disabled',policy:null});
+
+export const getLeaveAttachmentRuntime=():AttachmentRuntime=>({mode:'disabled',policy:null});

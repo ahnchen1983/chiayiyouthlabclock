@@ -493,5 +493,18 @@ export const apiActExplanation=(command:ExplanationCommand):Promise<import('../n
 export const apiSubmitCaseLeave=(command:ExplanationCommand & {leaveType:LeaveType;startDate:string;endDate:string}):Promise<LeaveRequest>=>callAPI('submit-case-leave',{...command});
 export const apiLinkCaseLeave=(command:ExplanationCommand & {leaveRequestId:string}):Promise<unknown>=>callAPI('link-case-leave',{...command});
 export const apiReviewCaseLeave=(command:Omit<ExplanationCommand,'mode'> & {leaveRequestId:string;mode:'approve'|'reject'}):Promise<LeaveRequest>=>callAPI('review-case-leave',{...command});
-export type AnomalyMutationAction='submit-anomaly-explanation'|'act-anomaly-explanation'|'submit-case-leave'|'link-case-leave'|'review-case-leave';
+export type AnomalyMutationAction='act-leave-version'|'submit-anomaly-explanation'|'act-anomaly-explanation'|'submit-case-leave'|'link-case-leave'|'review-case-leave';
 export const apiAnomalyMutation=(action:AnomalyMutationAction,command:Record<string,unknown>):Promise<any>=>callAPI(action,command);
+
+export const apiLeaveWorkflow=(requestId:string):Promise<{request:LeaveRequest;sourceVersion:string;caseRevision?:number;caseEvidenceVersion?:string;policyStatus:string}>=>callAPI('get-leave-workflow',{requestId});
+export const subjectAttachmentAPI=(subject:'makeup'|'leave')=>{
+ const invoke=<T,>(action:string,data:Record<string,unknown>={}):Promise<T>=>callAPI(action.replace('makeup',subject),{...data,subjectType:subject});
+ return {
+  capability:()=>invoke<MakeupAttachmentCapability>('get-makeup-attachment-capability'),
+  draft:(date:string,operationId:string)=>invoke<{id:string;date:string;revision:number;status:string}>('create-makeup-attachment-draft',{date,operationId}),
+  list:(q:{draftId?:string;makeupRequestId?:string})=>invoke<{draft?:{id:string;date:string;revision:number;status:string};items:MakeupAttachment[]}>('list-makeup-attachments',subject==='leave'?{draftId:q.draftId,leaveRequestId:q.makeupRequestId}:q),
+  upload:(c:any)=>invoke<MakeupAttachment>('upload-makeup-attachment',c),withdraw:(c:any)=>invoke<MakeupAttachment>('withdraw-makeup-attachment',c),
+  access:(attachmentId:string)=>invoke<{accessToken:string;expiresAt:number}>('issue-makeup-attachment-access',{attachmentId}),
+  download:(accessToken:string)=>invoke<{name:string;mime:string;size:number;contentBase64:string}>('download-makeup-attachment',{accessToken})
+ };
+};

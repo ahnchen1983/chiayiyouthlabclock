@@ -171,12 +171,12 @@ export async function assertCurrentCaseSource(db:any,tx:any,c:any,at:string){
  const fresh=observed?retainAffectedWindow(c,observed):null;
  if(!fresh||fresh.evidenceVersion!==c.observation.evidenceVersion)error(409,'原始來源已變更，須重新掃描後覆核');
 }
-export async function planLeaveCaseRefresh(db:any,tx:any,empId:string,months:string[],leave:any,actor:string,at:string){
+export async function planLeaveCaseRefresh(db:any,tx:any,empId:string,months:string[],leave:any,actor:string,at:string,otherLeaves:any[]=[]){
  const existing=await rows(db,tx,'attendanceCases',empId),original=new Map(existing.map((c:any)=>[c.id,c]));
  const planned=new Map<string,any>();
  for(const month of months){
   const input=await loadInput(db,tx,empId,month,at);
-  input.leaves=[...input.leaves.filter(r=>r.id!==leave.id),leave];
+  const replacements=[...otherLeaves,leave];input.leaves=[...input.leaves.filter(r=>!replacements.some(n=>n.id===r.id)),...replacements];
   const sourceVersion=evidenceHash(input);
   for(const o of scanObservations(input,month).observations){
    const previous=planned.get(o.id)||original.get(o.id) as any;

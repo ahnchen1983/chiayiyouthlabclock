@@ -124,10 +124,16 @@ export enum LeaveStatus {
     Pending = '待審核',
     Approved = '核准',
     Rejected = '駁回',
+    NeedsInfo = '待補件',
+    Cancelled = '已取消',
+    Superseded = '已取代',
 }
 
 export interface LeaveRequest {
-    schemaVersion?: 'case-leave-v1';
+    schemaVersion?: 'case-leave-v1'|'leave-version-v1';
+    supersedesId?:string; supersededBy?:string;
+    attachmentPolicyVersion?:string; attachments?:{id:string;revision:number;sha256:string;mime:string;size:number}[];
+    leavePolicyAssessment?:{status:string;issues:string[];policyVersion?:string;reservedMinutes?:number};
     caseId?: string;
     explanationId?: string|null;
     revision?: number;

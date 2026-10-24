@@ -1,3 +1,6 @@
+import {LEAVE_LIFECYCLE_ACTIONS,handleLeaveLifecycle} from './utils/leaveLifecycle';
+import {LEAVE_ATTACHMENT_ACTIONS,handleLeaveAttachmentAction} from './utils/makeupAttachments';
+import {assessLeavePolicy,leaveTimestamp} from './utils/leavePolicy';
 import {EXPLANATION_ACTIONS,handleExplanationAction,assertNoDuplicateLeave,prepareCaseLeaveAllocation} from './utils/anomalyExplanations';
 import {ATTACHMENT_ACTIONS,handleMakeupAttachmentAction,prepareAttachmentSubmission,assertRequestAttachmentEvidence} from './utils/makeupAttachments';
 import { MAKEUP_ACTIONS, handleMakeupAction, assertMakeupRequestLocks } from './utils/makeupLifecycle';
@@ -641,7 +644,7 @@ const readPendingSources = async (tx?: any): Promise<PendingSources> => {
 // Submission and settlement share the revision gate. A new pending request can
 // neither slip past a concurrent lock nor retroactively affect an already locked run.
 const failVersionedMakeup = (): never => { const e: any = new Error('版本化補卡需使用含操作識別與版本的審核入口'); e.statusCode = 409; throw e; };
-const createPendingPayrollRequest = async (kind: RequestKind, value: any, ref = db.collection(kind).doc()) => {
+const createPendingPayrollRequest = async (kind: RequestKind, value: any, ref = db.collection(kind).doc(),attachmentData:any={}) => {
     await runPayrollMutation(db, [], async tx => {
         const locks = await tx.get(db.collection('monthLocks'));
         const cards = await tx.get(db.collection('clockRecords'));
@@ -659,7 +662,7 @@ const createPendingPayrollRequest = async (kind: RequestKind, value: any, ref = 
                 }
             }
         }
-        if(kind==='leaveRequests') await assertNoDuplicateLeave(db,tx,value);
+        if(kind==='leaveRequests'){const emp=(await tx.get(db.collection('employees').doc(value.empId))).data();const first=taipeiDate(new Date(leaveTimestamp(value.startDate))),last=taipeiDate(new Date(leaveTimestamp(value.endDate)-1));if(!emp)throw Object.assign(new Error('員工來源不存在'),{statusCode:409});if(validDate(emp.hireDate)&&(first<emp.hireDate||emp.resignDate&&last>emp.resignDate))throw Object.assign(new Error('超出雇用期間'),{statusCode:409});value.reviewIssues=[...(!validDate(emp.hireDate)?['employment-unverified']:[]),...(emp.leaveOfAbsenceStart&&last>=emp.leaveOfAbsenceStart&&(!emp.leaveOfAbsenceEnd||first<=emp.leaveOfAbsenceEnd)?['leave-of-absence-overlap']:[]),'pay-policy-unverified'];await assertNoDuplicateLeave(db,tx,value);value.leavePolicyAssessment=await assessLeavePolicy(db,tx,value);const attachment=await prepareAttachmentSubmission(db,tx,value.empId,attachmentData,ref.id,first,'leave');Object.assign(value,attachment.fields);attachment.commit();}
         if(kind==='makeupRequests'){
             const attachments=await prepareAttachmentSubmission(db,tx,value.empId,{},ref.id,value.date);
             Object.assign(value,attachments.fields);attachments.commit();
@@ -773,6 +776,8 @@ export const handler: Handler = async (event) => {
     const isAdmin = currentUserRole === UserRole.Admin || isSuperAdmin;
 
     try {
+        if(LEAVE_LIFECYCLE_ACTIONS.includes(action as any)) return ok(await handleLeaveLifecycle(db,uid,action,data));
+        if(LEAVE_ATTACHMENT_ACTIONS.includes(action)){const response=ok(await handleLeaveAttachmentAction(db,uid,action,data));return {...response,headers:{...response.headers,'Cache-Control':'no-store','Pragma':'no-cache','X-Content-Type-Options':'nosniff'}};}
         if (EXPLANATION_ACTIONS.includes(action as any)) return ok(await handleExplanationAction(db,uid,action,data));
         if (ATTACHMENT_ACTIONS.includes(action as any)) {
             const response=ok(await handleMakeupAttachmentAction(db,uid,action,data));
@@ -973,30 +978,24 @@ export const handler: Handler = async (event) => {
             case 'submit-leave-request': {
                 const empSnap = await db.collection('employees').doc(uid).get();
                 const name = empSnap.exists ? empSnap.data()!.name : 'Unknown';
-                // 日期驗證
-                const startMs = new Date(data.startDate).getTime();
-                const endMs = new Date(data.endDate).getTime();
+                // Legacy UI sends minute-local timestamps; normalize new sources explicitly to Taipei.
+                for(const field of ['startDate','endDate']){if(typeof data[field]!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::00)?(?:Z|[+-]\d{2}:\d{2})?$/.test(data[field])||!validDate(data[field].slice(0,10)))return fail(400,'日期需完整分鐘');if(!/(Z|[+-]\d{2}:\d{2})$/.test(data[field]))data[field]+='+08:00';}
+                const startMs = leaveTimestamp(data.startDate);
+                const endMs = leaveTimestamp(data.endDate);
                 if (Number.isNaN(startMs) || Number.isNaN(endMs)) return fail(400, '日期格式錯誤');
                 if (endMs <= startMs) return fail(400, '結束時間必須晚於開始時間');
-                const hours = Math.round((endMs - startMs) / (1000 * 60 * 60) * 10) / 10;
-                if (hours < 0.5) return fail(400, '請假時數至少 0.5 小時');
-                // Phase 4.1：檢查假別餘額（特休/事假/病假）
-                if (data.leaveType === LeaveType.Annual || data.leaveType === LeaveType.Personal || data.leaveType === LeaveType.Sick) {
-                    const balances = await getLeaveBalanceForEmployee(uid);
-                    const bal = balances.find(b => b.leaveType === data.leaveType);
-                    if (bal && hours > bal.remainingHours) {
-                        return fail(400, `${data.leaveType}剩餘 ${bal.remainingHours} 小時，不足以申請 ${hours} 小時`);
-                    }
-                }
+                const minutes=(endMs-startMs)/60000;const hours=minutes/60;
+                if(!Number.isInteger(minutes)||minutes<1||minutes>31*1440)return fail(400,'假單須完整分鐘且不超過31日技術上限');
+                // Legacy inferred balances cannot enforce unapproved quota policy. Shared transactional policy assessment follows.
                 await createPendingPayrollRequest('leaveRequests', {
-                    empId: uid, name, hours,
+                    empId: uid, name, hours, schemaVersion:'leave-version-v1',revision:1,policyStatus:'needs-review',history:[],
                     leaveType: data.leaveType,
                     startDate: data.startDate,
                     endDate: data.endDate,
                     reason: data.reason,
                     requestDate: new Date().toISOString(),
                     status: LeaveStatus.Pending,
-                });
+                },undefined,data);
                 return ok(true);
             }
 
@@ -1006,7 +1005,8 @@ export const handler: Handler = async (event) => {
                 const lrSnap = await lrRef.get();
                 if (!lrSnap.exists) return fail(404, '請假申請不存在');
                 const lr = lrSnap.data()!;
-                if(lr.schemaVersion==='case-leave-v1') return fail(409,'追補假單須使用版本化審核入口');
+                if(lr.empId===uid) return fail(403,'本人不能自行核准假單');
+                if(lr.schemaVersion) return fail(409,'追補假單須使用版本化審核入口');
                 // Phase 6.3：鎖定月份請假審核擋下
                 const leaveDate = (lr.startDate || '').slice(0, 10);
                 const lockChkLeave = await assertMonthNotLocked(leaveDate);
@@ -1022,7 +1022,7 @@ export const handler: Handler = async (event) => {
                 if (![LeaveStatus.Approved, LeaveStatus.Rejected].includes(data.status)) return fail(400, '狀態無效');
                 await runPayrollMutation(db, monthsInRange(lr.startDate, lr.endDate), async tx => {
                     const fresh = await tx.get(lrRef);
-                    if(fresh.data()?.schemaVersion==='case-leave-v1') throw Object.assign(new Error('追補假單須使用版本化審核入口'),{statusCode:409});
+                    if(fresh.data()?.schemaVersion) throw Object.assign(new Error('追補假單須使用版本化審核入口'),{statusCode:409});
                     if (fresh.data()?.status === data.status) return;
                     if (fresh.data()?.status !== LeaveStatus.Pending) throw new Error('假單已審核，請另建更正');
                     const all = await tx.get(db.collection('leaveRequests').where('empId', '==', lr.empId));
@@ -1094,7 +1094,7 @@ export const handler: Handler = async (event) => {
                     const oldAllocations = Array.isArray(current.payrollAllocations) ? current.payrollAllocations : [];
                     const allocationMonths = [...oldAllocations, ...data.allocations].flatMap(a => validDate(a?.date) ? [a.date.slice(0, 7)] : []);
                     await assertTransactionMonths(db, tx, [...monthsInRange(current.startDate, current.endDate), ...allocationMonths]);
-                    if(current.schemaVersion==='case-leave-v1'){const commit=await prepareCaseLeaveAllocation(db,tx,uid,{...current,id:data.requestId},data);commit();}
+                    if(current.schemaVersion){const commit=await prepareCaseLeaveAllocation(db,tx,uid,{...current,id:data.requestId},data);commit();}
                     else tx.update(ref, { payrollAllocations: data.allocations.map((a: any) => ({ date: a.date, from: a.from, to: a.to, minutes: a.minutes })), payrollReviewedBy: uid, payrollReviewedAt: new Date().toISOString() });
                 });
                 return ok(true);

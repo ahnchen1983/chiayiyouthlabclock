@@ -297,3 +297,11 @@
 2.2／2.3仍部分：完整假單取消／補件重送、有效期假別／餘額政策、假單附件與指定主管政策未實作，不以文字說明代替核准投影。2.4／comp 未納本批。
 6.1／6.3：anomaly pending 納 preflight；正式 workflow gaps 未清除，月結仍 BLOCKED。immutable 說明事件／leave revisions 與原卡分離，已鎖月不能修改。
 8.1／8.3：2026-08 全體正兼職及當月到離職／留停正式核對尚未執行。僅合成測試，不以 mock 代替正式驗收；無 production 存取／真通知／部署。細節與驗收見 PR13_BATCH_B4C.md。
+
+
+### B4d 增量：假單生命周期及私有附件（可測程式）
+
+2.2／2.3：補上本人未核取消、主管退回／要求補件、新版本重送與不可覆寫已核原版；legacy pending相容，新版附來源hash/revision/operation receipts，case與說明來源保留並沿B4cfix檢查。附件共用B4b核心但leave主體分離，正式adapter仍disabled。
+4.5：最小有效期政策與明示額度預占結構；僅已核政策執行期限／額度，未知保持待設定，不用推定餘額阻擋或默認無限制。未提供正式政策管理與啟用。
+6.1／6.3：pending/needs-info進preflight，cancelled/superseded原始歷史保留；跨月transaction guard與來源case重核維持，必要workflow gap未移除。已核更正／差額流程未完成，禁止直接取消已核或覆寫月結。
+8.1／8.3：2026-08全體人員正式核對未執行，storage/scanner、真通知、公司政策與正式發薪仍NO GO。本批驗收與合成假設見PR13_BATCH_B4D.md。

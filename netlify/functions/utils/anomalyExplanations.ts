@@ -1,3 +1,5 @@
+import {assessLeavePolicy} from './leavePolicy';
+import {prepareAttachmentSubmission,assertRequestAttachmentEvidence} from './makeupAttachments';
 import {validLeaveAllocations} from './payroll';
 import {LeaveStatus,LeaveType,UserRole} from '../../../types';
 import {validDate,taipeiDate,clockInterval} from '../../../utils/attendance';
@@ -23,7 +25,7 @@ const rows=async(db:any,tx:any,col:string,field:string,value:string,limit=500)=>
 export async function assertNoDuplicateLeave(db:any,tx:any,r:any,excludeId?:string){
  if(!Object.values(LeaveType).includes(r.leaveType))fail(400,'假別不存在');const w=range(r);months(w);
  for(const old of await rows(db,tx,'leaveRequests','empId',r.empId)){
-  if(old.id===excludeId||old.status===LeaveStatus.Rejected)continue;
+  if(old.id===excludeId||[LeaveStatus.Rejected,LeaveStatus.Cancelled,LeaveStatus.Superseded].includes(old.status))continue;
   const oldRange=range(old);if(!Number.isFinite(oldRange.start)||!Number.isFinite(oldRange.end))fail(409,'既有假單期間未知，需先覆核');
   if(overlap(w,oldRange))fail(409,'同時段已有待審或核准假單，不能重複建立／核准');
  }
@@ -83,14 +85,14 @@ export async function handleExplanationAction(db:any,uid:string,action:string,da
    const explanationSource=data.explanationId?await assertAcceptedExplanation(db,tx,c,data.explanationId,w,at):null;
    const r:any={id:'caseleave_'+evidenceHash([uid,data.operationId]),schemaVersion:'case-leave-v1',empId:c.empId,name:e.name||c.empId,caseId:c.id,explanationId:data.explanationId||null,explanationSource,revision:1,leaveType:data.leaveType,startDate:data.startDate,endDate:data.endDate,hours:(w.end-w.start)/60,requestedSpanMinutes:w.end-w.start,reason:why,requestDate:at,status:LeaveStatus.Pending,policyStatus:'needs-review',history:[]};
    r.reviewIssues=await leaveIssues(db,tx,e,w);await assertNoDuplicateLeave(db,tx,r);await assertTransactionMonths(db,tx,months(w));const l=link(c.id,r.id);await assertWorkflowCapacity(db,tx,'caseLeaveLinks',[l]);
-   const ev=event(r,uid,at,null,why);r.history=[ev];const refresh=await planLeaveCaseRefresh(db,tx,c.empId,months(w),r,uid,at);tx.create(db.collection('leaveRequests').doc(r.id),r);tx.create(db.collection('caseLeaveLinks').doc(l.id),{...l,revision:1,actor:uid,at});tx.create(db.collection('caseLeaveEvents').doc(ev.id),{...ev,requestId:r.id,caseId:c.id,empId:c.empId});refresh();result=r;
+   r.leavePolicyAssessment=await assessLeavePolicy(db,tx,r);const attachment=await prepareAttachmentSubmission(db,tx,uid,data,r.id,taipeiDate(new Date(w.start*60000)),'leave');Object.assign(r,attachment.fields);const ev=event(r,uid,at,null,why);r.history=[ev];const refresh=await planLeaveCaseRefresh(db,tx,c.empId,months(w),r,uid,at);tx.create(db.collection('leaveRequests').doc(r.id),r);tx.create(db.collection('caseLeaveLinks').doc(l.id),{...l,revision:1,actor:uid,at});tx.create(db.collection('caseLeaveEvents').doc(ev.id),{...ev,requestId:r.id,caseId:c.id,empId:c.empId});attachment.commit();refresh();result=r;
   }else if(action==='link-case-leave'){
    const r=await read(db,tx,'leaveRequests',data.leaveRequestId);if(r.empId!==c.empId)fail(403,'假單與案件員工不符');if((r.revision||0)!==data.expectedRevision)fail(409,'假單版本已變更');const w=range(r);await assertTransactionMonths(db,tx,months(w));if(!overlap(w,caseWindow(c)))fail(409,'假單與案件期間不相交');const l=link(c.id,r.id);await assertWorkflowCapacity(db,tx,'caseLeaveLinks',[l]);const old=await tx.get(db.collection('caseLeaveLinks').doc(l.id));if(old.exists)result=old.data();else{result={...l,revision:1,actor:uid,at};tx.create(db.collection('caseLeaveLinks').doc(l.id),result);tx.create(db.collection('caseLeaveLinkEvents').doc(l.id),{...result,reason:why});}
   }else if(action==='review-case-leave'){
    const r=await read(db,tx,'leaveRequests',data.leaveRequestId);if(r.schemaVersion!=='case-leave-v1'||r.empId!==c.empId||r.caseId!==c.id)fail(409,'請使用假單原審核入口');if(r.revision!==data.expectedRevision||r.status!==LeaveStatus.Pending)fail(409,'假單已更新或審核，不能取消／覆寫');if(!['approve','reject'].includes(data.mode))fail(400,'審核方式無效');
-   const w=range(r),e=await read(db,tx,'employees',r.empId);await assertTransactionMonths(db,tx,months(w));const issues=await leaveIssues(db,tx,e,w);
-   if(data.mode==='approve'){if(r.explanationId){const source=await assertAcceptedExplanation(db,tx,c,r.explanationId,w,at);if(evidenceHash(source)!==evidenceHash(r.explanationSource))fail(409,'假單採納來源鏈缺失或已變更');}await assertCurrentCaseSource(db,tx,c,at);if(issues.includes('employment-unverified')||issues.includes('leave-of-absence-overlap'))fail(409,'雇用或留停期間待核實');await assertNoDuplicateLeave(db,tx,r,r.id);}
-   const next={...r,status:data.mode==='approve'?LeaveStatus.Approved:LeaveStatus.Rejected,revision:r.revision+1,approver:uid,approvalDate:at,...(data.mode==='reject'?{rejectReason:why}:{}),reviewIssues:issues,policyStatus:'needs-review'};
+   const w=range(r),e=await read(db,tx,'employees',r.empId);await assertTransactionMonths(db,tx,months(w));const issues=await leaveIssues(db,tx,e,w);let leavePolicyAssessment=r.leavePolicyAssessment;
+   if(data.mode==='approve'){if(r.explanationId){const source=await assertAcceptedExplanation(db,tx,c,r.explanationId,w,at);if(evidenceHash(source)!==evidenceHash(r.explanationSource))fail(409,'假單採納來源鏈缺失或已變更');}await assertCurrentCaseSource(db,tx,c,at);if(issues.includes('employment-unverified')||issues.includes('leave-of-absence-overlap'))fail(409,'雇用或留停期間待核實');await assertNoDuplicateLeave(db,tx,r,r.id);await assertRequestAttachmentEvidence(db,tx,r,'leave');leavePolicyAssessment=await assessLeavePolicy(db,tx,r,[r.id]);}
+   const next={...r,status:data.mode==='approve'?LeaveStatus.Approved:LeaveStatus.Rejected,revision:r.revision+1,approver:uid,approvalDate:at,...(data.mode==='reject'?{rejectReason:why}:{}),reviewIssues:issues,policyStatus:'needs-review',...(leavePolicyAssessment?{leavePolicyAssessment}:{})};
    const revisionId=evidenceHash([r.id,next.revision,data.operationId]);next.applicationEvidence={version:'case-leave-v1',revisionId,sourceKey:evidenceHash([r.empId,r.leaveType,r.startDate,r.endDate,r.hours]),requiresPayrollAllocation:true};
    const ev=event(next,uid,at,r.status,why);next.history=[...(r.history||[]),ev];const refresh=await planLeaveCaseRefresh(db,tx,r.empId,months(w),next,uid,at);if(next.history.length>200)fail(409,'假單歷程容量不足');
    tx.update(db.collection('leaveRequests').doc(r.id),next);tx.create(db.collection('leaveRevisions').doc(revisionId),{requestId:r.id,before:r,after:next,actor:uid,at});tx.create(db.collection('caseLeaveEvents').doc(ev.id),{...ev,requestId:r.id,caseId:c.id,empId:r.empId});refresh();result=next;
@@ -109,7 +111,7 @@ export async function prepareCaseLeaveAllocation(db:any,tx:any,uid:string,curren
  const at=new Date().toISOString(),next={...current,revision:current.revision+1,payrollAllocations:data.allocations.map((v:any)=>({date:v.date,from:v.from,to:v.to,minutes:v.minutes})),payrollReviewedBy:uid,payrollReviewedAt:at};
  const ev=event(next,uid,at,current.status,'經既有請假分配入口覆核時段，仍須政策及卡假重疊檢查');next.history=[...(current.history||[]),ev];if(next.history.length>200)fail(409,'假單歷程容量不足');
  const refresh=await planLeaveCaseRefresh(db,tx,current.empId,months(range(current)),next,uid,at);
- return ()=>{tx.update(db.collection('leaveRequests').doc(current.id),next);tx.create(db.collection('leaveRevisions').doc(key),{requestId:current.id,before:current,after:next,actor:uid,at});tx.create(db.collection('caseLeaveEvents').doc(ev.id),{...ev,requestId:current.id,caseId:current.caseId,empId:current.empId});refresh();tx.create(receiptRef,{actor:uid,at,requestId:current.id,revision:next.revision});};
+ return ()=>{tx.update(db.collection('leaveRequests').doc(current.id),next);tx.create(db.collection('leaveRevisions').doc(key),{requestId:current.id,before:current,after:next,actor:uid,at});tx.create(db.collection('caseLeaveEvents').doc(ev.id),{...ev,requestId:current.id,...(current.caseId?{caseId:current.caseId}:{}),empId:current.empId});refresh();tx.create(receiptRef,{actor:uid,at,requestId:current.id,revision:next.revision});};
 }
 
 /** An adopted explanation endorses only its retained, current source and covered interval. */
