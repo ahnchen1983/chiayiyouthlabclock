@@ -84,3 +84,15 @@ OT對非 standard-8-40／缺 regime保持needs-review、payable=null／BLOCKED�
 更後續仍有：完整跨月週工作來源、事假12h與外勤／出差投影、補休原日逐段對帳、月46/54及三月138上限、輪班／連續出勤及例假超時分類、C3完整項目／保費／稅、D差額與採用、rollout與rollback、八月全員人工對帳。先前已鎖快照不重算覆寫；未知保費／給付不填0，缺政策／證據不直接啟用。保持Draft與[skip netlify]，保留既有CI，不觸發manual hooks、真通知或付款。
 
 每批回報：分支、完整commit、相對基準與檔案清單、最初失敗及修後測試、獨立覆核、manifest／source hash、來源是否合成或正式唯讀、未解問題與下一個必要確認。沒有證據就標未跑／未驗收。
+
+## Claude 接手進度（2026-10-25）
+
+| 工作包 | 狀態 |
+| --- | --- |
+| 1 日別來源定位 | 程式面完成：系統沒有任何可保存個人例假／休息日的欄位或畫面；`dayTypeCalendars` 契約存在但無建立 API／UI。正式資料唯讀查核被本機自動權限檢查拒絕，**未驗**。詳 `docs/PR13_DAYTYPE_SOURCE_DISCOVERY.md`，待使用者指出八月指定的畫面／檔案，或授權唯讀查核 |
+| 2 制度來源防護 | `01a8aa2`：`NormalPayPolicy.workRegime`；非 `standard-8-40`（含缺漏、unknown、variable、84-1）一律 needs-review、amount=null，但保留分段與精確值。OT 預覽在工日 regime 與正常政策不一致時列待核。先紅（6 fail）後綠，新增 `tests/normalPayRegime.test.ts` 7 例。未另做獨立 review |
+| 3 驗證整合 | 未 push；PR14 未同步 |
+
+`npm run verify:pr13`（commit `01a8aa2998dcb2a07008b99357fad873a01c6d48`，sourceHash `bdc357574ff370dac32f837ccbac2fa18269b67d317aed495da62bc3314397f4`，manifest `.verification/pr13/2026-10-24T23-41-57-434Z/`，本機 ignored）：dependency audit、typecheck、unit/API 839／39 檔、Firestore emulator 87／2 檔（demo-chiayi-payroll）、Chromium E2E 85、production build 全部通過。
+
+正式資料影響：既有 `payrollPolicyVersions` 正式盤點為 0，新欄位不改任何正式紀錄；未來建立政策版本時必須明填 `workRegime`。正式計薪仍 NO GO。
