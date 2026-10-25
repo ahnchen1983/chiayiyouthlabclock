@@ -104,3 +104,9 @@ OT對非 standard-8-40／缺 regime保持needs-review、payable=null／BLOCKED�
 `npm run verify:pr13`（commit `68a65573e161549c1031a4ae4f43b4a878b74c69`，sourceHash `cb2f269f90ba2795a4131ca2f76c5e22b69c0064587ff31f8dbeac7065ac7552`，manifest `.verification/pr13/2026-10-24T23-58-39-107Z/`）：audit、typecheck、unit/API 853、emulator 88、E2E 89、build 全部通過。未做獨立 review；未部署。
 
 下一步必要條件：八月每人例假／休息日需在部署到可用環境後補錄並核定（目前正式環境仍是舊 main，沒有此功能）；薪資主檔與政策版本（含 `workRegime`）尚未在正式建立。正式計薪仍 NO GO。
+
+### V1 上線範圍（路線 A，`279712a`）
+
+使用者確認實際薪資在系統外計算（先前系統計算一直有錯）。規劃見 `docs/RELEASE_PLAN_V1_2026-10-25.md`。已加試算標示（薪資頁、員工薪資明細、列印薪資條）並在正式建置隱藏加班申請／補休帳本。
+
+`npm run verify:pr13`（commit `279712a9e54255c83e8e7a93cc00a9aec066205b`，sourceHash `db3790f306bdd8d08b315a7083e15a87b079b770ac5e19cab7eb887fba753a7f`，manifest `.verification/pr13/2026-10-25T00-17-03-876Z/`）：audit、typecheck、unit/API 855、emulator 88、E2E 91、build 全部通過。尚未合併、部署；規劃第五節其餘確認事項待使用者回答。
