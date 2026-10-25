@@ -1,5 +1,4 @@
 import TerminationSettlementReview from '../TerminationSettlementReview';
-import TrialPayrollBanner from '../TrialPayrollBanner';
 import NormalPayPreview from '../NormalPayPreview';
 import { taipeiDate } from '../../utils/attendance';
 import { formatMoney, formatHours } from '../../utils/format';
@@ -68,7 +67,6 @@ const MySalary: React.FC = () => {
                 </button>
             </div>
 
-            <TrialPayrollBanner />
             {salary && <PayrollReviewNotice salary={salary} />}
             {!salary ? (
                 <div className="text-center py-20 text-gray-500 bg-white rounded-2xl shadow">
