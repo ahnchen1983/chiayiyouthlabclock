@@ -96,3 +96,11 @@ OT對非 standard-8-40／缺 regime保持needs-review、payable=null／BLOCKED�
 `npm run verify:pr13`（commit `01a8aa2998dcb2a07008b99357fad873a01c6d48`，sourceHash `bdc357574ff370dac32f837ccbac2fa18269b67d317aed495da62bc3314397f4`，manifest `.verification/pr13/2026-10-24T23-41-57-434Z/`，本機 ignored）：dependency audit、typecheck、unit/API 839／39 檔、Firestore emulator 87／2 檔（demo-chiayi-payroll）、Chromium E2E 85、production build 全部通過。
 
 正式資料影響：既有 `payrollPolicyVersions` 正式盤點為 0，新欄位不改任何正式紀錄；未來建立政策版本時必須明填 `workRegime`。正式計薪仍 NO GO。
+
+### 日別指定功能（2026-10-25，`68a6557`）
+
+使用者回答：日別由每人在「偏好設定」設定，且偏好設定**不區分**例假與休息日；選擇「加正式指定」。已實作逐月例假／休息日指定、另一位管理者核定（含國定假日、確認其餘為一般日、法遵提醒確認）、不可覆寫日別日曆版本與 `personal-monthly` 逐月解析；管理者可附原因代為補錄。細節見 SDD 與 `PR13_DAYTYPE_SOURCE_DISCOVERY.md`。
+
+`npm run verify:pr13`（commit `68a65573e161549c1031a4ae4f43b4a878b74c69`，sourceHash `cb2f269f90ba2795a4131ca2f76c5e22b69c0064587ff31f8dbeac7065ac7552`，manifest `.verification/pr13/2026-10-24T23-58-39-107Z/`）：audit、typecheck、unit/API 853、emulator 88、E2E 89、build 全部通過。未做獨立 review；未部署。
+
+下一步必要條件：八月每人例假／休息日需在部署到可用環境後補錄並核定（目前正式環境仍是舊 main，沒有此功能）；薪資主檔與政策版本（含 `workRegime`）尚未在正式建立。正式計薪仍 NO GO。
