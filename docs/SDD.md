@@ -354,6 +354,10 @@ chiayiyouthlabclock/
 
 `overtimeCompPolicy.ts`：`get/propose/agree/review-overtime-comp-policy`。提案 `overtimeCompPolicyProposals/{empId}`（awaiting-employee → awaiting-approval → approved／returned）；核定寫 `overtimeWorkflowPolicies/{empId}`、`compPolicies/{empId}`（`deadlineRule:'annual-leave-year-end'`、`annualLeaveYear:'calendar'`）與 `overtimeCompPolicyVersions/{version}`。`compEligibility.ts` 以 C2b 引擎推導可轉分鐘與原日工資基礎；`compWorkflow.ts` 每批補休期限＝加班當年 12/31。計薪 adapter 將已核定補休區間拆成 `comp-converted` 分段不給付。
 
+#### 4.5.x 補休結清（C2b5，2026-10-25）
+
+`utils/payroll/compSettlement.ts` `settleCompLots()`：未休分鐘取每批最後的分鐘（施行細則第22條之2 先後順序），依原日 `originalWageBasis.tiers` 計價；到期併入期限所在月份、離職併入離職月。`normalPayPreview` 將結清加入 `combined`，`SalaryDetail.compSettlementPay` 為獨立明細。
+
 ### 4.6 員工管理模組
 
 | 項目 | 說明 |

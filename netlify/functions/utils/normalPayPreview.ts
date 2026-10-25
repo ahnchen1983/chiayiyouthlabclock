@@ -1,6 +1,7 @@
 import {overtimePreview} from './overtimePreview';
 import {calculateNormalPay,type NormalPayInterval} from '../../../utils/payroll/normalPay';
 import {add,rational,rounded,evidence} from '../../../utils/payroll/rational';
+import {settleCompLots} from '../../../utils/payroll/compSettlement';
 import {confirmedWork,clockInterval,clockSourceKey,validDate,taipeiDate} from '../../../utils/attendance';
 import {LeaveStatus,isOutingLeaveType} from '../../../types';
 import {evidenceHash} from './attendanceCaseLifecycle';
@@ -29,7 +30,8 @@ export function normalPayPreview(emp:any,month:string,cards:any[],leaves:any[],v
  const days=[...(emp.normalPayDays||[])].sort((a:any,b:any)=>a.date.localeCompare(b.date));
  const authority=emp.employmentAuthority;
  const timelineExit=authority?.kind==='effective-master'&&(authority.periods||[]).some((p:any)=>p.employmentState==='not-employed'&&(authority.periods||[]).some((before:any)=>['active','loa'].includes(before.employmentState)&&String(before.to).startsWith(month)&&Date.parse(p.from+'T00:00:00Z')-Date.parse(before.to+'T00:00:00Z')===86400000));
- if((!authority&&!emp.effectiveMasterVersion&&String(emp.resignDate||'').startsWith(month))||timelineExit||days.some((d:any,i:number)=>i>0&&d.employmentState==='not-employed'&&['active','loa'].includes(days[i-1].employmentState)))issues.push('離職當月日期與薪資須人工輸入並覆核；核定來源／逐項差額流程尚未完成，折算僅供候選比較');
+ const exitInMonth=(!authority&&!emp.effectiveMasterVersion&&String(emp.resignDate||'').startsWith(month))||!!timelineExit||days.some((d:any,i:number)=>i>0&&d.employmentState==='not-employed'&&['active','loa'].includes(days[i-1].employmentState));
+ if(exitInMonth)issues.push('離職當月日期與薪資須人工輸入並覆核；核定來源／逐項差額流程尚未完成，折算僅供候選比較');
  if(!emp.normalPayCompEvidence)issues.push('補休使用來源未載入');else issues.push(...emp.normalPayCompEvidence.issues);
  const first=Date.parse(month+'-01T00:00:00+08:00')/60000,last=first+new Date(Date.UTC(Number(month.slice(0,4)),Number(month.slice(5)),0)).getUTCDate()*1440;
  // Weeks crossing the month need their other days' reviewed work too (LSA Art.30
@@ -75,10 +77,15 @@ export function normalPayPreview(emp:any,month:string,cards:any[],leaves:any[],v
  const result=calculateNormalPay(emp.id,month,emp.normalPayDays||[],intervals,issues,{overtimeEngine:true});
  const ot=overtimePreview({empId:emp.id,month,days:emp.normalPayDays||[],contextDays:emp.normalPayContextDays||[],intervals,credits:emp.normalPayCompEvidence?.credits||[]});
  result.overtimePreview=ot;
+ // Untaken comp time due this month (expiry or exit) joins the same total.
+ const monthDays=emp.normalPayDays||[],firstDate=month+'-01',lastDate=taipeiDate(new Date((last-1)*60000));
+ const settlement=settleCompLots(emp.normalPayCompEvidence?.outstanding||[],{first:firstDate,last:lastDate},{exitInMonth,activeOn:(d:string)=>monthDays.find((x:any)=>x.date===d)?.employmentState==='active'});
+ result.compSettlement=settlement;
  // Company rule: segments stay exact and only the final total is rounded.
- const combinedIssues=[...new Set([...result.issues,...ot.blocking])];
+ const combinedIssues=[...new Set([...result.issues,...ot.blocking,...settlement.issues])];
  const ready=!combinedIssues.length&&!!ot.monthExact&&result.rounding?.stage==='final';
- const exact=ready?add(rational(BigInt(result.exactTotal.numerator),BigInt(result.exactTotal.denominator)),rational(BigInt(ot.monthExact!.numerator),BigInt(ot.monthExact!.denominator))):null;
- result.combined={status:ready?'ready':'needs-review',issues:combinedIssues,exactTotal:exact?evidence(exact):null,amount:exact?rounded(exact,result.rounding!):null,normalExact:result.exactTotal,overtimeExact:ot.monthExact};
+ const fr=(x:{numerator:string;denominator:string})=>rational(BigInt(x.numerator),BigInt(x.denominator));
+ const exact=ready?add(add(fr(result.exactTotal),fr(ot.monthExact!)),fr(settlement.exact)):null;
+ result.combined={status:ready?'ready':'needs-review',issues:combinedIssues,exactTotal:exact?evidence(exact):null,amount:exact?rounded(exact,result.rounding!):null,normalExact:result.exactTotal,overtimeExact:ot.monthExact,compSettlementExact:settlement.items.length?settlement.exact:null};
  return result;
 }

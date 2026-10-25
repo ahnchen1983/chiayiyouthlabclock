@@ -7,5 +7,6 @@ export function normalPayCSV(r:NormalPayResult):string{const c=r.combined,ot=r.o
  ['員工','日期','起分鐘','迄分鐘','項目','分鐘','薪資版本','政策ID','政策版本','來源','精確分子','精確分母','分項捨入值'],
  ...r.segments.map(s=>[s.employeeId,s.date,s.start,s.end,s.kind,s.minutes,s.payVersion,s.policyId,s.policyVersion,s.sourceIds.join(';'),s.exact.numerator,s.exact.denominator,s.rounded]),
  ...(ot?[['加班費',ot.status,f(ot.monthExact)||'待覆核'],...ot.lines.map(l=>['加班費分段',l.date,l.start,l.end,l.kind,l.minutes,l.basisId,l.basisVersion,l.sourceIds.join(';'),l.exact?.numerator??'待核非零元',l.exact?.denominator??'',l.multiplier?.numerator??'',l.multiplier?.denominator??'',JSON.stringify(l.sourceIds.map((id,n)=>({id,version:l.sourceVersions[n]})))]),['法遵提醒（不影響給付）',...ot.complianceIssues]]:[]),
+ ...(r.compSettlement?.items.length?[['補休結清',f(r.compSettlement.exact)],...r.compSettlement.items.map(it=>['補休結清分段',it.lotId,it.reason,it.minutes,it.exact.numerator,it.exact.denominator,JSON.stringify(it.parts)])]:[]),
  ['待覆核原因',...(c?.issues??r.issues)]
  ].map(row=>row.map(cell).join(',')).join('\n');}

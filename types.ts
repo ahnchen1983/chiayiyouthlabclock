@@ -423,6 +423,7 @@ export interface SalaryDetail {
     // 薪資項目
     baseSalary: number | null;
     overtimePay: number | null;
+    compSettlementPay?: number | null; // 未休補休依原加班日倍率結清（勞基法第32條之1）
     grossSalary: number | null;
     // 扣除項目（勞基法）
     laborInsurance: number | null;

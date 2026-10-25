@@ -120,8 +120,11 @@ export async function compNormalPayEvidence(db:any,tx:any,empId:string,month:str
  // source work touches any week of this month (month ±6 days) go to the OT engine.
  const wFirst=first-6*1440,wLast=last+6*1440,credits:any[]=[];
  for(const r of all.filter(r=>r.kind==='credit'&&!['rejected','cancelled','returned','superseded'].includes(r.status)))for(const g of Array.isArray(r.creditSegments)?r.creditSegments:[{start:NaN,end:NaN}]){if(!Number.isSafeInteger(g?.start)||!Number.isSafeInteger(g?.end)){issues.push('補休取得來源區間無效 '+r.id);continue;}if(g.start<wLast&&g.end>wFirst)credits.push({id:r.id,start:g.start,end:g.end,status:r.status});}if(uses.some(r=>!Number.isFinite(Date.parse(r.startDate))||!Number.isFinite(Date.parse(r.endDate))))issues.push('補休使用日期無法判斷月份');const requests=uses.filter(r=>Date.parse(r.startDate)/60000<last&&Date.parse(r.endDate)/60000>first);
- if(!requests.length)return {issues,intervals,credits};
- const ledger=await rows(db,readTx,'compLedger',empId);
+ // Untaken comp time is a payroll source too: payroll settles it on expiry or
+ // exit from the ledger itself, so a missed settlement scan cannot drop it.
+ const ledger=await rows(db,readTx,'compLedger',empId);let outstanding:any[]=[];
+ try{outstanding=foldCompLedger(ledger).lots.filter(l=>l.available+l.reserved>0).map(l=>({id:l.id,start:l.start,end:l.end,deadline:l.deadline,untakenMinutes:l.available+l.reserved,originalWageBasis:l.originalWageBasis||null}));}catch{issues.push('補休帳本無法核對，未休時數待核');}
+ if(!requests.length)return {issues,intervals,credits,outstanding};
  try{const fold=foldCompLedger(ledger);for(const r of requests){
   if(['rejected','cancelled','returned','superseded'].includes(r.status)){if(fold.reservations.has(r.id)||ledger.some(e=>e.type==='debit'&&e.requestId===r.id))fail(409,'補休終態與預占釋放／使用帳本不一致');continue;}
   if(r.status!=='approved'||!r.approvedBy||!r.approvedAt){issues.push('補休使用申請尚未核定');continue;}
@@ -130,5 +133,5 @@ export async function compNormalPayEvidence(db:any,tx:any,empId:string,month:str
   await checkLots(db,readTx,empId,fold.lots.filter(l=>debits[0].allocations.some((a:any)=>a.lotId===l.id)),true,false);
   intervals.push({start:w.start,end:w.end,kind:'comp',sourceId:r.id,sourceVersion:evidenceHash([r,debits[0]]),approvalId:r.approvedBy+'@'+r.approvedAt});
  }}catch{issues.push('補休帳本／核准使用來源待覆核');}
- return {issues,intervals,credits};
+ return {issues,intervals,credits,outstanding};
 }

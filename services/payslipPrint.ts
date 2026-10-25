@@ -77,6 +77,7 @@ export const openPayslipPrintView = (salary: SalaryDetail): void => {
   <table>
     <tr><td>${salary.position === '專責人員' ? '月薪' : '時薪計算'}</td><td class="right">${fmt(salary.baseSalary)}</td></tr>
     ${salary.overtimePay > 0 ? `<tr><td>加班費</td><td class="right">${fmt(salary.overtimePay)}</td></tr>` : ''}
+    ${(salary.compSettlementPay ?? 0) > 0 ? `<tr><td>補休結清</td><td class="right">${fmt(salary.compSettlementPay!)}</td></tr>` : ''}
     <tr class="total-row"><td>應發合計</td><td class="right">${fmt(salary.grossSalary)}</td></tr>
   </table>
 

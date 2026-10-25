@@ -82,6 +82,10 @@ const SalaryDetailModal: React.FC<{ salary: SalaryDetail; onClose: () => void }>
                                 <span className="text-gray-600">加班費 ({formatHours(salary.overtimeHours)}h（依已覆核級距）)</span>
                                 <span className="font-semibold text-gray-800">{formatCurrency(salary.overtimePay)}</span>
                             </div>
+                            {(salary.compSettlementPay ?? 0) > 0 && <div className="flex justify-between py-2 border-b border-gray-100">
+                                <span className="text-gray-600">補休結清（未休補休依原加班日倍率）</span>
+                                <span className="font-semibold text-gray-800">{formatCurrency(salary.compSettlementPay!)}</span>
+                            </div>}
                             <div className="flex justify-between py-2 bg-green-50 rounded px-2">
                                 <span className="font-bold text-green-700">應發薪資</span>
                                 <span className="font-bold text-green-700">{formatCurrency(salary.grossSalary)}</span>

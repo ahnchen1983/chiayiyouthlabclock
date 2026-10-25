@@ -4,7 +4,8 @@ import type { ClockRecord, LeaveRequest, ScheduleEvent, SalaryDetail, SystemConf
 import { LeaveStatus, isOutingLeaveType } from '../../../types';
 import { clockInterval, confirmedWork, shiftIntervals, intervalMinutes, hhmmMinutes, leaveEndMinutes, validDate, clockSourceKey } from '../../../utils/attendance';
 import { roundMoney } from '../../../utils/format';
-import { rational, rounded } from '../../../utils/payroll/rational';
+import { add, rational, rounded } from '../../../utils/payroll/rational';
+const fraction = (x: { numerator: string; denominator: string }) => rational(BigInt(x.numerator), BigInt(x.denominator));
 
 const leaveInstant = (value: string): number => Date.parse(/(Z|[+-]\d\d:\d\d)$/.test(value || '') ? value : value + '+08:00');
 const overlaps = (a: { start: number; end: number }, b: { start: number; end: number }): boolean => Math.min(a.end, b.end) > Math.max(a.start, b.start);
@@ -229,7 +230,11 @@ export const calculateSalaryForEmployee = (
     const masterBase = combined?.amount != null && normalPreview?.rounding ? Number(rounded(rational(BigInt(combined.normalExact.numerator),BigInt(combined.normalExact.denominator)),normalPreview.rounding)) : null;
     const base = normalPreview ? (masterBase ?? 0) : money(monthly ? baseRate : (knownMinutes - otMinutes) / 60 * hourly + hourlyLeavePay);
     const gross = normalPreview ? (masterGross ?? 0) : money(base + money(otMoney));
-    const overtimePay = normalPreview ? money(gross - base) : money(otMoney);
+    // Line items sum to gross under one final rounding: base, then overtime up to
+    // normal+overtime, then untaken comp time settled this month as the remainder.
+    const beforeSettlement = combined?.amount != null && combined.compSettlementExact && normalPreview?.rounding ? Number(rounded(add(fraction(combined.normalExact),fraction(combined.overtimeExact!)),normalPreview.rounding)) : null;
+    const compSettlementPay = beforeSettlement != null ? money(gross - beforeSettlement) : 0;
+    const overtimePay = normalPreview ? money((beforeSettlement ?? gross) - base) : money(otMoney);
     if(normalPreview) otMinutes = otLines.reduce((n,l)=>n+l.minutes,0);
     // Monthly leave deductions are already inside the exact normal-pay total.
     const deduction = normalPreview ? 0 : money(monthlyDeduction);
@@ -243,7 +248,7 @@ export const calculateSalaryForEmployee = (
         totalWorkDays: attendedDays, totalWorkHours: incompleteAttendance ? null : knownMinutes / 60,
         totalLeaveHours: leaveDetails.reduce((n, l) => n + l.hours, 0), leaveDetails,
         overtimeHours: ready ? otMinutes / 60 : null,
-        baseSalary: ready ? base : null, overtimePay: ready ? overtimePay : null, grossSalary: ready ? gross : null,
+        baseSalary: ready ? base : null, overtimePay: ready ? overtimePay : null, compSettlementPay: ready ? compSettlementPay : null, grossSalary: ready ? gross : null,
         laborInsurance: ready ? insurance!.labor : null, healthInsurance: ready ? insurance!.health : null,
         laborPensionSelf: ready ? insurance!.pensionSelf : null, leaveDeduction: ready ? deduction : null,
         totalDeductions: ready ? totalDeductions : null, netSalary: ready ? money(gross - totalDeductions) : null,

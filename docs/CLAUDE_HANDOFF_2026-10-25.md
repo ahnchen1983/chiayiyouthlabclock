@@ -114,3 +114,7 @@ OT對非 standard-8-40／缺 regime保持needs-review、payable=null／BLOCKED�
 
 詳 `docs/PR13_BATCH_C2B.md`「C2b4」。政策雙人核定＋員工同意、法定期限（加班當年 12/31）、資格自動推導、計薪逐段扣除已轉補休。到期／離職結清付款尚未做。
 `npm run verify:pr13`（commit `67826bbcc2ee4770f2025deef6c2cd94eb04311d`，sourceHash `22d83c78a690126ca8bce8cac8864cf648febdad12b627e83f5d6b2c7d04cb32`，manifest `.verification/pr13/2026-10-25T01-55-32-421Z/`）：audit、typecheck、unit/API 878、emulator 90、E2E 92、build 全部通過。未做獨立 review；未部署。
+
+### 補休到期／離職結清（C2b5）
+
+詳 `docs/PR13_BATCH_C2B.md`「C2b5」。未休補休依原日倍率（取每批最後的分鐘）併入到期月或離職月應發，新增 `compSettlementPay` 明細。

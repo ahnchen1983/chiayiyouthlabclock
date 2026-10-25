@@ -148,6 +148,15 @@ const MySalary: React.FC = () => {
                                     <span className="font-semibold text-gray-800">+{formatCurrency(salary.overtimePay)}</span>
                                 </div>
                             )}
+                            {(salary.compSettlementPay ?? 0) > 0 && (
+                                <div className="flex justify-between items-center">
+                                    <div>
+                                        <p className="text-gray-700">補休結清</p>
+                                        <p className="text-xs text-gray-400">未休補休依原加班日倍率發給</p>
+                                    </div>
+                                    <span className="font-semibold text-gray-800">+{formatCurrency(salary.compSettlementPay!)}</span>
+                                </div>
+                            )}
                             <div className="border-t pt-3 flex justify-between items-center">
                                 <span className="font-bold text-green-700">應發薪資</span>
                                 <span className="font-bold text-green-700 text-lg">{formatCurrency(salary.grossSalary)}</span>
