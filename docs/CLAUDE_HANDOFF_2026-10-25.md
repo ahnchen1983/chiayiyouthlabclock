@@ -108,3 +108,4 @@ OT對非 standard-8-40／缺 regime保持needs-review、payable=null／BLOCKED�
 ### 加班費併入正式金額＋跨月週（C2b3）
 
 詳 `docs/PR13_BATCH_C2B.md`「C2b3」。主檔員工的正式應發改為正常工資＋加班費（最後合計進位）；跨月週由 effectiveMaster context days 提供；月結缺口剩 4 項（PAYROLL_ITEM_REQUIREMENTS、MANUAL_DIFF_APPROVAL、ATTENDANCE_CASE_WORKFLOW、PRODUCTION_RECONCILIATION）。需使用者提供：公司每週起始日（`overtimeRules.weekStartDay`）。
+`npm run verify:pr13`（commit `144ab9c0e147ae6155bc25f2cb37c4b1910e8350`，sourceHash `f87f71ccd5c7ef231d30a9be3b7ab967404b2caa4f8d3822e72b09193e954082`，manifest `.verification/pr13/2026-10-25T00-51-36-436Z/`）：audit、typecheck、unit/API 863、emulator 89、E2E 88、build 全部通過。未做獨立 review；未部署。
