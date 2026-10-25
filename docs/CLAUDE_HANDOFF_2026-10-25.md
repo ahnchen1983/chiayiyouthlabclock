@@ -118,3 +118,4 @@ OT對非 standard-8-40／缺 regime保持needs-review、payable=null／BLOCKED�
 ### 補休到期／離職結清（C2b5）
 
 詳 `docs/PR13_BATCH_C2B.md`「C2b5」。未休補休依原日倍率（取每批最後的分鐘）併入到期月或離職月應發，新增 `compSettlementPay` 明細。
+`npm run verify:pr13`（commit `b318f649a28d64072af7f5cf5140ccb19ce1b012`，sourceHash `f8c9179232b5a40459404f751acee1aa0cf0abc44ccf1c9efccc38cd8639866c`，manifest `.verification/pr13/2026-10-25T02-05-05-343Z/`）：audit、typecheck、unit/API 888、emulator 90、E2E 93、build 全部通過。未做獨立 review；未部署。
