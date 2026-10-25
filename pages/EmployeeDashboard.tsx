@@ -1,4 +1,5 @@
 import PayrollMasterTimeline from '../components/PayrollMasterTimeline';
+import { policyPendingWorkflowsVisible } from '../utils/releaseFlags';
 import CompWorkflow from '../components/CompWorkflow';
 import OvertimeWorkflow from '../components/OvertimeWorkflow';
 // FIX: Correctly import React and the useState hook.
@@ -24,6 +25,8 @@ const ShiftSwapPage        = lazy(() => import('../components/employee/ShiftSwap
 import ChangePasswordModal from '../components/ChangePasswordModal';
 import NotificationBell from '../components/NotificationBell';
 import { ClockIcon, CalendarIcon, ListIcon, SendIcon, LogOutIcon, UsersIcon, DollarIcon } from '../components/icons';
+// V1 hides workflows that stay inert until their policies are approved.
+const pendingWorkflows = policyPendingWorkflowsVisible();
 
 // View 切換時的 Suspense fallback — 強制保留高度避免主區塊跳動
 const ViewLoadingFallback: React.FC = () => (
@@ -146,8 +149,8 @@ const EmployeeDashboard: React.FC = () => {
         <NavItem view="cases" icon={<ListIcon className="w-6 h-6" />} label="異常待辦" />
         <NavItem view="records" icon={<ListIcon className="w-6 h-6" />} label="打卡紀錄" />
         <NavItem view="master" icon={<SendIcon className="w-6 h-6" />} label="薪資有效期主檔" />
-        <NavItem view="comp" icon={<SendIcon className="w-6 h-6" />} label="補休帳本" />
-        <NavItem view="overtime" icon={<SendIcon className="w-6 h-6" />} label="加班申請" />
+        {pendingWorkflows && <NavItem view="comp" icon={<SendIcon className="w-6 h-6" />} label="補休帳本" />}
+        {pendingWorkflows && <NavItem view="overtime" icon={<SendIcon className="w-6 h-6" />} label="加班申請" />}
         <NavItem view="leave" icon={<SendIcon className="w-6 h-6" />} label="請假/外勤" />
         <NavItem view="leaveOfAbsence" icon={<SendIcon className="w-6 h-6" />} label="留停申請" />
         <NavItem view="leaveBalance" icon={<ListIcon className="w-6 h-6" />} label="假別餘額" />

@@ -1,4 +1,5 @@
 import TerminationSettlementReview from '../TerminationSettlementReview';
+import TrialPayrollBanner from '../TrialPayrollBanner';
 import NormalPayPreview from '../NormalPayPreview';
 import { taipeiDate } from '../../utils/attendance';
 import { formatMoney, formatHours } from '../../utils/format';
@@ -241,6 +242,7 @@ const SalaryCalculation: React.FC = () => {
 
     return (
         <div className="p-4 bg-white rounded-lg shadow-lg">
+            <TrialPayrollBanner />
             {/* 標題 */}
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
                 <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">

@@ -1,4 +1,5 @@
 import { formatMoney } from '../utils/format';
+import { TRIAL_PAYROLL, TRIAL_PAYROLL_NOTICE } from '../utils/releaseFlags';
 import { SalaryDetail } from '../types';
 
 const fmt = formatMoney;
@@ -21,7 +22,7 @@ export const openPayslipPrintView = (salary: SalaryDetail): void => {
 <html lang="zh-TW">
 <head>
 <meta charset="utf-8" />
-<title>薪資條 - ${salary.name} - ${salary.yearMonth}</title>
+<title>薪資條${TRIAL_PAYROLL ? '（試算）' : ''} - ${salary.name} - ${salary.yearMonth}</title>
 <style>
   * { box-sizing: border-box; }
   body { font-family: -apple-system, "PingFang TC", "Microsoft JhengHei", sans-serif; margin: 0; padding: 32px; color: #222; background: #fff; }
@@ -50,7 +51,7 @@ export const openPayslipPrintView = (salary: SalaryDetail): void => {
 </style>
 </head>
 <body>
-  <h1>嘉義青年實驗室 — 薪資條</h1>
+  <h1>嘉義青年實驗室 — 薪資條${TRIAL_PAYROLL ? '（試算，不作為發薪依據）' : ''}</h1>
   <div class="sub">${salary.yearMonth.replace('-', ' 年 ')} 月</div>
 
   <div class="meta">
@@ -91,7 +92,7 @@ export const openPayslipPrintView = (salary: SalaryDetail): void => {
 
   <div class="net">實發薪資 <strong>${fmt(salary.netSalary)}</strong></div>
 
-  <div class="footer">本薪資條由系統自動產生，如有疑問請洽人事承辦。</div>
+  <div class="footer">${TRIAL_PAYROLL ? TRIAL_PAYROLL_NOTICE + '<br>' : ''}本薪資條由系統自動產生，如有疑問請洽人事承辦。</div>
 
   <div class="actions">
     <button onclick="window.print()">列印 / 另存 PDF</button>
