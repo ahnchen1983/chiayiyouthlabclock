@@ -1,34 +1,69 @@
-import {calculateOvertime,type OTInput,type OTResult,type OTWork} from '../../../utils/payroll/overtime';
-import type {NormalPayDay,NormalPayInterval} from '../../../utils/payroll/normalPay';
+import {calculateOvertime,type OTInput,type OTResult,type OTWork,type OTWorkday,type OTWage,type OTWeek,type OTComp,type OTProof} from '../../../utils/payroll/overtime';
+import type {NormalPayDay,NormalPayInterval,OvertimeRules} from '../../../utils/payroll/normalPay';
 import {evidenceHash} from './attendanceCaseLifecycle';
-/** Only called with effectiveMaster's server-loaded policy documents. No request
- * payload can supply wage proofs, day classifications, source versions or work.
- * C2b2 is a supplementary candidate: it does not add into netSalary or snapshots.
+import {taipeiDate} from '../../../utils/attendance';
+import {rational,sum,evidence} from '../../../utils/payroll/rational';
+/** C2b source adapter: derives every overtime input from server-loaded sources —
+ * effective-master days (this month plus six context days either side), approved
+ * day-type calendars, supervisor-reviewed clock work and the policy's overtime
+ * rules. No request payload can supply wages, day types, weeks or work.
+ *
+ * Multipliers follow LSA Arts.24/39/40 as the MOL calculator applies them
+ * (https://calcr2.mol.gov.tw/Daily, checked 2026-10-25): rest-day hours are paid at
+ * 4/3, 5/3, 8/3 of the hourly wage in total; hourly staff get 2x for holiday hours
+ * within 8h; monthly staff get one extra day. Hourly rates already include paid
+ * 例假／休息日 (MOL https://www.mol.gov.tw/1607/28690/2282/2284/2290/7170/).
  */
+export interface OvertimeSources {empId:string;month:string;days:NormalPayDay[];contextDays?:any[];intervals:NormalPayInterval[];credits?:Array<{id:string;start:number;end:number}>}
+export interface OvertimeOutcome extends OTResult {monthExact:{numerator:string;denominator:string}|null;blocking:string[]}
 // approvalId is reviewer+'@'+ISO time; split on the last '@' since a reviewer id
 // may itself contain '@' but an ISO timestamp never does.
 const reviewProof=(id:string)=>{const at=id.lastIndexOf('@');return at>0?{reviewedBy:id.slice(0,at),reviewedAt:id.slice(at+1)}:{reviewedBy:'missing',reviewedAt:'invalid'};};
-export function overtimePreview(days:NormalPayDay[],intervals:NormalPayInterval[]):OTResult {
- const issues:string[]=[],configs=new Map<string,any>();
- for(const d of days){const p=d.policy,config=(p as any)?.overtime;
-  if(!config)continue;
-  if(p?.status!=='approved'||typeof p.version!=='string'||typeof p.approvedBy!=='string'||!Number.isFinite(Date.parse(p.approvedAt))){issues.push('日別加給政策來源未核定');continue;}
-  configs.set(evidenceHash(config),config);
+const shift=(d:string,n:number)=>new Date(Date.parse(d+'T00:00:00Z')+n*86400000).toISOString().slice(0,10);
+const midnight=(d:string)=>Date.parse(d+'T00:00:00+08:00')/60000;
+const policyProof=(p:any):OTProof|null=>p?.status==='approved'&&typeof p.version==='string'&&typeof p.approvedBy==='string'&&Number.isFinite(Date.parse(p.approvedAt))?{version:p.version,reviewedBy:p.approvedBy,reviewedAt:p.approvedAt}:null;
+const validRules=(r:any):r is OvertimeRules=>r?.schemaVersion==='overtime-rules-v1'&&Number.isInteger(r.weekStartDay)&&r.weekStartDay>=0&&r.weekStartDay<=6&&r.wageComponents==='single-contract-amount'&&r.monthlyHourlyDivisor===240;
+export function overtimePreview(src:OvertimeSources):OvertimeOutcome {
+ const {empId,month,days}=src,issues:string[]=[];
+ const first=month+'-01',last=month+'-'+String(new Date(Date.UTC(Number(month.slice(0,4)),Number(month.slice(5)),0)).getUTCDate()).padStart(2,'0');
+ const byDate=new Map<string,any>();for(const d of src.contextDays||[])byDate.set(d.date,d);for(const d of days)byDate.set(d.date,{...d,covered:true});
+ // One approved rule set must govern the whole window; versions are not merged.
+ const ruleSets=new Map<string,{rules:OvertimeRules;proof:OTProof}>();
+ for(const d of byDate.values()){if(!d.covered||d.employmentState==='not-employed')continue;const proof=policyProof(d.policy),rules=d.policy?.overtimeRules;if(!proof){issues.push(d.date+' 計薪政策來源未核定');continue;}if(!validRules(rules)){issues.push('加班計算規則（每週起始日、工資組成、月薪時薪基準）未核定');continue;}ruleSets.set(evidenceHash(rules),{rules,proof});}
+ if(ruleSets.size>1)issues.push('同一週期內加班計算規則版本不一致，需明確合併覆核');
+ const ruleSet=ruleSets.size===1?[...ruleSets.values()][0]:null;
+ const blank=():OvertimeOutcome=>({...calculateOvertime({workdays:[],work:[],wages:[],weeks:[],comp:[],compEvidenceComplete:true}),status:'needs-review',monthExact:null,blocking:[...new Set(issues)],issues:[...new Set(issues)]});
+ if(!ruleSet)return blank();
+ const {rules,proof}=ruleSet;
+ // Every seven-day week touching the month, from the approved week start (Art.36).
+ const weeks:OTWeek[]=[],workdays:OTWorkday[]=[];
+ for(let d=shift(first,-6);d<=last;d=shift(d,1)){if(new Date(d+'T00:00:00Z').getUTCDay()!==rules.weekStartDay||shift(d,6)<first)continue;const dates=Array.from({length:7},(_,i)=>shift(d,i));weeks.push({id:'W'+d,dates,complete:true,...proof});
+  for(const date of dates){const day=byDate.get(date),active=day?.covered&&day.employmentState==='active';
+   workdays.push({id:empId+':'+date,date,weekId:'W'+d,dayType:active?(day.dayType||'unknown'):'not-employed',regime:active?(day.policy?.workRegime||'unknown'):'standard-8-40',contractMinutes:480,holidayConsent:'unknown',emergency:'unknown',...proof});}}
+ const known=new Set(workdays.map(w=>w.id));
+ // Workday = the reviewed card's own date (Enforcement Rules Art.17: a shift
+ // crossing midnight belongs to the day it started) unless an approved
+ // assignment names another workday.
+ const work:OTWork[]=[];
+ for(const i of src.intervals){
+  if(i.kind==='work'){const date=i.workday?.date||i.sourceDate;if(!date)continue;const id=empId+':'+date;if(!known.has(id))continue;work.push({id:i.sourceId,sourceVersion:i.sourceVersion,start:i.start,end:i.end,workdayId:id,kind:'actual',version:i.sourceVersion,...reviewProof(i.approvalId)});}
+  // 事假 counts toward the 12h daily compliance check only, never as work (MOL 1030132065).
+  else if(i.kind==='leave'&&i.leaveType==='事假'){const id=empId+':'+taipeiDate(new Date(i.start*60000));if(known.has(id))work.push({id:i.sourceId,sourceVersion:i.sourceVersion,start:i.start,end:i.end,workdayId:id,kind:'personal-leave-compliance',version:i.sourceVersion,...reviewProof(i.approvalId.split('/').pop()||'')});}
  }
- // A versioned scope containing a complete week may span payroll months. Multiple
- // incompatible policy snapshots are not shallow-merged into an invented policy.
- const config=configs.size===1?[...configs.values()][0]:null;
- if(!config||config.schemaVersion!=='overtime-scope-v1')issues.push('完整日別／正常工資組成／跨月週界來源待核定');
- if(configs.size>1)issues.push('日別加給多版本範圍衝突，需明確合併覆核');
- const work:OTWork[]=intervals.filter(i=>i.kind==='work').map(i=>({id:i.sourceId,sourceVersion:i.sourceVersion,start:i.start,end:i.end,workdayId:i.workday?.id||'unmapped:'+i.sourceId,kind:'actual',version:i.sourceVersion,...reviewProof(i.approvalId)}));
- // Approved leave allocations do not prove offsite work or the specific personal
- // leave compliance classification. Those need a source-bound dedicated adapter.
- if(intervals.some(i=>i.kind==='leave'))issues.push('假單12h合規分類／外勤來源專用投影待核；不得把假直接當actual');
- const input:OTInput={workdays:Array.isArray(config?.workdays)?config.workdays:[],wages:Array.isArray(config?.wages)?config.wages:[],weeks:Array.isArray(config?.weeks)?config.weeks:[],work,comp:[],compEvidenceComplete:false};
- for(const w of input.workdays){const d=days.find(d=>d.date===w?.date);if(d&&(d.dayType!==w.dayType||intervals.some(i=>i.workday?.id===w.id&&i.workday.date!==w.date)))issues.push('核定主檔日別／工日與加給範圍不一致');}
- for(const w of input.workdays){const d=days.find(d=>d.date===w?.date);if(d?.policy&&w?.regime!==d.policy.workRegime)issues.push('日別加給工時制度與正常薪資政策不一致');}
- for(const wage of input.wages){if(days.some(d=>{const start=Date.parse(d.date+'T00:00:00+08:00')/60000;return wage?.start<start+1440&&wage?.end>start&&d.payBasis!==wage.payBasis;}))issues.push('工資來源薪制與有效主檔不一致');}
- let result:OTResult;try{result=calculateOvertime(input);}catch{result=calculateOvertime({workdays:[],work:[],wages:[],weeks:[],comp:[],compEvidenceComplete:false});issues.push('日別加給範圍資料格式無效，不能計為零');}
- result.issues=[...new Set([...result.issues,...issues,'跨月完整週工作來源、補休原日帳本逐段對帳與月／三月法遵尚未接入，不能正式計付'])];result.status='needs-review';
- return result;
+ // Wage segments follow the master: one contiguous run per pay basis/amount/version.
+ const wages:OTWage[]=[];
+ const dated=[...byDate.values()].filter(d=>d.covered&&d.employmentState==='active').sort((a,b)=>a.date.localeCompare(b.date));
+ for(const d of dated){if(d.payBasis==='daily'){issues.push(d.date+' 日薪加班計算尚未支援');continue;}const prev=wages[wages.length-1],key=d.payBasis+'|'+d.amount+'|'+d.payVersion;
+  if(prev&&(prev as any).key===key&&prev.end===midnight(d.date)){prev.end+=1440;continue;}
+  wages.push({id:d.payVersion+':'+d.date,start:midnight(d.date),end:midnight(d.date)+1440,payBasis:d.payBasis,components:[{code:'contract-amount',amount:String(d.amount),sourceId:d.payVersion}],componentsComplete:true,monthly240Applicable:true,...proof,key} as any);}
+ // Overtime already converted to comp time is reconciled against its ledger, never also paid.
+ const comp:OTComp[]=(src.credits||[]).map(c=>({id:c.id,start:c.start,end:c.end,workdayId:empId+':'+taipeiDate(new Date(c.start*60000)),sourceVersion:c.id,employeeChoice:true,employerConsent:true,deadline:null,kind:'article32-1',...proof}));
+ const input:OTInput={workdays,work,wages,weeks,comp,compEvidenceComplete:true,payDates:{from:first,to:last}};
+ let result:OTResult;try{result=calculateOvertime(input);}catch{return {...blank(),blocking:[...issues,'加班來源資料格式無效，不能計為零']};}
+ const blocking=[...new Set([...issues,...result.issues])];
+ // Only workdays inside this month are paid here; the rest of a crossing week is
+ // paid in its own month. Compliance findings are reported, never used to withhold pay.
+ const lines=result.lines.filter(l=>l.date>=first&&l.date<=last),values=lines.map(l=>l.exact);
+ const monthExact=!blocking.length&&values.every(Boolean)?evidence(sum(values.map(v=>rational(BigInt(v!.numerator),BigInt(v!.denominator))))):null;
+ return {...result,lines,issues:blocking,blocking,monthExact,status:blocking.length?'needs-review':'candidate'};
 }

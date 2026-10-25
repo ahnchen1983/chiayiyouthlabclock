@@ -3,7 +3,10 @@ import type { ClockRecord, LeaveRequest, ScheduleEvent, SalaryDetail, PayrollPre
 import { clockInterval, shiftIntervals, validDate, hhmmMinutes } from '../../../utils/attendance';
 import { calculateSalaryForEmployee } from './payroll';
 
-export const PREFLIGHT_GAPS = ['OT_COMP_REQUEST_MODEL', 'PAYROLL_ITEM_REQUIREMENTS', 'MANUAL_DIFF_APPROVAL', 'ATTENDANCE_CASE_WORKFLOW', 'PRODUCTION_RECONCILIATION'] as const;
+// Remaining capabilities required before a month can be settled; remove each one
+// when it is implemented. OT_COMP_REQUEST_MODEL closed 2026-10-25: overtime is paid
+// from reviewed work via the C2b adapter and comp credits block per employee.
+export const PREFLIGHT_GAPS = ['PAYROLL_ITEM_REQUIREMENTS', 'MANUAL_DIFF_APPROVAL', 'ATTENDANCE_CASE_WORKFLOW', 'PRODUCTION_RECONCILIATION'] as const;
 export type RequestKind = 'terminationSettlementDrafts' | 'terminationAdjustmentCases' | 'compRequests' | 'compSettlementTasks' | 'overtimeRequests' | 'anomalyExplanations' | 'leaveRequests' | 'makeupRequests' | 'leaveOfAbsenceRequests' | 'shiftSwapRequests';
 export type RequestEvidence = Record<string, any> & { id: string };
 export type PendingSources = Record<RequestKind, RequestEvidence[]>;

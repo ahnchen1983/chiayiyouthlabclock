@@ -104,3 +104,7 @@ OT對非 standard-8-40／缺 regime保持needs-review、payable=null／BLOCKED�
 `npm run verify:pr13`（commit `68a65573e161549c1031a4ae4f43b4a878b74c69`，sourceHash `cb2f269f90ba2795a4131ca2f76c5e22b69c0064587ff31f8dbeac7065ac7552`，manifest `.verification/pr13/2026-10-24T23-58-39-107Z/`）：audit、typecheck、unit/API 853、emulator 88、E2E 89、build 全部通過。未做獨立 review；未部署。
 
 下一步必要條件：八月每人例假／休息日需在部署到可用環境後補錄並核定（目前正式環境仍是舊 main，沒有此功能）；薪資主檔與政策版本（含 `workRegime`）尚未在正式建立。正式計薪仍 NO GO。
+
+### 加班費併入正式金額＋跨月週（C2b3）
+
+詳 `docs/PR13_BATCH_C2B.md`「C2b3」。主檔員工的正式應發改為正常工資＋加班費（最後合計進位）；跨月週由 effectiveMaster context days 提供；月結缺口剩 4 項（PAYROLL_ITEM_REQUIREMENTS、MANUAL_DIFF_APPROVAL、ATTENDANCE_CASE_WORKFLOW、PRODUCTION_RECONCILIATION）。需使用者提供：公司每週起始日（`overtimeRules.weekStartDay`）。

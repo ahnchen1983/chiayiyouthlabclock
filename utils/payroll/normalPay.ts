@@ -1,8 +1,12 @@
-import type {OTResult,OTWorkday,OTWage,OTWeek} from './overtime';
+import type {OTResult} from './overtime';
+/** Approved overtime rules. Week start is the employer's fixed seven-day cycle (LSA
+ * Art.36); a single contract amount is the full regular wage; monthly hourly basis /240. */
+export interface OvertimeRules {schemaVersion:'overtime-rules-v1';weekStartDay:number;wageComponents:'single-contract-amount';monthlyHourlyDivisor:240}
 import {validDate} from '../attendance';
 import {add,decimal,evidence,mul,rational,rounded,sum,validRounding,type FractionEvidence,type Rational,type RoundingPolicy} from './rational';
 export interface NormalPayPolicy {
- overtime?:{schemaVersion:'overtime-scope-v1';workdays:OTWorkday[];wages:OTWage[];weeks:OTWeek[]};
+ // C2b rules applied to sources derived from the master, calendars and reviewed work.
+ overtimeRules?:OvertimeRules;
  version:string;status:'approved';approvedBy:string;approvedAt:string;
  dateRule:'taipei-calendar';employmentDates:'inclusive';restDays:'calendar-paid';dailyNormalMinutes:480;
  // Statutory work regime from the approved policy source. Only standard-8-40 is
@@ -16,14 +20,17 @@ export interface NormalPayPolicy {
 }
 export interface NormalPayDay {date:string;employmentState:'active'|'loa'|'not-employed';payBasis:'monthly'|'hourly'|'daily';amount:string;payVersion:string;policyId:string;dayType:string;policy:NormalPayPolicy|null}
 export interface ReviewedWorkday {id:string;date:string;version:string;reviewedBy:string;reviewedAt:string}
-export interface NormalPayInterval {start:number;end:number;kind:'work'|'leave'|'comp';sourceId:string;sourceVersion:string;approvalId:string;leaveType?:string;workday?:ReviewedWorkday}
+export interface NormalPayInterval {start:number;end:number;kind:'work'|'leave'|'comp';sourceId:string;sourceVersion:string;approvalId:string;leaveType?:string;workday?:ReviewedWorkday;sourceDate?:string}
 export interface NormalPaySegment {employeeId:string;date:string;start:number|null;end:number|null;minutes:number|null;kind:string;payVersion:string;policyId:string;policyVersion:string;sourceIds:string[];exact:FractionEvidence;rounded:string|null}
-export interface NormalPayResult {overtimePreview?:OTResult;version:'normal-pay-c2a';status:'ready'|'needs-review';scope:'normal-pay-only';month:string;employeeId:string;issues:string[];segments:NormalPaySegment[];exactTotal:FractionEvidence;amount:string|null;extraWorkMinutes:number;statutoryOvertimeAmount:null;rounding:RoundingPolicy|null}
+export interface NormalPayCombined {status:'ready'|'needs-review';issues:string[];exactTotal:FractionEvidence|null;amount:string|null;normalExact:FractionEvidence;overtimeExact:FractionEvidence|null}
+export interface NormalPayResult {overtimePreview?:OTResult&{monthExact?:FractionEvidence|null;blocking?:string[]};combined?:NormalPayCombined;version:'normal-pay-c2a';status:'ready'|'needs-review';scope:'normal-pay-only';month:string;employeeId:string;issues:string[];segments:NormalPaySegment[];exactTotal:FractionEvidence;amount:string|null;extraWorkMinutes:number;statutoryOvertimeAmount:null;rounding:RoundingPolicy|null}
 const date=(m:number)=>new Date(m*60000+8*3600000).toISOString().slice(0,10);
 const dayStart=(d:string)=>Date.parse(d+'T00:00:00+08:00')/60000;
 const ratio=(r:any)=>r&&Number.isSafeInteger(r.numerator)&&Number.isSafeInteger(r.denominator)&&r.denominator>0&&r.numerator>=0&&r.numerator<=r.denominator;
 const validPolicy=(p:any):p is NormalPayPolicy=>p?.status==='approved'&&typeof p.version==='string'&&!!p.version&&typeof p.approvedBy==='string'&&!!p.approvedBy&&Number.isFinite(Date.parse(p.approvedAt))&&p.dateRule==='taipei-calendar'&&p.employmentDates==='inclusive'&&p.restDays==='calendar-paid'&&p.dailyNormalMinutes===480&&['calendar-earned','calendar-base-minus-30-unpaid-days'].includes(p.monthlyStrategy)&&p.fullMonth==='contract-amount'&&p.loa?.method==='daily-base-fraction'&&ratio(p.loa)&&p.compUse==='approved-paid-minutes'&&!!p.leavePaidFractions&&validRounding(p.rounding);
-export function calculateNormalPay(employeeId:string,month:string,days:NormalPayDay[],intervals:NormalPayInterval[],inputIssues:string[]=[]):NormalPayResult {
+/** overtimeEngine: work beyond 8h or on non-normal days is valued by the C2b engine
+ * and joined in `combined`, so it is no longer an unresolved gap here. */
+export function calculateNormalPay(employeeId:string,month:string,days:NormalPayDay[],intervals:NormalPayInterval[],inputIssues:string[]=[],options:{overtimeEngine?:boolean}={}):NormalPayResult {
  const issues=new Set(inputIssues),segments:NormalPaySegment[]=[],values:Rational[]=[];let extraWorkMinutes=0,rounding:RoundingPolicy|null=null;
  const invalid=(m:string)=>issues.add(m);if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(month))throw Error('invalid month');
  const year=Number(month.slice(0,4)),mo=Number(month.slice(5)),count=new Date(Date.UTC(year,mo,0)).getUTCDate(),from=dayStart(month+'-01'),to=from+count*1440;
@@ -63,7 +70,7 @@ export function calculateNormalPay(employeeId:string,month:string,days:NormalPay
   const dayGroups=new Set(parts.filter(i=>i.kind==='work'&&i.workday).map(i=>i.workday!.id));if(dayGroups.size>1)invalid(dkey+' 同曆日多工日配置待C2b核定');
   for(const i of parts){const start=Math.max(begin,i.start),stop=Math.min(end,i.end),minutes=stop-start;if(d.employmentState!=='active'){invalid(dkey+' 非有效在職日有工作／假單／補休，需核實');continue;}
    if(i.kind==='work'){
-    if(d.dayType!=='normal'){invalid(dkey+' 非一般日工作待C2b');extraWorkMinutes+=minutes;continue;}
+    if(d.dayType!=='normal'){if(!options.overtimeEngine)invalid(dkey+' 非一般日工作待C2b');extraWorkMinutes+=minutes;continue;}
     const group=i.workday?'workday:'+i.workday.id:'candidate-calendar:'+dkey,used=usedByWorkday.get(group)||0;const normal=Math.min(minutes,Math.max(0,480-used));usedByWorkday.set(group,used+minutes);extraWorkMinutes+=minutes-normal;
     if(d.payBasis==='hourly'&&normal)push(d,'hourly-normal-work',mul(rate,rational(BigInt(normal),60n)),i,start,start+normal);
    }else{
@@ -75,7 +82,7 @@ export function calculateNormalPay(employeeId:string,month:string,days:NormalPay
    }
   }
  }
- if(extraWorkMinutes)invalid('超出正常工時／非一般日工資待C2b，不等於免付加班費');
+ if(extraWorkMinutes&&!options.overtimeEngine)invalid('超出正常工時／非一般日工資待C2b，不等於免付加班費');
  const total=sum(values);if(total.n<0n)invalid('正常薪資合計為負，需人工覆核，不能當作員工欠款');let amount:string|null=null;
  if(rounding){if(rounding.stage==='per-item')segments.forEach((s,i)=>s.rounded=rounded(values[i],rounding!));amount=rounded(rounding.stage==='per-item'?sum(segments.map(s=>decimal(s.rounded!))):total,rounding);}
  return {version:'normal-pay-c2a',scope:'normal-pay-only',status:issues.size?'needs-review':'ready',month,employeeId,issues:[...issues],segments,exactTotal:evidence(total),amount:issues.size?null:amount,extraWorkMinutes,statutoryOvertimeAmount:null,rounding};

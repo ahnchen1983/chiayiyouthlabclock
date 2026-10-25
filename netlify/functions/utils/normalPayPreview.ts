@@ -1,5 +1,6 @@
 import {overtimePreview} from './overtimePreview';
 import {calculateNormalPay,type NormalPayInterval} from '../../../utils/payroll/normalPay';
+import {add,rational,rounded,evidence} from '../../../utils/payroll/rational';
 import {confirmedWork,clockInterval,clockSourceKey,validDate,taipeiDate} from '../../../utils/attendance';
 import {LeaveStatus,isOutingLeaveType} from '../../../types';
 import {evidenceHash} from './attendanceCaseLifecycle';
@@ -17,6 +18,7 @@ const assignmentScope=(day:any,employeeId:string,start:number,end:number)=>{
   &&scope.from<=taipeiDate(new Date(start*60000))&&scope.to>=taipeiDate(new Date((end-1)*60000));
 };
 export function normalPayPreview(emp:any,month:string,cards:any[],leaves:any[],validLeave:(l:any)=>boolean,validationIssues:string[]=[]){
+ const defaults:Array<{interval:NormalPayInterval;c:any}>=[];
  const issues:string[]=[...validationIssues,...(emp.masterAssessment?.issues||[]).filter((s:string)=>s!=='多段雇用／留停／調薪或部分月折算待C2')],intervals:NormalPayInterval[]=[...(emp.normalPayCompEvidence?.intervals||[])];
  if((emp.normalPayDays||[]).some((d:any)=>d.policy?.rounding?.stage&&d.policy.rounding.stage!=='final'))issues.push('公司已確認最後合計才進位；逐項進位政策不可作為本次試算依據');
  // Confirmed company input process: exit date AND exit-month salary are manual.
@@ -30,18 +32,24 @@ export function normalPayPreview(emp:any,month:string,cards:any[],leaves:any[],v
  if((!authority&&!emp.effectiveMasterVersion&&String(emp.resignDate||'').startsWith(month))||timelineExit||days.some((d:any,i:number)=>i>0&&d.employmentState==='not-employed'&&['active','loa'].includes(days[i-1].employmentState)))issues.push('離職當月日期與薪資須人工輸入並覆核；核定來源／逐項差額流程尚未完成，折算僅供候選比較');
  if(!emp.normalPayCompEvidence)issues.push('補休使用來源未載入');else issues.push(...emp.normalPayCompEvidence.issues);
  const first=Date.parse(month+'-01T00:00:00+08:00')/60000,last=first+new Date(Date.UTC(Number(month.slice(0,4)),Number(month.slice(5)),0)).getUTCDate()*1440;
+ // Weeks crossing the month need their other days' reviewed work too (LSA Art.30
+ // weekly 40h). The window is the full weeks from the approved week start.
+ const rules=(emp.normalPayDays||[]).map((d:any)=>d.policy?.overtimeRules).find((r:any)=>Number.isInteger(r?.weekStartDay));
+ const weekday=(m:number)=>new Date(m*60000+8*3600000).getUTCDay();
+ const wFirst=rules?first-((weekday(first)-rules.weekStartDay+7)%7)*1440:first,wLast=rules?last+((rules.weekStartDay-weekday(last)+7)%7)*1440:last;
  for(const c of cards.filter(c=>c.empId===emp.id)){
   if(typeof c.date!=='string'||!validDate(c.date)){issues.push('打卡日期來源無效，無法判斷月份 '+sourceId(c));continue;}
   const base=Date.parse(c.date+'T00:00:00+08:00')/60000,span=clockInterval(c),work=confirmedWork(c);
-  const relevant=c.date.startsWith(month)||!span&&base===first-1440||span&&base+span.start<last&&base+span.end>first;if(!relevant)continue;
+  const relevant=c.date.startsWith(month)||!span&&base===first-1440||span&&base+span.start<last&&base+span.end>first||base>=wFirst&&base<wLast;if(!relevant)continue;
   if(work===null||!approval(c.workReview?.reviewedBy,c.workReview?.reviewedAt)){issues.push('實際工作／休息來源未核定，覆核人員／時間或工作區間無效 '+sourceId(c));continue;}
-  for(const w of work){const interval:NormalPayInterval={start:base+w.start,end:base+w.end,kind:'work',sourceId:c.id,sourceVersion:clockSourceKey(c),approvalId:c.workReview.reviewedBy+'@'+c.workReview.reviewedAt};
+  for(const w of work){const interval:NormalPayInterval={start:base+w.start,end:base+w.end,kind:'work',sourceId:c.id,sourceVersion:clockSourceKey(c),approvalId:c.workReview.reviewedBy+'@'+c.workReview.reviewedAt,sourceDate:c.date};
    // Only policy documents loaded by the trusted effective-master adapter can
    // supply identities. Raw/client card.workday fields never authorise grouping.
    const assignments=new Map<string,any>();for(const d of emp.normalPayDays||[]){const p=d.policy;if(p?.status!=='approved'||!text(p.version)||!approval(p.approvedBy,p.approvedAt))continue;if(p.workdayAssignments!==undefined&&!Array.isArray(p.workdayAssignments)){issues.push('工日分配政策格式未核定');continue;}for(const a of p.workdayAssignments||[]){if(!a||typeof a.sourceId!=='string'){issues.push('工日分配政策來源無效');continue;}if(a.sourceId===c.id){if(!assignmentScope(d,emp.id,interval.start,interval.end)){issues.push('工日分配政策不適用目前工作日期／員工或缺少可信來源 '+sourceId(c));continue;}const proof={...a,version:p.version,reviewedBy:p.approvedBy,reviewedAt:p.approvedAt};assignments.set(evidenceHash(proof),proof);}}}
    const exact=[...assignments.values()].filter(a=>a.start===interval.start&&a.end===interval.end&&a.sourceVersion===evidenceHash([interval.sourceVersion,work,interval.approvalId])&&a.workApprovalId===interval.approvalId);
    if(exact.length===1){const a=exact[0];interval.workday={id:a.workdayId,date:a.workdayDate,version:a.version,reviewedBy:a.reviewedBy,reviewedAt:a.reviewedAt};}
    else if(assignments.size)issues.push('工日分配與目前已核工作來源不一致或多重核定 '+c.id);
+   else defaults.push({interval,c});
    intervals.push(interval);
   }
  }
@@ -49,13 +57,28 @@ export function normalPayPreview(emp:any,month:string,cards:any[],leaves:any[],v
   if(['駁回','已取消','已取代'].includes(l.status))continue;
   const start=instant(l.startDate),end=instant(l.endDate);
   if(!Number.isFinite(start)||!Number.isFinite(end)||end<=start){issues.push('假單日期／期間來源無效，無法排除本月 '+sourceId(l));continue;}
-  if(!(start<last&&end>first))continue;
+  if(!(start<wLast&&end>wFirst))continue;
   if(l.status!==LeaveStatus.Approved||!validLeave(l)||!approval(l.approver,l.approvalDate)||!approval(l.payrollReviewedBy,l.payrollReviewedAt)){issues.push('假單尚未核准並有效分配 '+l.id);continue;}
   if(isOutingLeaveType(l.leaveType)){issues.push('外勤正常工時來源待專用核定 '+l.id);continue;}
   for(const a of l.payrollAllocations)intervals.push({start:instant(a.date+'T'+a.from),end:instant(a.date+'T'+a.to),kind:'leave',leaveType:l.leaveType,sourceId:l.id,sourceVersion:evidenceHash(l),approvalId:l.approver+'@'+l.approvalDate+'/'+l.payrollReviewedBy+'@'+l.payrollReviewedAt});
  }
  if((emp.normalPayDays||[]).some((d:any)=>d.payBasis==='hourly'&&d.employmentState==='active')&&!intervals.some(i=>i.start<last&&i.end>first))issues.push('本月沒有已核工作／給薪來源，不能視為已核零工時');
- const result=calculateNormalPay(emp.id,month,emp.normalPayDays||[],intervals,issues);
- result.overtimePreview=overtimePreview(emp.normalPayDays||[],intervals);
+ // Default workday is the reviewed card's own date (Enforcement Rules Art.17: a
+ // shift crossing midnight belongs to the day it started). Work blocks on either
+ // side of midnight less than 11h apart (LSA Art.34 minimum rest between shifts)
+ // may be one shift split by a break, so those cards keep needing an approved
+ // workday assignment instead of a default.
+ const blocks=defaults.map(x=>x.interval).sort((a,b)=>a.start-b.start),ambiguous=new Set<string>();
+ const day=(m:number)=>taipeiDate(new Date(m*60000));
+ for(let i=1;i<blocks.length;i++){const a=blocks[i-1],b=blocks[i];if(a.sourceId!==b.sourceId&&day(a.end-1)!==day(b.start)&&b.start-a.end<660){ambiguous.add(a.sourceId);ambiguous.add(b.sourceId);}}
+ for(const {interval,c} of defaults)if(!ambiguous.has(c.id))interval.workday={id:emp.id+':'+c.date,date:c.date,version:interval.sourceVersion,reviewedBy:c.workReview.reviewedBy,reviewedAt:c.workReview.reviewedAt};
+ const result=calculateNormalPay(emp.id,month,emp.normalPayDays||[],intervals,issues,{overtimeEngine:true});
+ const ot=overtimePreview({empId:emp.id,month,days:emp.normalPayDays||[],contextDays:emp.normalPayContextDays||[],intervals,credits:emp.normalPayCompEvidence?.credits||[]});
+ result.overtimePreview=ot;
+ // Company rule: segments stay exact and only the final total is rounded.
+ const combinedIssues=[...new Set([...result.issues,...ot.blocking])];
+ const ready=!combinedIssues.length&&!!ot.monthExact&&result.rounding?.stage==='final';
+ const exact=ready?add(rational(BigInt(result.exactTotal.numerator),BigInt(result.exactTotal.denominator)),rational(BigInt(ot.monthExact!.numerator),BigInt(ot.monthExact!.denominator))):null;
+ result.combined={status:ready?'ready':'needs-review',issues:combinedIssues,exactTotal:exact?evidence(exact):null,amount:exact?rounded(exact,result.rounding!):null,normalExact:result.exactTotal,overtimeExact:ot.monthExact};
  return result;
 }

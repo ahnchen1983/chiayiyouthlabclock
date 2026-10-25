@@ -346,6 +346,10 @@ chiayiyouthlabclock/
 - 月時數上限：80 小時
 - 預警門檻：剩餘 ≤ 10 小時時顯示「接近上限」
 
+#### 4.5.x 主檔員工的正式應發（C2b3，2026-10-25）
+
+有效期主檔員工：應發＝正常工資（C2a，`utils/payroll/normalPay.ts`）＋加班費（C2b，`utils/payroll/overtime.ts`），由 `netlify/functions/utils/normalPayPreview.ts` 合併為 `combined`，只在最後合計依政策進位。加班來源 adapter（`overtimePreview.ts`）：工日＝已核打卡日期；日別＝日別日曆；工資＝主檔；週界＝政策 `normalPay.overtimeRules`（`schemaVersion:'overtime-rules-v1'`、`weekStartDay` 0–6、`wageComponents:'single-contract-amount'`、`monthlyHourlyDivisor:240`）。`effectiveMaster` 輸出 `normalPayContextDays`（月前後各 6 日）供跨月週檢查。倍率依勞基法第24、39、40條與勞動部試算。
+
 ### 4.6 員工管理模組
 
 | 項目 | 說明 |

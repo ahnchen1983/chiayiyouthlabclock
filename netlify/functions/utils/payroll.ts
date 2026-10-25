@@ -4,6 +4,7 @@ import type { ClockRecord, LeaveRequest, ScheduleEvent, SalaryDetail, SystemConf
 import { LeaveStatus, isOutingLeaveType } from '../../../types';
 import { clockInterval, confirmedWork, shiftIntervals, intervalMinutes, hhmmMinutes, leaveEndMinutes, validDate, clockSourceKey } from '../../../utils/attendance';
 import { roundMoney } from '../../../utils/format';
+import { rational, rounded } from '../../../utils/payroll/rational';
 
 const leaveInstant = (value: string): number => Date.parse(/(Z|[+-]\d\d:\d\d)$/.test(value || '') ? value : value + '+08:00');
 const overlaps = (a: { start: number; end: number }, b: { start: number; end: number }): boolean => Math.min(a.end, b.end) > Math.max(a.start, b.start);
@@ -69,6 +70,8 @@ export const getScheduleReviewGaps = (emp: any, yearMonth: string, events: Sched
     });
 };
 export const PAYROLL_VERSION = 'payroll-v2-review';
+const LEGACY_POLICY_REASON=/^(工時政策格式無效|工時政策無效|結算金額精度待確認|月薪換算時薪基準待確認|加班級距無效|\d{4}-\d{2}-\d{2} 日別\/跨週工時制度待覆核|\d{4}-\d{2}-\d{2} 超過已覆核加班級距|.+ 給薪規則待確認)$/;
+const OVERTIME_LINE_KINDS=['weekday-overtime','rest-day-additional','holiday-work'];
 export const calculateSalaryForEmployee = (
     emp: any, yearMonth: string, scheduleEvents: ScheduleEvent[], clockRecords: ClockRecord[],
     leaveRequests: LeaveRequest[], _legacyConfig?: SystemConfig,
@@ -215,12 +218,21 @@ export const calculateSalaryForEmployee = (
     const insurance = review?.insurance;
     if (!insurance || [insurance.labor, insurance.health, insurance.pensionSelf].some(n => !Number.isFinite(n) || n < 0)) reasons.add('本月投保級距/身分及自付金額待覆核');
     const normalPreview = emp.normalPayDays ? normalPayPreview(emp,yearMonth,clockRecords,leaveRequests,validLeaveAllocations,[...reasons].filter(r=>/卡|重疊|排班|實際工作|請假|外勤/.test(r))) : undefined;
-    if(normalPreview){reasons.delete('多段雇用／留停／調薪或部分月折算待C2');reasons.delete('部分月到離職／留停折算待C2，不能直接給整月月薪');reasons.add('C2a僅正常薪資分段試算；完整加班／扣項整合待C2b/C3，不可當結算薪資');for(const issue of normalPreview.issues)reasons.add(issue);}
+    // Master-based pay: normal pay (C2a) + overtime (C2b) from the effective master,
+    // day-type calendars and reviewed work. The monthly review's per-date regular
+    // list, generic overtime tiers and leave fractions belong to the legacy path only.
+    const combined = normalPreview?.combined;
+    if(normalPreview){for(const r of [...reasons])if(LEGACY_POLICY_REASON.test(r))reasons.delete(r);reasons.delete('多段雇用／留停／調薪或部分月折算待C2');reasons.delete('部分月到離職／留停折算待C2，不能直接給整月月薪');for(const issue of combined?.issues||normalPreview.issues)reasons.add(issue);}
     const ready = reasons.size === 0;
-    const base = money(monthly ? baseRate : (knownMinutes - otMinutes) / 60 * hourly + hourlyLeavePay);
-    const overtimePay = money(otMoney);
-    const gross = money(base + overtimePay);
-    const deduction = money(monthlyDeduction);
+    const otLines = normalPreview?.overtimePreview?.lines.filter(l=>OVERTIME_LINE_KINDS.includes(l.kind)) || [];
+    const masterGross = combined?.amount != null ? Number(combined.amount) : null;
+    const masterBase = combined?.amount != null && normalPreview?.rounding ? Number(rounded(rational(BigInt(combined.normalExact.numerator),BigInt(combined.normalExact.denominator)),normalPreview.rounding)) : null;
+    const base = normalPreview ? (masterBase ?? 0) : money(monthly ? baseRate : (knownMinutes - otMinutes) / 60 * hourly + hourlyLeavePay);
+    const gross = normalPreview ? (masterGross ?? 0) : money(base + money(otMoney));
+    const overtimePay = normalPreview ? money(gross - base) : money(otMoney);
+    if(normalPreview) otMinutes = otLines.reduce((n,l)=>n+l.minutes,0);
+    // Monthly leave deductions are already inside the exact normal-pay total.
+    const deduction = normalPreview ? 0 : money(monthlyDeduction);
     const totalDeductions = money((insurance?.labor || 0) + (insurance?.health || 0) + (insurance?.pensionSelf || 0) + deduction);
     return {
         ...(normalPreview?{normalPayPreview:normalPreview}:{}),

@@ -14,7 +14,7 @@ import {validDate} from '../attendance';
  */
 export interface OTProof {version:string;reviewedBy:string;reviewedAt:string}
 export interface OTWorkday extends OTProof {
- id:string;date:string;weekId:string;dayType:'normal'|'rest'|'regular-holiday'|'national-holiday'|'special'|'unknown';
+ id:string;date:string;weekId:string;dayType:'normal'|'rest'|'regular-holiday'|'national-holiday'|'special'|'unknown'|'not-employed';
  regime:'standard-8-40'|'unknown'|'variable'|'84-1';contractMinutes:number;
  holidayConsent:'confirmed'|'unknown';emergency:'confirmed'|'absent'|'unknown';
 }
@@ -26,7 +26,9 @@ export interface OTWage extends OTProof {
 }
 export interface OTWeek extends OTProof {id:string;dates:string[];complete:boolean}
 export interface OTComp extends OTProof {id:string;start:number;end:number;workdayId:string;sourceVersion:string;employeeChoice:boolean;employerConsent:boolean;deadline:string|null;kind:'article32-1'|'other'}
-export interface OTInput {workdays:OTWorkday[];work:OTWork[];wages:OTWage[];weeks:OTWeek[];comp:OTComp[];compEvidenceComplete:boolean}
+/** payDates: only workdays inside this range are paid; days outside (the rest of
+ * a week crossing the month) still count toward weekly normal hours. */
+export interface OTInput {workdays:OTWorkday[];work:OTWork[];wages:OTWage[];weeks:OTWeek[];comp:OTComp[];compEvidenceComplete:boolean;payDates?:{from:string;to:string}}
 export interface OTLine {workdayId:string;date:string;dayType:string;start:number;end:number;minutes:number;kind:string;basisId:string|null;basisVersion:string|null;hourlyBasis:FractionEvidence|null;multiplier:FractionEvidence|null;exact:FractionEvidence|null;sourceIds:string[];sourceVersions:string[]}
 export interface OTResult {version:'overtime-c2b1';status:'candidate'|'needs-review';formalEligibility:'BLOCKED';lines:OTLine[];issues:string[];complianceIssues:string[];actualWorkMinutes:number;personalLeaveComplianceMinutes:number;statutoryComplianceMinutes:number;normalMinutes:number;contractExtraMinutes:number;knownLiability:FractionEvidence;payableAmount:null;rounding:'required-final-round-review';compDisposition:'not-applied'|'pending-original-source-reconciliation';weekNormalMinutes:Record<string,number>}
 const text=(v:unknown):v is string=>typeof v==='string'&&v.trim().length>0;
@@ -64,11 +66,17 @@ export function calculateOvertime(input:OTInput):OTResult {
   // Global union above retains confirmed actual even when workday mapping is missing.
   if(work.some(w=>leave.some(l=>w.start<l.end&&l.start<w.end)))problem('實際工作與事假合規來源重疊');
   if(complianceMinutes>720)compliance.add(day.id+':每日工作與適用事假合規時數超過12小時；不消滅工資義務');
+  const payable=!input.payDates||(day.date>=input.payDates.from&&day.date<=input.payDates.to);
+  // Before hire, after exit or on leave of absence: no hours count; work there needs review.
+  if(day.dayType==='not-employed'){if(all.length)problem(day.id+':非在職日有工作／事假來源，需核實');continue;}
+  // A context day with no work adds 0 weekly minutes whatever its type.
+  if(!payable&&!all.length)continue;
   if(day.regime!=='standard-8-40'){problem(day.id+':特殊制度適用資格／規則未實作');continue;}
   if(!['normal','rest','regular-holiday','national-holiday'].includes(day.dayType)){problem(day.id+':日別／調移／特殊假政策未核');continue;}
   if(day.dayType==='regular-holiday'&&minutes&&day.emergency!=='confirmed')compliance.add(day.id+':例假出勤欠缺法定停止假期依據；給付仍待核');
   if(['rest','national-holiday'].includes(day.dayType)&&minutes&&day.holidayConsent!=='confirmed')compliance.add(day.id+':假日出勤同意證據缺失；給付不因此歸零');
   const n=day.dayType==='normal'?Math.min(480,minutes):0;normalMinutes+=n;contractExtraMinutes+=day.dayType==='normal'?Math.max(0,n-day.contractMinutes):0;weekNormalMinutes[day.weekId]=(weekNormalMinutes[day.weekId]||0)+n;
+  if(!payable)continue;
   const cuts=[...new Set(work.flatMap(w=>[w.start,w.end]).concat(input.wages.filter(span).flatMap(w=>[w.start,w.end])))].sort((a,b)=>a-b);
   const parts=cuts.slice(0,-1).map((start,k)=>{const end=cuts[k+1];return {start,end,sources:work.filter(w=>w.start<end&&w.end>start),...wageFor(input.wages,start,end)};}).filter(p=>p.sources.length);
   const emit=(from:number,to:number,kind:string,mult:Rational|null,rate:Rational|null,basis:OTWage|null,sources:OTWork[],paidMinutes=to-from)=>{const value=rate&&mult?mul(mul(rate,mult),rational(BigInt(paidMinutes),60n)):null,refs=sourceRefs(sources);if(value)values.push(value);lines.push({workdayId:day.id,date:day.date,dayType:day.dayType,start:from,end:to,minutes:to-from,kind,basisId:basis?.id||null,basisVersion:basis?.version||null,hourlyBasis:rate?evidence(rate):null,multiplier:mult?evidence(mult):null,exact:value?evidence(value):null,sourceIds:refs.map(r=>r.id),sourceVersions:refs.map(r=>r.version)});};

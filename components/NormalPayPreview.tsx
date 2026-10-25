@@ -1,8 +1,20 @@
 import React from 'react';
 import type {NormalPayResult} from '../utils/payroll/normalPay';
 import {normalPayCSV} from '../utils/payroll/normalPayExport';
+const frac=(f?:{numerator:string;denominator:string}|null)=>f?f.numerator+'/'+f.denominator:'待覆核';
+// Shows the API evidence verbatim: normal pay + overtime, exact segments, one final rounding.
 export default function NormalPayPreview({result}:{result?:NormalPayResult}){
  if(!result)return null;
- const download=()=>{const url=URL.createObjectURL(new Blob(['\uFEFF'+normalPayCSV(result)],{type:'text/csv;charset=utf-8;'}));const a=document.createElement('a');a.href=url;a.download=`正常薪資覆核_${result.month}.csv`;a.click();URL.revokeObjectURL(url);};
- return <section className="my-3 p-3 border rounded bg-amber-50 break-words"><h3>正常薪資分段試算（非薪資單／非結算）</h3><p>正常項目：{result.amount??'待覆核'}；未計法定加班金額；候選模型已識別額外工作 {result.extraWorkMinutes} 分鐘（非完整加班認定，0不表示免付）。完整計薪仍 BLOCKED。</p>{result.issues.length>0&&<ul>{result.issues.map((s,i)=><li key={i}>{s}</li>)}</ul>}<p>未捨入合計：{result.exactTotal.numerator}/{result.exactTotal.denominator}；rounding：{result.rounding?.version||'待核'}</p><button onClick={download}>下載正常薪資覆核證據 CSV（非結算）</button><details><summary>查看有效期／來源分段</summary>{result.segments.map((s,i)=><div className="border-t py-2" key={i}>{s.date} · {s.kind} · {s.minutes??'曆日'} · {result.rounding?.stage==='final'?'本分段不先進位':s.rounded??'待核'}<p>未捨入 {s.exact.numerator}/{s.exact.denominator}；薪資版本 {s.payVersion}；政策 {s.policyId}/{s.policyVersion}；來源 {s.sourceIds.join('、')}</p></div>)}</details>{result.overtimePreview&&<details><summary>查看日別加給候選（未採用）</summary><p>已知分段合計 {result.overtimePreview.knownLiability.numerator}/{result.overtimePreview.knownLiability.denominator}；不是最終應付，未與正常薪資加總。正式 BLOCKED。</p><ul>{[...result.overtimePreview.issues,...result.overtimePreview.complianceIssues].map((issue,i)=><li key={i}>{issue}</li>)}</ul>{result.overtimePreview.lines.map((line,i)=><div key={i} className="border-t py-2">{line.date} · {line.dayType} · {line.kind} · {line.minutes} 分鐘<p>精確金額 {line.exact?line.exact.numerator+'/'+line.exact.denominator:'待核非零元'}；工資來源 {line.basisId}/{line.basisVersion}；倍率 {line.multiplier?line.multiplier.numerator+'/'+line.multiplier.denominator:'待核'}；來源 {line.sourceIds.map((id,n)=>id+'（版本：'+line.sourceVersions[n]+'）').join('、')}</p></div>)}</details>}</section>;
+ const c=result.combined,ot=result.overtimePreview,issues=c?.issues??result.issues;
+ const download=()=>{const url=URL.createObjectURL(new Blob(['﻿'+normalPayCSV(result)],{type:'text/csv;charset=utf-8;'}));const a=document.createElement('a');a.href=url;a.download=`薪資計算明細_${result.month}.csv`;a.click();URL.revokeObjectURL(url);};
+ return <section className="my-3 p-3 border rounded bg-amber-50 break-words"><h3>薪資計算明細（正常工資＋加班費）</h3>
+  <p>本月合計：{c?.amount??'待覆核'}（正常工資：{result.amount??'待覆核'}；加班費精確值：{frac(c?.overtimeExact)}）</p>
+  {issues.length>0&&<><p>尚待處理，處理完才會出合計：</p><ul>{issues.map((s,i)=><li key={i}>{s}</li>)}</ul></>}
+  <p>精確合計：{frac(c?.exactTotal)}；各分段不先進位，只在最後合計進位（{result.rounding?.version||'進位政策待核'}）</p>
+  <button onClick={download}>下載薪資計算明細 CSV</button>
+  <details><summary>查看正常工資分段</summary>{result.segments.map((s,i)=><div className="border-t py-2" key={i}>{s.date} · {s.kind} · {s.minutes??'曆日'}<p>精確 {s.exact.numerator}/{s.exact.denominator}；薪資版本 {s.payVersion}；政策 {s.policyId}/{s.policyVersion}；來源 {s.sourceIds.join('、')}</p></div>)}</details>
+  {ot&&<details><summary>查看加班費分段</summary>
+   {ot.complianceIssues.length>0&&<><p>法遵提醒（不影響給付）：</p><ul>{ot.complianceIssues.map((s,i)=><li key={i}>{s}</li>)}</ul></>}
+   {ot.lines.map((line,i)=><div key={i} className="border-t py-2">{line.date} · {line.dayType} · {line.kind} · {line.minutes} 分鐘<p>精確金額 {line.exact?line.exact.numerator+'/'+line.exact.denominator:'待核'}；工資來源 {line.basisId}/{line.basisVersion}；倍率 {line.multiplier?line.multiplier.numerator+'/'+line.multiplier.denominator:'待核'}；來源 {line.sourceIds.map((id,n)=>id+'（版本：'+line.sourceVersions[n]+'）').join('、')}</p></div>)}</details>}
+ </section>;
 }
