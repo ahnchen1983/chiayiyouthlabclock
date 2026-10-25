@@ -493,7 +493,7 @@ export const apiActExplanation=(command:ExplanationCommand):Promise<import('../n
 export const apiSubmitCaseLeave=(command:ExplanationCommand & {leaveType:LeaveType;startDate:string;endDate:string}):Promise<LeaveRequest>=>callAPI('submit-case-leave',{...command});
 export const apiLinkCaseLeave=(command:ExplanationCommand & {leaveRequestId:string}):Promise<unknown>=>callAPI('link-case-leave',{...command});
 export const apiReviewCaseLeave=(command:Omit<ExplanationCommand,'mode'> & {leaveRequestId:string;mode:'approve'|'reject'}):Promise<LeaveRequest>=>callAPI('review-case-leave',{...command});
-export type AnomalyMutationAction='open-termination-adjustment'| 'save-termination-draft'|'submit-termination-draft'|'review-termination-draft'|'propose-payroll-master'|'review-payroll-master'|'submit-comp-request'|'act-comp-request'|'scan-comp-settlement'|'submit-overtime-request'|'act-overtime-request'|'act-leave-version'|'submit-anomaly-explanation'|'act-anomaly-explanation'|'submit-case-leave'|'link-case-leave'|'review-case-leave'|'submit-daytype-designation'|'review-daytype-designation';
+export type AnomalyMutationAction='open-termination-adjustment'| 'save-termination-draft'|'submit-termination-draft'|'review-termination-draft'|'propose-payroll-master'|'review-payroll-master'|'submit-comp-request'|'act-comp-request'|'scan-comp-settlement'|'submit-overtime-request'|'act-overtime-request'|'act-leave-version'|'submit-anomaly-explanation'|'act-anomaly-explanation'|'submit-case-leave'|'link-case-leave'|'review-case-leave'|'submit-daytype-designation'|'review-daytype-designation'|'propose-overtime-comp-policy'|'agree-overtime-comp-policy'|'review-overtime-comp-policy';
 export const apiAnomalyMutation=(action:AnomalyMutationAction,command:Record<string,unknown>):Promise<any>=>callAPI(action,command);
 
 export const apiLeaveWorkflow=(requestId:string):Promise<{request:LeaveRequest;sourceVersion:string;caseRevision?:number;caseEvidenceVersion?:string;policyStatus:string}>=>callAPI('get-leave-workflow',{requestId});
@@ -516,6 +516,8 @@ export const apiCompWorkflow=(empId:string):Promise<{empId:string;requests:any[]
 export const apiPayrollMaster=(empId:string):Promise<any>=>callAPI('get-payroll-master',{empId});
 
 export const apiDayTypeDesignation=(yearMonth:string,empId?:string):Promise<any>=>callAPI('get-daytype-designation',{yearMonth,...(empId?{empId}:{})});
+
+export const apiOvertimeCompPolicy=(empId:string):Promise<any>=>callAPI('get-overtime-comp-policy',{empId});
 
 export const apiDayTypeDesignations=(yearMonth:string):Promise<{yearMonth:string;designations:any[]}>=>callAPI('list-daytype-designations',{yearMonth});
 

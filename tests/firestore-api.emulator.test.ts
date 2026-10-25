@@ -623,3 +623,16 @@ describe('C2b official salary on real Firestore: designation → master → over
   expect(s.calculationStatus,JSON.stringify(s.reviewReasons)).toBe('ready');expect(s.baseSalary).toBe(3200);expect(s.overtimePay).toBe(266.67);expect(s.grossSalary).toBe(3466.67);
  });
 });
+describe('overtime/comp policy two-person approval on real Firestore',()=>{
+ it('propose → employee agrees → a different admin approves writes both policies atomically',async()=>{await db.collection('employees').doc(employee.id).update({role:UserRole.Employee});await db.collection('employees').doc('EMU_ADMIN_2').set({id:'EMU_ADMIN_2',name:'合成管理者二',role:UserRole.Admin,accountKind:'system-account',hireDate:'2020-01-01',hourlyRate:0,monthlySalary:0});
+  const base={empId:employee.id,reviewerIds:['EMU_ADMIN_2'],effectiveFrom:'2026-08-01',effectiveTo:'2027-07-31'};
+  expect((await call('propose-overtime-comp-policy',{...base,expectedRevision:0,operationId:'emu-ocp-1',reason:'合成政策提案'})).statusCode).toBe(200);
+  expect((await call('agree-overtime-comp-policy',{empId:employee.id,expectedRevision:1,operationId:'emu-ocp-2'},'synthetic-employee')).statusCode).toBe(200);
+  const self=await call('review-overtime-comp-policy',{empId:employee.id,expectedRevision:2,operationId:'emu-ocp-3',mode:'approve',reason:'提案人自核測試'});expect(self.statusCode).toBe(403);
+  vi.mocked(adminAuth.verifyIdToken).mockResolvedValue({uid:'EMU_ADMIN_2'} as any);
+  const ok=await call('review-overtime-comp-policy',{empId:employee.id,expectedRevision:2,operationId:'emu-ocp-4',mode:'approve',reason:'第二人核定政策'});expect(ok.statusCode,ok.body).toBe(200);
+  expect((await db.doc('compPolicies/'+employee.id).get()).data()).toMatchObject({status:'approved',approvedBy:'EMU_ADMIN_2',employeeAgreedBy:employee.id,deadlineRule:'annual-leave-year-end'});
+  expect((await db.doc('overtimeWorkflowPolicies/'+employee.id).get()).data()).toMatchObject({status:'approved',reviewerIds:['EMU_ADMIN_2']});
+  expect((await db.collection('overtimeCompPolicyVersions').get()).size).toBe(1);
+ });
+});

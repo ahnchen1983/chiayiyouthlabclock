@@ -350,6 +350,10 @@ chiayiyouthlabclock/
 
 有效期主檔員工：應發＝正常工資（C2a，`utils/payroll/normalPay.ts`）＋加班費（C2b，`utils/payroll/overtime.ts`），由 `netlify/functions/utils/normalPayPreview.ts` 合併為 `combined`，只在最後合計依政策進位。加班來源 adapter（`overtimePreview.ts`）：工日＝已核打卡日期；日別＝日別日曆；工資＝主檔；週界＝政策 `normalPay.overtimeRules`（`schemaVersion:'overtime-rules-v1'`、`weekStartDay` 0–6、`wageComponents:'single-contract-amount'`、`monthlyHourlyDivisor:240`）。`effectiveMaster` 輸出 `normalPayContextDays`（月前後各 6 日）供跨月週檢查。倍率依勞基法第24、39、40條與勞動部試算。
 
+#### 4.5.x 加班改補休（C2b4，2026-10-25）
+
+`overtimeCompPolicy.ts`：`get/propose/agree/review-overtime-comp-policy`。提案 `overtimeCompPolicyProposals/{empId}`（awaiting-employee → awaiting-approval → approved／returned）；核定寫 `overtimeWorkflowPolicies/{empId}`、`compPolicies/{empId}`（`deadlineRule:'annual-leave-year-end'`、`annualLeaveYear:'calendar'`）與 `overtimeCompPolicyVersions/{version}`。`compEligibility.ts` 以 C2b 引擎推導可轉分鐘與原日工資基礎；`compWorkflow.ts` 每批補休期限＝加班當年 12/31。計薪 adapter 將已核定補休區間拆成 `comp-converted` 分段不給付。
+
 ### 4.6 員工管理模組
 
 | 項目 | 說明 |

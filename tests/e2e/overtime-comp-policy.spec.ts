@@ -1,0 +1,16 @@
+import {test,expect,type Page} from '@playwright/test';
+import {seedSession,employeeUser,adminUser} from './helpers/session';
+import {mockApi} from './helpers/apiMock';
+// Synthetic mock backend only.
+const proposal=(status:string,proposedBy='OTHER_ADMIN')=>({id:employeeUser.id,empId:employeeUser.id,status,revision:status==='awaiting-employee'?1:2,reviewerIds:[adminUser.id],effectiveFrom:'2026-08-01',effectiveTo:'2027-07-31',deadlineRule:'annual-leave-year-end',proposedBy,history:[]});
+async function setup(page:Page,admin:boolean,p:any){const user=admin?adminUser:employeeUser;await seedSession(page,user as any);await mockApi(page,{user:user as any});const writes:any[]=[];
+ await page.route('**/.netlify/functions/api',async route=>{const b=route.request().postDataJSON();
+  if(b.action==='get-overtime-comp-policy')return route.fulfill({json:{empId:b.empId,proposal:p,current:null,overtimeReviewActive:false,canReview:admin}});
+  if(b.action==='get-comp-workflow')return route.fulfill({json:{empId:b.empId,requests:[],ledger:[],tasks:[],issues:[],balance:{available:null,reserved:0,used:0,pendingPolicy:0},policy:null,settlementEligibility:'BLOCKED'}});
+  if(['propose-overtime-comp-policy','agree-overtime-comp-policy','review-overtime-comp-policy'].includes(b.action)){writes.push(b);return route.fulfill({json:{status:'ok'}});}
+  return route.fallback();});
+ await page.goto('/');if(await page.getByRole('button',{name:'開啟選單'}).isVisible())await page.getByRole('button',{name:'開啟選單'}).click();await page.getByRole('button',{name:'補休帳本',exact:true}).click();if(admin){await page.getByLabel('補休員工編號').fill(employeeUser.id);await page.getByRole('button',{name:'查詢補休帳本'}).click();}return writes;}
+test('employee sees the statutory rules and agrees to a pending arrangement once',async({page})=>{const writes=await setup(page,false,proposal('awaiting-employee'));await expect(page.getByText(/加班當年 12\/31/)).toBeVisible();await page.getByRole('button',{name:'我同意此加班／補休安排'}).evaluate((b:HTMLButtonElement)=>{b.click();b.click();});await expect.poll(()=>writes.length).toBe(1);expect(writes[0]).toMatchObject({action:'agree-overtime-comp-policy',empId:employeeUser.id,expectedRevision:1});});
+test('admin cannot approve before the employee agrees, nor approve their own proposal',async({page})=>{await setup(page,true,proposal('awaiting-employee'));await page.getByLabel('核定／退回原因（至少5字）').fill('核對政策內容');await expect(page.getByRole('button',{name:'核定政策'})).toBeDisabled();await expect(page.getByText('員工同意後才能核定。')).toBeVisible();});
+test('a different admin approves after the employee agreed',async({page})=>{const writes=await setup(page,true,proposal('awaiting-approval'));await page.getByLabel('核定／退回原因（至少5字）').fill('核對政策內容');await page.getByRole('button',{name:'核定政策'}).click();await expect.poll(()=>writes.length).toBe(1);expect(writes[0]).toMatchObject({action:'review-overtime-comp-policy',mode:'approve',expectedRevision:2});});
+test('own proposal shows that another admin must approve',async({page})=>{await setup(page,true,proposal('awaiting-approval',adminUser.id));await expect(page.getByText('自己提出的政策需由另一位管理者核定。')).toBeVisible();await expect(page.getByRole('button',{name:'核定政策'})).toHaveCount(0);});

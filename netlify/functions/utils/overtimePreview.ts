@@ -14,7 +14,7 @@ import {rational,sum,evidence} from '../../../utils/payroll/rational';
  * within 8h; monthly staff get one extra day. Hourly rates already include paid
  * 例假／休息日 (MOL https://www.mol.gov.tw/1607/28690/2282/2284/2290/7170/).
  */
-export interface OvertimeSources {empId:string;month:string;days:NormalPayDay[];contextDays?:any[];intervals:NormalPayInterval[];credits?:Array<{id:string;start:number;end:number}>}
+export interface OvertimeSources {empId:string;month:string;days:NormalPayDay[];contextDays?:any[];intervals:NormalPayInterval[];credits?:Array<{id:string;start:number;end:number;status?:string}>}
 export interface OvertimeOutcome extends OTResult {monthExact:{numerator:string;denominator:string}|null;blocking:string[]}
 // approvalId is reviewer+'@'+ISO time; split on the last '@' since a reviewer id
 // may itself contain '@' but an ISO timestamp never does.
@@ -23,6 +23,20 @@ const shift=(d:string,n:number)=>new Date(Date.parse(d+'T00:00:00Z')+n*86400000)
 const midnight=(d:string)=>Date.parse(d+'T00:00:00+08:00')/60000;
 const policyProof=(p:any):OTProof|null=>p?.status==='approved'&&typeof p.version==='string'&&typeof p.approvedBy==='string'&&Number.isFinite(Date.parse(p.approvedAt))?{version:p.version,reviewedBy:p.approvedBy,reviewedAt:p.approvedAt}:null;
 const validRules=(r:any):r is OvertimeRules=>r?.schemaVersion==='overtime-rules-v1'&&Number.isInteger(r.weekStartDay)&&r.weekStartDay>=0&&r.weekStartDay<=6&&r.wageComponents==='single-contract-amount'&&r.monthlyHourlyDivisor===240;
+const COMP_ELIGIBLE=['weekday-overtime','rest-day-additional'];
+function splitConverted(lines:OTResult['lines'],credits:Array<{id:string;start:number;end:number}>,issues:string[]){
+ const out:OTResult['lines']=[];let covered=0;
+ for(const l of lines){
+  const cuts=COMP_ELIGIBLE.includes(l.kind)?credits.filter(c=>c.start<l.end&&c.end>l.start).map(c=>({start:Math.max(c.start,l.start),end:Math.min(c.end,l.end)})).sort((a,b)=>a.start-b.start):[];
+  if(!cuts.length){out.push(l);continue;}
+  const value=(from:number,to:number)=>l.hourlyBasis&&l.multiplier?evidence(rational(BigInt(l.hourlyBasis.numerator)*BigInt(l.multiplier.numerator)*BigInt(to-from),BigInt(l.hourlyBasis.denominator)*BigInt(l.multiplier.denominator)*60n)):null;
+  let cursor=l.start;for(const c of cuts){if(c.start>cursor)out.push({...l,start:cursor,end:c.start,minutes:c.start-cursor,exact:value(cursor,c.start)});out.push({...l,start:c.start,end:c.end,minutes:c.end-c.start,kind:'comp-converted',exact:null});covered+=c.end-c.start;cursor=Math.max(cursor,c.end);}
+  if(cursor<l.end)out.push({...l,start:cursor,end:l.end,minutes:l.end-cursor,exact:value(cursor,l.end)});
+ }
+ const credited=credits.reduce((n,c)=>n+c.end-c.start,0);
+ if(covered!==credited)issues.push('補休取得區間不在本月可補休的加班分段（平日延長工時／休息日），需核對');
+ return out;
+}
 export function overtimePreview(src:OvertimeSources):OvertimeOutcome {
  const {empId,month,days}=src,issues:string[]=[];
  const first=month+'-01',last=month+'-'+String(new Date(Date.UTC(Number(month.slice(0,4)),Number(month.slice(5)),0)).getUTCDate()).padStart(2,'0');
@@ -56,14 +70,20 @@ export function overtimePreview(src:OvertimeSources):OvertimeOutcome {
  for(const d of dated){if(d.payBasis==='daily'){issues.push(d.date+' 日薪加班計算尚未支援');continue;}const prev=wages[wages.length-1],key=d.payBasis+'|'+d.amount+'|'+d.payVersion;
   if(prev&&(prev as any).key===key&&prev.end===midnight(d.date)){prev.end+=1440;continue;}
   wages.push({id:d.payVersion+':'+d.date,start:midnight(d.date),end:midnight(d.date)+1440,payBasis:d.payBasis,components:[{code:'contract-amount',amount:String(d.amount),sourceId:d.payVersion}],componentsComplete:true,monthly240Applicable:true,...proof,key} as any);}
- // Overtime already converted to comp time is reconciled against its ledger, never also paid.
- const comp:OTComp[]=(src.credits||[]).map(c=>({id:c.id,start:c.start,end:c.end,workdayId:empId+':'+taipeiDate(new Date(c.start*60000)),sourceVersion:c.id,employeeChoice:true,employerConsent:true,deadline:null,kind:'article32-1',...proof}));
- const input:OTInput={workdays,work,wages,weeks,comp,compEvidenceComplete:true,payDates:{from:first,to:last}};
+ const input:OTInput={workdays,work,wages,weeks,comp:[],compEvidenceComplete:true,payDates:{from:first,to:last}};
  let result:OTResult;try{result=calculateOvertime(input);}catch{return {...blank(),blocking:[...issues,'加班來源資料格式無效，不能計為零']};}
+ // Comp time (LSA Art.32-1): an approved credit replaces cash for exactly its
+ // minutes, which must lie on weekday-overtime or rest-day segments; the line keeps
+ // its basis and multiplier for a later payout of untaken hours. A choice still
+ // pending means pay-or-comp is undecided, so that employee's overtime waits.
+ const inMonth=(src.credits||[]).filter(c=>{const d=taipeiDate(new Date(c.start*60000));return d>=first&&d<=last;});
+ const approvedCredits=inMonth.filter(c=>c.status==='approved');
+ for(const c of inMonth)if(c.status!=='approved')issues.push('加班改補休申請待核定（加班費或補休未定） '+c.id);
+ const lines=splitConverted(result.lines.filter(l=>l.date>=first&&l.date<=last),approvedCredits,issues);
  const blocking=[...new Set([...issues,...result.issues])];
  // Only workdays inside this month are paid here; the rest of a crossing week is
  // paid in its own month. Compliance findings are reported, never used to withhold pay.
- const lines=result.lines.filter(l=>l.date>=first&&l.date<=last),values=lines.map(l=>l.exact);
+ const values=lines.filter(l=>l.kind!=='comp-converted').map(l=>l.exact);
  const monthExact=!blocking.length&&values.every(Boolean)?evidence(sum(values.map(v=>rational(BigInt(v!.numerator),BigInt(v!.denominator))))):null;
  return {...result,lines,issues:blocking,blocking,monthExact,status:blocking.length?'needs-review':'candidate'};
 }
