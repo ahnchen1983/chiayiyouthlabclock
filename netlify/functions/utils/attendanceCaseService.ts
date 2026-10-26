@@ -1,22 +1,13 @@
-import {foldCompLedger} from './compLedger';
-import { normalizeScheduleDoc } from './calculations';
+import {attendanceCaseMonthWindow as monthWindow,loadAttendanceCaseInput as loadInput,scanCaseObservations as scanObservations,retainAffectedWindow} from './attendanceCaseEvidence';
 import { UserRole } from '../../../types';
 import { CASE_TYPES } from './attendanceCaseTypes';
-import type { AttendanceCase, CaseObservation, DetectorInput } from './attendanceCaseTypes';
-import { detectAttendanceCases } from './attendanceCaseDetector';
-import { caseKey, evidenceHash, outboxIntent, reconcileCase } from './attendanceCaseLifecycle';
+import type { AttendanceCase, CaseObservation } from './attendanceCaseTypes';
+import { evidenceHash, outboxIntent, reconcileCase } from './attendanceCaseLifecycle';
 import { assertTransactionMonths, monthsInRange, runPayrollMutation } from './monthGuard';
-import { loadMonthlyPayrollEmployees } from './payrollReviewStorage';
 import { taipeiDate } from '../../../utils/attendance';
 export const CASE_ACTIONS = ['list-attendance-cases','get-attendance-case','scan-attendance-cases','act-attendance-case'] as const;
 const error = (code:number,message:string):never => { const e:any=new Error(message);e.statusCode=code;throw e; };
 const validId=(v:any)=>typeof v==='string'&&v.length>0&&v.length<=150&&!v.includes('/');
-const monthWindow=(month:string)=>{
- if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(month||''))error(400,'月份無效');
- const start=Date.parse(month+'-01T00:00:00+08:00')/60000;
- const next=new Date(month+'-01T00:00:00Z');next.setUTCMonth(next.getUTCMonth()+1);
- return {start,end:Date.parse(next.toISOString().slice(0,10)+'T00:00:00+08:00')/60000};
-};
 const intersect=(a:any,b:any)=>a.start<b.end&&b.start<a.end;
 const affectedMonths=(o:CaseObservation)=>monthsInRange(taipeiDate(new Date(o.window.start*60000)),taipeiDate(new Date((o.window.end-1)*60000)));
 const actorFor=async(db:any,uid:string,tx?:any)=>{
@@ -33,39 +24,6 @@ const rows=async(db:any,tx:any,name:string,empId?:string)=>{
  const query=empId?db.collection(name).where('empId','==',empId):db.collection(name);
  const snap=await tx.get(query.limit(501));if(snap.size>500)error(409,'來源超出本批安全掃描上限；未產生部分案件');
  return snap.docs.map((d:any)=>({...d.data(),id:d.id}));
-};
-// Trusted server loader only. No client observation/policy/coverage is accepted.
-const loadInput=async(db:any,tx:any,empId:string,month:string,at:string):Promise<DetectorInput>=>{
- const employeeSnap=await tx.get(db.collection('employees').doc(empId));if(!employeeSnap.exists)error(404,'員工不存在');
- const [e]=await loadMonthlyPayrollEmployees([{...employeeSnap.data(),id:empId}],month,db,tx);
- const records=await rows(db,tx,'clockRecords',empId);
- const schedules=(await rows(db,tx,'dailySchedule')).map((d:any)=>normalizeScheduleDoc(d,d.id,''));
- // Read complete employee sources, including full cross-month evidence.
- const comps=[...await rows(db,tx,'compRequests',empId),...await rows(db,tx,'compSettlementTasks',empId)];
- try{foldCompLedger(await rows(db,tx,'compLedger',empId));}catch{comps.push({id:'ledger-unverified:'+empId,empId,status:'unverified'});}
- const overtimes=await rows(db,tx,'overtimeRequests',empId);
- const leaves=await rows(db,tx,'leaveRequests',empId),makeups=await rows(db,tx,'makeupRequests',empId),absences=await rows(db,tx,'leaveOfAbsenceRequests',empId);
- const swaps=(await rows(db,tx,'shiftSwapRequests')).filter((r:any)=>r.fromEmpId===empId||r.toEmpId===empId);
- const revisions=(await rows(db,tx,'attendanceRevisions')).filter((r:any)=>r.before?.empId===empId||r.after?.empId===empId);
- const review=e.payrollReview, p=review?.policy;
- return { employee:{...(e.employmentAuthority?{employmentAuthority:e.employmentAuthority}:{}),id:empId,hireDate:e.hireDate||'',...(e.resignDate?{resignDate:e.resignDate}:{}),...(e.leaveOfAbsenceStart?{leaveOfAbsenceStart:e.leaveOfAbsenceStart}:{}),...(e.leaveOfAbsenceEnd?{leaveOfAbsenceEnd:e.leaveOfAbsenceEnd}:{})},
- window:monthWindow(month),asOf:Date.parse(at)/60000,records,schedules,leaves,makeups,comps,overtimes,absences,swaps,revisions,
- coverage:{records:'complete',schedules:schedules.some((d:any)=>d.shifts.some((s:any)=>!s.empId))?'unknown':'complete',requests:'complete',employment:'complete',revisions:'complete',explanations:'unknown'},
- // Existing payroll policy does not attest attendance grace/close/break targets.
- // Keep those unknown; do not reinterpret general system defaults as approval.
- policy:p?{version:p.version,reviewedBy:review.reviewedBy,reviewedAt:review.reviewedAt,workDateRule:p.workDateRule}:null };
-};
-// Source-scope observations have no entity anchor in B1. Namespace those
-// by scan month at the persistence boundary so April cannot overwrite May.
-const scanObservations=(input:DetectorInput,month:string)=>{
- const result=detectAttendanceCases(input);
- return {...result,observations:result.observations.map(o=>o.anchor==='scope'?{...o,anchor:'scope:'+month,id:caseKey(o.empId,o.type,'scope:'+month),evidenceVersion:evidenceHash([o.evidenceVersion,month])}:o)};
-};
-const retainAffectedWindow=(previous:AttendanceCase|undefined,o:CaseObservation):CaseObservation=>{
- if(!previous)return o;
- const window={start:Math.min(previous.observation.window.start,o.window.start),end:Math.max(previous.observation.window.end,o.window.end)};
- if(window.start===o.window.start&&window.end===o.window.end)return o;
- return {...o,window,evidenceVersion:evidenceHash([o.evidenceVersion,window])};
 };
 type StoredCase=AttendanceCase & {scanMonth:string;sourceVersion:string};
 const publicCase=(c:StoredCase)=>({id:c.id,empId:c.empId,type:c.type,anchor:c.anchor,status:c.status,owner:c.owner,revision:c.revision,

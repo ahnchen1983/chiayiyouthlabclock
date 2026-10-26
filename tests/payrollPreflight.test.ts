@@ -3,7 +3,7 @@ import { evaluatePayrollMonth, pendingRequestIssues, type PendingSources } from 
 import { card, employee, month, review, schedule } from './fixtures/payrollV2';
 import { clockSourceKey } from '../utils/attendance';
 const empty = (): PendingSources => ({terminationSettlementDrafts:[],terminationAdjustmentCases:[],compRequests:[],compSettlementTasks:[],overtimeRequests:[],anomalyExplanations:[],leaveRequests:[],makeupRequests:[],leaveOfAbsenceRequests:[],shiftSwapRequests:[]});
-const evaluate = (requests: Partial<PendingSources> = empty(), emp = employee, records = [card()], schedules = [schedule()]) => evaluatePayrollMonth({month, employees:[emp],records,schedules,leaves:[],requests});
+const evaluate = (requests: Partial<PendingSources> = empty(), emp = employee, records = [card()], schedules = [schedule()]) => evaluatePayrollMonth({month, employees:[emp],records,schedules,leaves:[],requests,cases:[]});
 const pending = {id:'P1',empId:employee.id,status:'待審核',date:'2026-04-01',startDate:'2026-04-01T13:00',endDate:'2026-04-01T17:00'};
 describe('preflight-v1 explicit synthetic input and manual expected result',()=>{
  it('PF01 fully reviewed 480min x200 =1600 is READY only within existing models',()=>{const r=evaluate();expect(r.trialStatus).toBe('READY');expect(r.salaries[0].netSalary).toBe(1600);expect(r.salaries[0].preflight.scope).toBe('existing-models');expect(r.salaries[0].preflight.gaps).toContain('MANUAL_DIFF_APPROVAL');});
@@ -29,3 +29,25 @@ describe('preflight-v1 explicit synthetic input and manual expected result',()=>
 it('PF19 prior-month proposed overnight legacy times retain next-month impact',()=>{const sources=empty();sources.makeupRequests=[{...pending,date:'2026-03-31',requestedClockIn:'22:00',requestedClockOut:'06:00'}];expect(evaluate(sources).trialStatus).toBe('BLOCKED');});
 
 it('formal settlement is BLOCKED even when trial is complete and valued at1600',()=>{const r=evaluate();expect(r.status).toBe('BLOCKED');expect(r.trialStatus).toBe('READY');expect(r.salaries[0].preflight.status).toBe('BLOCKED');expect(r.salaries[0].netSalary).toBe(1600);});
+
+describe('terminal attendance evidence remains current before salary/preflight',()=>{
+ const terminal=()=>({id:'case-closed',empId:employee.id,status:'resolved',revision:3,scanMonth:month,observation:{evidenceVersion:'stored-source',window:{start:Date.parse('2026-04-01T00:00:00+08:00')/60000,end:Date.parse('2026-04-02T00:00:00+08:00')/60000}}});
+ const assessed=(extra:any={})=>({empId:employee.id,month,inventory:'loaded',assessments:[{caseId:'case-closed',caseRevision:3,storedEvidenceVersion:'stored-source',currentEvidenceVersion:'stored-source',status:'current-clear',scope:'relevant'}],...extra});
+ const run=(cases:any= [terminal()],proof:any=undefined)=>evaluatePayrollMonth({month,employees:[employee],records:[card()],schedules:[schedule()],leaves:[],requests:empty(),cases,...(proof?{caseEvidence:{[employee.id]:proof}}:{})} as any);
+ it('stored resolved status without current server evidence cannot clear payroll',()=>{const r=run();expect(r.trialStatus).toBe('NEEDS_REVIEW');expect(r.salaries[0].netSalary).toBeNull();expect(r.salaries[0].preflight.issues).toContainEqual(expect.objectContaining({source:'attendanceCases',sourceId:'case-closed',code:'APPLICATION_UNVERIFIED'}));});
+ it.each(['stale','unknown'])('%s current evidence blocks both resolved and cancelled stored cases',status=>{for(const state of ['resolved','cancelled']){const c={...terminal(),status:state};const p=assessed({assessments:[{...assessed().assessments[0],status,currentEvidenceVersion:status==='stale'?'new-source':null}]});expect(run([c],p).trialStatus).toBe('NEEDS_REVIEW');}});
+ it('same scope/revision/stable clear evidence preserves trial readiness only',()=>{const r=run([terminal()],assessed());expect(r.trialStatus).toBe('READY');expect(r.status).toBe('BLOCKED');expect(r.salaries[0].preflight.gaps).toContain('ATTENDANCE_CASE_WORKFLOW');});
+ it.each([{empId:'OTHER'},{month:'2026-05'},{inventory:'missing'},{assessments:[]},{assessments:[{...assessed().assessments[0],caseRevision:2}]},{assessments:[{...assessed().assessments[0],currentEvidenceVersion:'other'}]}])('rejects mismatched evidence envelope %#',change=>{expect(run([terminal()],assessed(change)).trialStatus).not.toBe('READY');});
+ it('unloaded case inventory differs from an explicit loaded empty inventory',()=>{const input={month,employees:[employee],records:[card()],schedules:[schedule()],leaves:[],requests:empty()};expect(evaluatePayrollMonth(input).trialStatus).toBe('BLOCKED');expect(run([]).trialStatus).toBe('READY');});
+ it('unrelated month or employee cases do not demand proof',()=>{const otherMonth={...terminal(),observation:{...terminal().observation,window:{start:Date.parse('2026-05-01T00:00:00+08:00')/60000,end:Date.parse('2026-05-02T00:00:00+08:00')/60000}}};expect(run([otherMonth,{...terminal(),id:'other-case',empId:'OTHER'}],assessed({assessments:[{...assessed().assessments[0],scope:'unrelated'}]})).trialStatus).toBe('READY');expect(run([otherMonth]).trialStatus).toBe('NEEDS_REVIEW');});
+});
+
+it('closure scope cannot be hidden by replacing a stored April window with June',()=>{
+ const c={id:'scope-tampered',empId:employee.id,status:'resolved',revision:2,observation:{evidenceVersion:'april-evidence',window:{start:Date.parse('2026-06-01T00:00:00+08:00')/60000,end:Date.parse('2026-06-02T00:00:00+08:00')/60000}}};
+ const result=evaluatePayrollMonth({month,employees:[employee],records:[card()],schedules:[schedule()],leaves:[],requests:empty(),cases:[c],caseEvidence:{[employee.id]:{empId:employee.id,month,inventory:'loaded',assessments:[{caseId:c.id,caseRevision:2,storedEvidenceVersion:'april-evidence',currentEvidenceVersion:'current-april-evidence',status:'stale',scope:'relevant'}]}}} as any);
+ expect(result.trialStatus).toBe('NEEDS_REVIEW');expect(result.salaries[0].netSalary).toBeNull();
+});
+it('malformed ownership and missing evidence inventory cannot be ignored as another employee',()=>{
+ const result=evaluatePayrollMonth({month,employees:[employee],records:[card()],schedules:[schedule()],leaves:[],requests:empty(),cases:[{id:'unknown-owner',empId:'bad/id',status:'resolved'}],caseEvidence:{[employee.id]:{empId:employee.id,month,inventory:'missing',assessments:[]}}} as any);
+ expect(result.trialStatus).toBe('BLOCKED');expect(result.salaries[0].preflight.issues).toContainEqual(expect.objectContaining({code:'SOURCE_UNAVAILABLE',source:'attendanceCases'}));
+});

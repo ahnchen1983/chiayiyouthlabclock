@@ -34,10 +34,23 @@ export function validateInsurancePeriods(value:any):InsurancePeriod[]{
 const changedMonths=(a:InsurancePeriod[],b:InsurancePeriod[])=>{const key=(t:InsurancePeriod[],d:string)=>{const p=t.find(p=>p.from<=d&&p.to>=d);if(!p)return 'none';const {from:_f,to:_t,...content}=p;return JSON.stringify(content);};const dates=[...a,...b].flatMap(p=>[p.from,p.to]).sort();if(!dates.length)return [];const months=new Set<string>();
  for(const m of monthsInRange(dates[0],dates[dates.length-1])){const last=new Date(Date.UTC(Number(m.slice(0,4)),Number(m.slice(5)),0)).getUTCDate();for(let i=1;i<=last;i++){const d=m+'-'+String(i).padStart(2,'0');if(key(a,d)!==key(b,d)){months.add(m);break;}}}
  return [...months];};
+export interface InsuranceEvidence {periods:InsurancePeriod[]|null;source:{versionId:string;headRevision:number;evidenceVersion:string}|null}
+export async function loadInsuranceEvidence(db:any,tx:any,empId:string):Promise<InsuranceEvidence>{
+ const empty:InsuranceEvidence={periods:null,source:null};
+ const get=(r:any)=>tx?tx.get(r):r.get(),head=await get(db.collection('insuranceTimelineHeads').doc(empId));if(!head.exists)return empty;
+ const h=head.data();if(!id(h.currentVersionId))return empty;
+ const v=await get(db.collection('insuranceTimelineVersions').doc(h.currentVersionId)),d=v.exists?v.data():null;
+ if(d?.status!=='approved'||d.empId!==empId||!Array.isArray(d.periods))return empty;
+ let periods:InsurancePeriod[];
+ try{periods=validateInsurancePeriods(d.periods);}catch{return empty;}
+ // Preserve existing calculation input, while missing provenance cannot become
+ // authority for a new comparison. Hash only the actual approved source fields.
+ const source=Number.isSafeInteger(h.revision)&&h.revision>0&&id(d.approvedBy)&&typeof d.approvedAt==='string'&&Number.isFinite(Date.parse(d.approvedAt))?
+  {versionId:h.currentVersionId,headRevision:h.revision,evidenceVersion:evidenceHash({empId,versionId:h.currentVersionId,headRevision:h.revision,status:d.status,approvedBy:d.approvedBy,approvedAt:d.approvedAt,periods})}:null;
+ return {periods,source};
+}
 export async function loadInsurancePeriods(db:any,tx:any,empId:string):Promise<InsurancePeriod[]|null>{
- const get=(r:any)=>tx?tx.get(r):r.get(),head=await get(db.collection('insuranceTimelineHeads').doc(empId));if(!head.exists)return null;
- const v=await get(db.collection('insuranceTimelineVersions').doc(head.data().currentVersionId));const d=v.exists?v.data():null;
- return d?.status==='approved'&&d.empId===empId&&Array.isArray(d.periods)?d.periods:null;
+ return (await loadInsuranceEvidence(db,tx,empId)).periods;
 }
 export const INSURANCE_ACTIONS=['get-insurance-timeline','propose-insurance-timeline','review-insurance-timeline'] as const;
 export async function handleInsuranceAction(db:any,uid:string,action:string,data:any){

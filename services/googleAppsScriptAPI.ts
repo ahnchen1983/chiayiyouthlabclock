@@ -493,8 +493,15 @@ export const apiActExplanation=(command:ExplanationCommand):Promise<import('../n
 export const apiSubmitCaseLeave=(command:ExplanationCommand & {leaveType:LeaveType;startDate:string;endDate:string}):Promise<LeaveRequest>=>callAPI('submit-case-leave',{...command});
 export const apiLinkCaseLeave=(command:ExplanationCommand & {leaveRequestId:string}):Promise<unknown>=>callAPI('link-case-leave',{...command});
 export const apiReviewCaseLeave=(command:Omit<ExplanationCommand,'mode'> & {leaveRequestId:string;mode:'approve'|'reject'}):Promise<LeaveRequest>=>callAPI('review-case-leave',{...command});
-export type AnomalyMutationAction='open-termination-adjustment'| 'save-termination-draft'|'submit-termination-draft'|'review-termination-draft'|'propose-payroll-master'|'review-payroll-master'|'submit-comp-request'|'act-comp-request'|'scan-comp-settlement'|'submit-overtime-request'|'act-overtime-request'|'act-leave-version'|'submit-anomaly-explanation'|'act-anomaly-explanation'|'submit-case-leave'|'link-case-leave'|'review-case-leave'|'submit-daytype-designation'|'review-daytype-designation'|'propose-overtime-comp-policy'|'agree-overtime-comp-policy'|'review-overtime-comp-policy'|'propose-payroll-policy-version'|'review-payroll-policy-version'|'propose-insurance-timeline'|'review-insurance-timeline';
-export const apiAnomalyMutation=(action:AnomalyMutationAction,command:Record<string,unknown>):Promise<any>=>callAPI(action,command);
+export type AnomalyMutationAction='open-termination-adjustment'| 'save-termination-draft'|'submit-termination-draft'|'review-termination-draft'|'propose-payroll-master'|'review-payroll-master'|'submit-comp-request'|'act-comp-request'|'scan-comp-settlement'|'submit-overtime-request'|'act-overtime-request'|'act-leave-version'|'submit-anomaly-explanation'|'act-anomaly-explanation'|'submit-case-leave'|'link-case-leave'|'review-case-leave'|'submit-daytype-designation'|'review-daytype-designation'|'propose-overtime-comp-policy'|'agree-overtime-comp-policy'|'review-overtime-comp-policy'|'propose-payroll-policy-version'|'review-payroll-policy-version'|'propose-insurance-timeline'|'review-insurance-timeline'|'propose-payroll-item-inventory'|'review-payroll-item-inventory';
+export const apiAnomalyMutation=(action:AnomalyMutationAction,command:Record<string,unknown>):Promise<any>=>{
+ // Recovery scope is client metadata, not authority accepted by the strict item API.
+ if(action==='propose-payroll-item-inventory'||action==='review-payroll-item-inventory'){
+  const {caseId:_scope,...payload}=command;return callAPI(action,payload);
+ }
+ return callAPI(action,command);
+};
+export const apiPayrollItemInventory=(empId:string,month:string):Promise<any>=>callAPI('get-payroll-item-inventory',{empId,month});
 
 export const apiLeaveWorkflow=(requestId:string):Promise<{request:LeaveRequest;sourceVersion:string;caseRevision?:number;caseEvidenceVersion?:string;policyStatus:string}>=>callAPI('get-leave-workflow',{requestId});
 export const subjectAttachmentAPI=(subject:'makeup'|'leave')=>{

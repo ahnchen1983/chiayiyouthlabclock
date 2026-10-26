@@ -679,3 +679,91 @@ describe('C3a enrollment review regressions on real Firestore',()=>{
   expect((await db.doc('insuranceTimelineVersions/'+v.id).get()).data()?.periods[0]).toMatchObject({laborInsured:false,employmentInsured:true,laborSalary:29500,healthAmount:30300});
  });
 });
+
+describe('closure freshness uses actual immutable events and transaction sources',()=>{
+ const scan=()=>call('scan-attendance-cases',{empId:employee.id,yearMonth:month});
+ const findCase=async()=>{const rows=await db.collection('attendanceCases').get();return rows.docs.find(d=>d.data().type==='missing-in'&&d.data().anchor==='card:C1')!;};
+ const seedClosed=async()=>{
+  await db.collection('clockRecords').doc('C1').set({...card(),clockInTime:null,clockInAt:null,workReview:null,workIntervals:[]});
+  const initial=await scan();expect(initial.statusCode,initial.body).toBe(200);
+  await db.collection('clockRecords').doc('C1').set(card());const rescanned=await scan();expect(rescanned.statusCode,rescanned.body).toBe(200);
+  const c=await findCase();expect(c.data().status).toBe('resolved');return c;
+ };
+ const salary=async()=>{const r=await call('get-employee-salary',{empId:employee.id,yearMonth:month});expect(r.statusCode,r.body).toBe(200);return JSON.parse(r.body);};
+ const issue=(s:any,id:string)=>s.preflight.issues.find((i:any)=>i.source==='attendanceCases'&&i.sourceId===id);
+ const evidence=async()=>{const output:any={};for(const name of ['attendanceCases','attendanceCaseEvents','attendanceCaseOutbox','payrollControl']){const s=await db.collection(name).get();output[name]=s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.id.localeCompare(b.id));}return output;};
+ it('salary read has no writes; changed-clear source blocks until a new immutable scan event exists',async()=>{
+  const c=await seedClosed(),before=await evidence();expect(issue(await salary(),c.id)).toBeUndefined();expect(await evidence()).toEqual(before);
+  await db.collection('clockRecords').doc('C1').set(card(undefined,'09:00','18:00'));const changed=await evidence();expect(issue(await salary(),c.id)?.code).toBe('APPLICATION_UNVERIFIED');expect(await evidence()).toEqual(changed);
+  const r=await scan();expect(r.statusCode,r.body).toBe(200);expect(issue(await salary(),c.id)).toBeUndefined();expect((await c.ref.get()).data()!.revision).toBeGreaterThan(c.data().revision);
+ });
+ it('deleted immutable closure event or raw source cannot reuse terminal status',async()=>{
+  const c=await seedClosed(),last=c.data().history.at(-1);await db.collection('attendanceCaseEvents').doc(last.id).delete();const before=await evidence();expect(issue(await salary(),c.id)?.code).toBe('APPLICATION_UNVERIFIED');expect(await evidence()).toEqual(before);
+  await db.collection('attendanceCaseEvents').doc(last.id).set({...last,caseId:c.id,empId:employee.id});await db.collection('clockRecords').doc('C1').delete();expect(issue(await salary(),c.id)?.code).toBe('APPLICATION_UNVERIFIED');
+  let inspected:any;vi.mocked(assertPayrollReady).mockImplementation(r=>{inspected=r;throw Object.assign(new Error('synthetic no formal lock'),{statusCode:409});});
+  const r=await call('lock-month',{yearMonth:month});expect(r.statusCode,r.body).toBe(409);expect(issue(inspected.salaries.find((s:any)=>s.empId===employee.id),c.id)?.code).toBe('APPLICATION_UNVERIFIED');expect((await db.collection('payrollRuns').get()).empty).toBe(true);expect((await db.collection('monthLocks').get()).empty).toBe(true);
+ });
+ it.each(['lock-first','edit-first'])('a source edit races lock without using old closure proof (%s)',async order=>{
+  await db.collection('dailySchedule').doc('2026-04-01').delete();const c=await seedClosed();
+  // Isolate this source-freshness boundary from other detector capability gaps;
+  // formal eligibility remains mocked only in this transaction-contract test.
+  const all=await db.collection('attendanceCases').get();const batch=db.batch();for(const d of all.docs)if(d.id!==c.id)batch.delete(d.ref);await batch.commit();
+  const lock=()=>call('lock-month',{yearMonth:month}),edit=()=>call('update-clock-record',{recordId:'C1',clockInTime:'09:00',clockOutTime:'16:00',workIntervals:[{start:540,end:960}]});
+  const results=await Promise.all(order==='lock-first'?[lock(),edit()]:[edit(),lock()]);const [locked,edited]=order==='lock-first'?results:[...results].reverse();
+  expect([200,409],locked.body).toContain(locked.statusCode);
+  if(locked.statusCode===200){expect(edited.statusCode,edited.body).toBe(423);const run=await storedRun();expect(run.inputs.records[0].clockOutTime).toBe('17:00');}
+  else{expect(edited.statusCode,edited.body).toBe(200);expect((await db.collection('payrollRuns').get()).empty).toBe(true);expect((await db.collection('monthLocks').get()).empty).toBe(true);}
+ });
+});
+
+describe('payroll item inventory real transaction evidence',()=>{
+ const inventory={empId:employee.id,month,mode:'none',sourceRefs:['SYNTH-CHECK'],reason:'合成本月項目盤點',items:[]};
+ const proposal={inventory,expectedRevision:0,operationId:'emu-items-propose'};
+ const reviewCommand={empId:employee.id,month,expectedRevision:1,mode:'approve',reason:'第二人合成來源核定',operationId:'emu-items-review'};
+ beforeEach(async()=>{
+  await db.doc('employees/'+employee.id).update({role:UserRole.Employee});
+  await db.doc('employees/ITEM_REVIEWER').set({id:'ITEM_REVIEWER',name:'合成核對人',role:UserRole.SuperAdmin,accountKind:'system-account'});
+  vi.mocked(adminAuth.verifyIdToken).mockImplementation(async token=>({uid:token==='synthetic-reviewer'?'ITEM_REVIEWER':token==='synthetic-employee'?employee.id:'EMULATOR_ADMIN'}) as any);
+ });
+ it('concurrent exact retry creates one immutable proposal, independent approval remains unapplied',async()=>{
+  const results=await Promise.all([call('propose-payroll-item-inventory',proposal),call('propose-payroll-item-inventory',proposal)]);
+  expect(results.map(r=>r.statusCode),JSON.stringify(results)).toEqual([200,200]);expect(results[0].body).toBe(results[1].body);
+  expect((await db.collection('payrollItemInventoryVersions').get()).size).toBe(1);expect((await db.collection('payrollItemCommands').get()).size).toBe(1);
+  expect((await call('review-payroll-item-inventory',reviewCommand)).statusCode).toBe(403);
+  const approved=await call('review-payroll-item-inventory',reviewCommand,'synthetic-reviewer');expect(approved.statusCode,approved.body).toBe(200);
+  expect(JSON.parse(approved.body)).toMatchObject({revision:2,status:'approved',applicationStatus:'not-applied',paymentStatus:'not-paid',legalValidation:'unresolved'});
+  const get=await call('get-payroll-item-inventory',{empId:employee.id,month},'synthetic-employee');expect(get.statusCode,get.body).toBe(200);expect(JSON.parse(get.body).assessment.status).toBe('confirmed-none');
+  expect((await db.collection('payrollRuns').get()).size).toBe(0);
+ });
+ it('missing immutable history blocks read and approval with no receipt',async()=>{
+  const p=await call('propose-payroll-item-inventory',proposal);expect(p.statusCode,p.body).toBe(200);const id=JSON.parse(p.body).id;
+  await db.doc('payrollItemInventoryVersions/'+id+'_1').delete();
+  expect((await call('get-payroll-item-inventory',{empId:employee.id,month})).statusCode).toBe(409);
+  expect((await call('review-payroll-item-inventory',reviewCommand,'synthetic-reviewer')).statusCode).toBe(409);
+  expect((await db.doc('payrollItemInventories/'+id).get()).data()?.revision).toBe(1);expect((await db.collection('payrollItemCommands').get()).size).toBe(1);
+ });
+ it('locked month rejects new approval but exact earlier proposal replay cannot mutate history',async()=>{
+  const p=await call('propose-payroll-item-inventory',proposal);expect(p.statusCode,p.body).toBe(200);
+  await db.doc('monthLocks/'+month).set({yearMonth:month,lockedAt:'2026-05-01T00:00:00Z',lockedBy:'EMULATOR_ADMIN'});
+  const denied=await call('review-payroll-item-inventory',reviewCommand,'synthetic-reviewer');expect(denied.statusCode,denied.body).toBe(423);
+  const replay=await call('propose-payroll-item-inventory',proposal);expect(replay.statusCode,replay.body).toBe(200);expect(replay.body).toBe(p.body);
+  expect((await db.collection('payrollItemInventoryVersions').get()).size).toBe(1);expect((await db.collection('payrollItemCommands').get()).size).toBe(1);
+ });
+});
+
+it('modern master salary snapshot matches the exact read source on real Firestore',async()=>{
+ const {seedMasterPayroll}=await import('./fixtures/masterPayroll');
+ await db.doc('employees/'+employee.id).update({privateContact:'SYNTHETIC_PRIVATE_FIELD'});
+ await seedMasterPayroll((path,value)=>db.doc(path).set(value).then(()=>{}),(await db.doc('employees/'+employee.id).get()).data(),'EMULATOR_ADMIN');
+ const response=await call('get-employee-salary',{empId:employee.id,yearMonth:month});expect(response.statusCode,response.body).toBe(200);const salary=JSON.parse(response.body);
+ expect(salary.normalPayPreview.combined.amount).toBe('1866.67');
+ // Only the existing transaction-contract gate is mocked. Production formal
+ // eligibility remains covered by the unmocked blocking regressions above.
+ const locked=await call('lock-month',{yearMonth:month});expect(locked.statusCode,locked.body).toBe(200);
+ const run=await storedRun();expect(run.salaries.find(s=>s.empId===employee.id)?.normalPayPreview).toEqual(salary.normalPayPreview);
+ const person=run.inputs.employees.find((e:any)=>e.id===employee.id) as any;
+ expect(person.normalPayDays).toHaveLength(30);expect(person.normalPayContextDays).toHaveLength(12);expect(person.insuranceSource).toMatchObject({versionId:'CANON_INS',headRevision:1});
+ expect(JSON.stringify(run)).not.toContain('SYNTHETIC_PRIVATE_FIELD');
+ await db.doc('employees/'+employee.id).update({hourlyRate:99999});await db.doc('payrollMasterVersions/CANON_MASTER').update({status:'returned'});await db.doc('insuranceTimelineVersions/CANON_INS').update({periods:[]});
+ const replay=JSON.parse((await call('get-employee-salary',{empId:employee.id,yearMonth:month})).body);expect(replay.normalPayPreview).toEqual(salary.normalPayPreview);
+});

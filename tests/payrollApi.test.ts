@@ -624,3 +624,69 @@ describe('B5a overtime workflow separates work, request, approval and statutory 
  it('approved source drift is visible and 8h candidate trigger is idempotent, never classifies day/pay',async()=>{p();fake.data.set('clockRecords/C1',card('2026-04-01','09:00','19:00'));const r=JSON.parse((await submit()).body);login('ADMIN');expect((await call('act-overtime-request',await cmd(r,'approve',{intervals:[input]}))).statusCode).toBe(200);fake.data.get('clockRecords/C1').clockOutTime='20:00';const state=JSON.parse((await call('get-overtime-workflow',{empId:'SYNTH'})).body);expect(state.requests[0].sourceChanged).toBe(true);expect(state.requests[0].statutoryPayableMinutes).toBeNull();const first=await call('scan-overtime-candidates',{empId:'SYNTH',yearMonth:month});expect(first.statusCode,first.body).toBe(200);const n=[...fake.data.keys()].filter(k=>k.startsWith('attendanceCaseOutbox/')).length;expect((await call('scan-overtime-candidates',{empId:'SYNTH',yearMonth:month})).statusCode).toBe(200);expect([...fake.data.keys()].filter(k=>k.startsWith('attendanceCaseOutbox/'))).toHaveLength(n);expect([...fake.data.entries()].some(([k,v])=>k.startsWith('attendanceCases/')&&v.anchor==='overtime-candidate:2026-04-01'&&v.observation.payrollDecision==='none')).toBe(true);});
 });
 it('B5a cross-midnight source union deduplicates overlapping records across month boundaries',async()=>{vi.mocked(adminAuth.verifyIdToken).mockResolvedValue({uid:'SYNTH'} as any);fake.data.get('employees/SYNTH').role=UserRole.Employee;const r={...card('2026-04-30','22:00','06:00',false),clockInAt:'2026-04-30T22:00:00+08:00',clockOutAt:'2026-05-01T06:00:00+08:00',workIntervals:[{start:1320,end:1800}]};r.workReview={sourceKey:clockSourceKey(r),reviewedBy:'ADMIN',reviewedAt:review.reviewedAt};fake.data.set('clockRecords/C1',r);fake.data.set('clockRecords/C2',card('2026-05-01','01:00','03:00'));const response=await call('submit-overtime-request',{phase:'after',kind:'offsite',startDate:'2026-04-30T23:00:00+08:00',endDate:'2026-05-01T02:00:00+08:00',reason:'合成跨月去重工作',operationId:'cross-union'});expect(response.statusCode,response.body).toBe(200);expect(JSON.parse(response.body)).toMatchObject({actualWorkMinutes:180,requestedMinutes:180,approvedMinutes:null,statutoryPayableMinutes:null,dayType:'unverified'});expect(JSON.parse(response.body).actualSource.refs).toHaveLength(2);});
+
+describe('salary reads and lock revalidate terminal attendance source evidence',()=>{
+ beforeEach(()=>{vi.mocked(adminAuth.verifyIdToken).mockResolvedValue({uid:'ADMIN'} as any);});
+ const scan=()=>call('scan-attendance-cases',{empId:employee.id,yearMonth:month});
+ const currentCase=()=>[...fake.data.entries()].find(([k,v])=>k.startsWith('attendanceCases/')&&v.type==='missing-in'&&v.anchor==='card:C1')![1];
+ const setupClosed=async()=>{
+  fake.data.set('clockRecords/C1',{...card(),clockInTime:null,clockInAt:null,workReview:null,workIntervals:[]});
+  expect((await scan()).statusCode).toBe(200);
+  fake.data.set('clockRecords/C1',card());expect((await scan()).statusCode).toBe(200);
+  const c=currentCase();expect(c.status).toBe('resolved');return c.id;
+ };
+ const salary=async()=>{const r=await call('get-employee-salary',{empId:employee.id,yearMonth:month});expect(r.statusCode,r.body).toBe(200);return JSON.parse(r.body);};
+ const issue=(s:any,id:string)=>s.preflight.issues.find((i:any)=>i.source==='attendanceCases'&&i.sourceId===id);
+ it('GET is read-only, source changes require retained rescan, then clearance is current again',async()=>{
+  const id=await setupClosed(),original=JSON.stringify([...fake.data]);expect(issue(await salary(),id)).toBeUndefined();expect(JSON.stringify([...fake.data])).toBe(original);
+  fake.data.set('clockRecords/C1',card(undefined,'09:00','18:00'));const before=JSON.stringify([...fake.data]);
+  expect(issue(await salary(),id)?.code).toBe('APPLICATION_UNVERIFIED');expect(JSON.stringify([...fake.data])).toBe(before);
+  expect((await scan()).statusCode).toBe(200);expect(currentCase().history.length).toBeGreaterThan(2);
+  expect(issue(await salary(),id)).toBeUndefined();const rescanned=JSON.stringify([...fake.data]);expect((await scan()).statusCode).toBe(200);expect(currentCase().history.length).toBe(JSON.parse(rescanned).find(([k]:any)=>k==='attendanceCases/'+id)[1].history.length);
+ });
+ it('deleted source stays unknown, and lock receives the same fresh assessment without partial writes',async()=>{
+  const id=await setupClosed();fake.data.delete('clockRecords/C1');expect(issue(await salary(),id)?.code).toBe('APPLICATION_UNVERIFIED');
+  let captured:any;vi.mocked(assertPayrollReady).mockImplementation(r=>{captured=r;throw Object.assign(new Error('synthetic inspection: no formal lock'),{statusCode:409});});
+  const before=JSON.stringify([...fake.data]);expect((await call('lock-month',{yearMonth:month})).statusCode).toBe(409);
+  expect(issue(captured.salaries.find((s:any)=>s.empId===employee.id),id)?.code).toBe('APPLICATION_UNVERIFIED');expect(JSON.stringify([...fake.data])).toBe(before);
+ });
+});
+
+describe('payroll item inventory API evidence boundaries',()=>{
+ const inventory={empId:employee.id,month,mode:'none',sourceRefs:['SYNTH-CHECK'],reason:'合成本月項目盤點',items:[]};
+ const login=(uid='ADMIN')=>vi.mocked(adminAuth.verifyIdToken).mockResolvedValue({uid} as any);
+ beforeEach(()=>{login();fake.data.get('employees/'+employee.id).role=UserRole.Employee;fake.data.set('employees/REVIEWER',{...fake.data.get('employees/ADMIN'),id:'REVIEWER'});});
+ it('missing is not explicit none; independent approval records evidence without salary adoption',async()=>{
+  const get=()=>call('get-payroll-item-inventory',{empId:employee.id,month});
+  expect(JSON.parse((await get()).body).assessment.status).toBe('missing');
+  const proposal={inventory,expectedRevision:0,operationId:'api-items-propose'};
+  expect((await call('propose-payroll-item-inventory',{...proposal,caseId:'client-scope'})).statusCode).toBe(400);
+  const p=await call('propose-payroll-item-inventory',proposal);expect(p.statusCode,p.body).toBe(200);
+  const command={empId:employee.id,month,expectedRevision:1,mode:'approve',reason:'第二人合成來源核定',operationId:'api-items-review'};
+  expect((await call('review-payroll-item-inventory',command)).statusCode).toBe(403);
+  login('REVIEWER');const approved=await call('review-payroll-item-inventory',command);expect(approved.statusCode,approved.body).toBe(200);
+  expect(JSON.parse(approved.body)).toMatchObject({status:'approved',applicationStatus:'not-applied',paymentStatus:'not-paid',legalValidation:'unresolved'});
+  login(employee.id);const read=await get();expect(read.statusCode,read.body).toBe(200);expect(JSON.parse(read.body)).toMatchObject({canManage:false,assessment:{status:'confirmed-none',formalEligibility:'BLOCKED'}});
+  expect([...fake.data.keys()].some(k=>k.startsWith('payrollRuns/')||k.startsWith('monthLocks/'))).toBe(false);
+ });
+ it('missing immutable revision blocks API reads and review without partial writes',async()=>{
+  const p=await call('propose-payroll-item-inventory',{inventory,expectedRevision:0,operationId:'api-items-history'});expect(p.statusCode,p.body).toBe(200);const id=JSON.parse(p.body).id;
+  fake.data.delete('payrollItemInventoryVersions/'+id+'_1');login('REVIEWER');const before=JSON.stringify([...fake.data]);
+  expect((await call('get-payroll-item-inventory',{empId:employee.id,month})).statusCode).toBe(409);
+  expect((await call('review-payroll-item-inventory',{empId:employee.id,month,expectedRevision:1,mode:'approve',reason:'第二人來源核對測試',operationId:'api-items-bad-history'})).statusCode).toBe(409);
+  expect(JSON.stringify([...fake.data])).toBe(before);
+ });
+});
+
+it('modern salary GET and locked calculation preserve identical exact source evidence',async()=>{
+ vi.mocked(adminAuth.verifyIdToken).mockResolvedValue({uid:'ADMIN'} as any);
+ const {seedMasterPayroll}=await import('./fixtures/masterPayroll');
+ fake.data.get('employees/'+employee.id).privateContact='SYNTHETIC_PRIVATE_FIELD';
+ await seedMasterPayroll((path,value)=>{fake.data.set(path,value);},fake.data.get('employees/'+employee.id),'ADMIN');
+ const response=await call('get-employee-salary',{empId:employee.id,yearMonth:month});expect(response.statusCode,response.body).toBe(200);const salary=JSON.parse(response.body);
+ expect(salary.normalPayPreview.combined.status).toBe('ready');expect(salary.normalPayPreview.combined.amount).toBe('1866.67');
+ let captured:any;vi.mocked(assertPayrollReady).mockImplementation(r=>{captured=r;throw Object.assign(new Error('synthetic inspection only'),{statusCode:409});});
+ const before=JSON.stringify([...fake.data]);expect((await call('lock-month',{yearMonth:month})).statusCode).toBe(409);
+ const locked=captured.salaries.find((s:any)=>s.empId===employee.id);expect(locked.normalPayPreview).toEqual(salary.normalPayPreview);expect(locked.insuranceDetail).toEqual(salary.insuranceDetail);expect(locked.withholdingDetail).toEqual(salary.withholdingDetail);expect(JSON.stringify([...fake.data])).toBe(before);
+ vi.mocked(assertPayrollReady).mockImplementation(trialTransactionGate);const result=await call('lock-month',{yearMonth:month});expect(result.statusCode,result.body).toBe(200);const run=fake.data.get('payrollRuns/'+JSON.parse(result.body).payrollRunId);expect(run.salaries.find((s:any)=>s.empId===employee.id).normalPayPreview).toEqual(salary.normalPayPreview);expect(run.inputs.employees.find((e:any)=>e.id===employee.id).normalPayDays).toHaveLength(30);expect(JSON.stringify(run)).not.toContain('SYNTHETIC_PRIVATE_FIELD');
+});

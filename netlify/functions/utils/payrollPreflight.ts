@@ -1,3 +1,4 @@
+import type { AttendanceCaseEvidence } from './attendanceCaseEvidence';
 import { hasAppliedMakeup } from './makeupEvidence';
 import type { ClockRecord, LeaveRequest, ScheduleEvent, SalaryDetail, PayrollPreflight, PayrollPreflightIssue } from '../../../types';
 import { clockInterval, shiftIntervals, validDate, hhmmMinutes } from '../../../utils/attendance';
@@ -101,25 +102,46 @@ export const pendingRequestIssues = (month: string, empId: string, sources: Part
     return issues;
 };
 
+// Terminal status is historical state, not current source clearance. This
+// envelope is built by the server and is never accepted from API payloads.
+export const attendanceCaseIssues = (month:string,empId:string,cases:any[]|undefined,evidence?:AttendanceCaseEvidence):PayrollPreflightIssue[] => {
+    if (!Array.isArray(cases) || cases.some(c=>!c || typeof c.empId!=='string' || !c.empId || c.empId.length>150 || c.empId.includes('/')) || evidence?.inventory==='missing')
+        return [{code:'SOURCE_UNAVAILABLE',severity:'BLOCKED',source:'attendanceCases',message:'出勤案件來源清冊未完整載入'}];
+    const start=Date.parse(month+'-01T00:00:00+08:00')/60000;
+    const next=new Date(month+'-01T00:00:00Z');next.setUTCMonth(next.getUTCMonth()+1);
+    const end=Date.parse(next.toISOString().slice(0,10)+'T00:00:00+08:00')/60000;
+    const issues:PayrollPreflightIssue[]=[];
+    for(const c of cases){
+        if(c.empId!==empId)continue;
+        const w=c.observation?.window;
+        const validWindow=w&&Number.isFinite(w.start)&&Number.isFinite(w.end)&&w.end>w.start;
+        if(!['resolved','cancelled'].includes(c.status)){
+            if(validWindow&&!(w.start<end&&w.end>start))continue;
+            issues.push({code:'CASE_UNRESOLVED',severity:'NEEDS_REVIEW',source:'attendanceCases',...(typeof c.id==='string'?{sourceId:c.id}:{}),message:'出勤案件尚未完成覆核'});continue;
+        }
+        const matches=evidence?.assessments?.filter(a=>a.caseId===c.id)||[];
+        const a=matches.length===1?matches[0]:undefined;
+        const current=validWindow&&typeof c.id==='string'&&!!c.id&&cases.filter(other=>other.id===c.id).length===1&&
+            Number.isInteger(c.revision)&&c.revision>0&&typeof c.observation?.evidenceVersion==='string'&&!!c.observation.evidenceVersion&&
+            evidence?.inventory==='loaded'&&evidence.empId===empId&&evidence.month===month&&a?.status==='current-clear'&&
+            a.caseRevision===c.revision&&a.storedEvidenceVersion===c.observation.evidenceVersion&&a.currentEvidenceVersion===c.observation.evidenceVersion&&['relevant','unrelated'].includes(a.scope);
+        if(current&&a?.scope==='unrelated')continue;
+        if(!current)issues.push({code:'APPLICATION_UNVERIFIED',severity:'NEEDS_REVIEW',source:'attendanceCases',...(typeof c.id==='string'?{sourceId:c.id}:{}),message:'已結案案件的當前來源未核實或已變更，須重新掃描與覆核；歷史結案狀態不能直接放行'});
+    }
+    return issues;
+};
+
 // This is the single entry point used by salary reads AND the locking transaction.
 // Trial completeness is distinct from formal settlement eligibility. Missing
 // required capabilities block every new lock, with no client/config override.
 export const evaluatePayrollMonth = (input: {
-    month: string; employees: any[]; records: ClockRecord[]; schedules: ScheduleEvent[]; leaves: LeaveRequest[]; requests: Partial<PendingSources>; revisions?: any[]; cases?: any[];
+    month: string; employees: any[]; records: ClockRecord[]; schedules: ScheduleEvent[]; leaves: LeaveRequest[]; requests: Partial<PendingSources>; revisions?: any[]; cases?: any[]; caseEvidence?: Record<string,AttendanceCaseEvidence>;
 }): { status: PayrollPreflight['status']; trialStatus: PayrollPreflight['status']; salaries: SalaryDetail[] } => {
     const salaries = input.employees.map(employee => {
         const calculated = calculateSalaryForEmployee(employee, input.month, input.schedules, input.records, input.leaves);
         const issues: PayrollPreflightIssue[] = (calculated.reviewReasons || []).map(message => ({ code: 'CALCULATION_REVIEW', severity: 'NEEDS_REVIEW', source: 'calculation', message }));
         issues.push(...pendingRequestIssues(input.month, employee.id, input.requests, input.records, input.schedules, input.revisions));
-        for (const c of input.cases || []) {
-            if (c.empId !== employee.id || ['resolved','cancelled'].includes(c.status)) continue;
-            const start = Date.parse(input.month+'-01T00:00:00+08:00')/60000;
-            const next = new Date(input.month+'-01T00:00:00Z'); next.setUTCMonth(next.getUTCMonth()+1);
-            const end = Date.parse(next.toISOString().slice(0,10)+'T00:00:00+08:00')/60000;
-            const w = c.observation?.window;
-            if (!w || !Number.isFinite(w.start) || !Number.isFinite(w.end) || (w.start < end && w.end > start))
-                issues.push({ code: 'CASE_UNRESOLVED', severity: 'NEEDS_REVIEW', source: 'attendanceCases', sourceId: c.id, message: `出勤案件 ${c.id} 尚未完成覆核` });
-        }
+        issues.push(...attendanceCaseIssues(input.month,employee.id,input.cases,input.caseEvidence?.[employee.id]));
         if (calculated.calculationStatus !== 'ready' && !issues.length) issues.push({ code: 'CALCULATION_UNAVAILABLE', severity: 'BLOCKED', source: 'calculation', message: '計算結果尚未確認' });
         const status = issues.some(x => x.severity === 'BLOCKED') ? 'BLOCKED' : issues.length ? 'NEEDS_REVIEW' : 'READY';
         const preflight: PayrollPreflight = { version: 'preflight-v1', status: 'BLOCKED', trialStatus: status, scope: 'existing-models', issues: [...issues, ...PREFLIGHT_GAPS.map(gap => ({ code: 'CAPABILITY_MISSING' as const, severity: 'BLOCKED' as const, source: gap, message: `正式結算缺少必要能力或驗收：${gap}` }))], gaps: [...PREFLIGHT_GAPS] };

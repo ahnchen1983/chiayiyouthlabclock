@@ -1,3 +1,5 @@
+import {PAYROLL_ITEM_ACTIONS,handlePayrollItemsAction} from './utils/payrollItems';
+import { loadAttendanceCaseEvidence, type AttendanceCaseEvidence } from './utils/attendanceCaseEvidence';
 import {TERMINATION_ACTIONS,handleTerminationAction} from './utils/terminationSettlement';
 import {employmentWindowStates} from '../../utils/employmentAuthority';
 import {effectiveMasterForMonth} from './utils/effectiveMaster';
@@ -644,6 +646,12 @@ const employeeInMonth = (e: any, month: string): boolean => {
 };
 const payrollEmployee = (e: any) => ({ masterAssessment:e.masterAssessment||null,payBasis:e.payBasis||null,employmentType:e.employmentType||null,effectiveMasterVersion:e.effectiveMasterVersion||null, id: e.id, accountKind: e.accountKind || null, name: e.name, role: e.role ?? null, position: e.position, status: e.status,
     hourlyRate: e.hourlyRate ?? null, monthlySalary: e.monthlySalary ?? null, hireDate: e.hireDate || '', resignDate: e.resignDate || '', leaveOfAbsenceStart: e.leaveOfAbsenceStart || '', leaveOfAbsenceEnd: e.leaveOfAbsenceEnd || '', payrollReview: payrollReviewFields(e.payrollReview) });
+// Calculation/snapshot inputs retain server-derived evidence. The separate
+// review-view allowlist above remains small and excludes contact/auth fields.
+const payrollCalculationEmployee = (e:any) => ({...payrollEmployee(e),
+    ...Object.fromEntries(['normalPayDays','normalPayContextDays','normalPayCompEvidence','insurancePeriods','insuranceSource','employmentAuthority']
+        .filter(key=>e[key]!==undefined).map(key=>[key,e[key]])),
+});
 const pendingCollections: RequestKind[] = ['terminationSettlementDrafts','terminationAdjustmentCases','compRequests','compSettlementTasks','overtimeRequests','anomalyExplanations', 'leaveRequests', 'makeupRequests', 'leaveOfAbsenceRequests', 'shiftSwapRequests'];
 const readPendingSources = async (tx?: any): Promise<PendingSources> => {
     const result = {} as PendingSources;
@@ -689,6 +697,14 @@ const createPendingPayrollRequest = async (kind: RequestKind, value: any, ref = 
     return ref;
 };
 
+const readPayrollCaseEvidence = async (month:string,employees:any[],cases:any[],tx?:any):Promise<Record<string,AttendanceCaseEvidence>> => {
+    const result:Record<string,AttendanceCaseEvidence>={};
+    const reader=tx||{get:(ref:any)=>ref.get()};
+    const at=new Date().toISOString();
+    for(const employee of employees) result[employee.id]=await loadAttendanceCaseEvidence(db,reader,{empId:employee.id,month,cases,at});
+    return result;
+};
+
 const readSalaryMonth = async (month: string): Promise<SalaryDetail[]> => {
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month || '')) throw new Error('月份無效');
     const lock = await getMonthLock(month);
@@ -701,9 +717,12 @@ const readSalaryMonth = async (month: string): Promise<SalaryDetail[]> => {
     const requests = await readPendingSources();
     const revisionSnap = await db.collection('attendanceRevisions').get();
     const caseSnap = await db.collection('attendanceCases').get();
-    const result = evaluatePayrollMonth({ month, employees: reviewedEmployees.filter(e => employeeInMonth(e, month)), schedules,
+    const eligibleEmployees=reviewedEmployees.filter(e => employeeInMonth(e, month));
+    const cases=caseSnap.docs.map(d => ({ ...d.data(), id: d.id }));
+    const caseEvidence=await readPayrollCaseEvidence(month,eligibleEmployees,cases);
+    const result = evaluatePayrollMonth({ month, employees: eligibleEmployees, schedules,
         records: cards.docs.map(d => ({ ...d.data(), id: d.id } as ClockRecord)),
-        leaves: leaves.docs.map(d => ({ ...d.data(), id: d.id } as LeaveRequest)), requests, revisions: revisionSnap.docs.map(d => ({ ...d.data(), id: d.id })), cases: caseSnap.docs.map(d => ({ ...d.data(), id: d.id })) });
+        leaves: leaves.docs.map(d => ({ ...d.data(), id: d.id } as LeaveRequest)), requests, revisions: revisionSnap.docs.map(d => ({ ...d.data(), id: d.id })), cases, caseEvidence });
     const salaries = result.salaries;
     return selectSalaryResults(salaries, lock);
 };
@@ -798,6 +817,7 @@ export const handler: Handler = async (event) => {
         if(DAYTYPE_ACTIONS.includes(action as any))return ok(await handleDayTypeAction(db,uid,action,data));
         if(OVERTIME_COMP_POLICY_ACTIONS.includes(action as any))return ok(await handleOvertimeCompPolicyAction(db,uid,action,data));
         if(PAYROLL_POLICY_ACTIONS.includes(action as any))return ok(await handlePayrollPolicyAction(db,uid,action,data));
+        if(PAYROLL_ITEM_ACTIONS.includes(action as any))return ok(await handlePayrollItemsAction(db,uid,action,data));
         if(INSURANCE_ACTIONS.includes(action as any))return ok(await handleInsuranceAction(db,uid,action,data));
         if(COMP_ACTIONS.includes(action as any))return ok(await handleCompAction(db,uid,action,data));
         if(OVERTIME_ACTIONS.includes(action as any))return ok(await handleOvertimeAction(db,uid,action,data));
@@ -1497,14 +1517,16 @@ export const handler: Handler = async (event) => {
                     const leaveSnap = await tx.get(db.collection('leaveRequests'));
                     const scheduleSnap = await tx.get(db.collection('dailySchedule'));
                     const reviewedEmployees = await loadMonthlyPayrollEmployees(empSnap.docs.map(d => ({ ...d.data(), id: d.id })), yearMonth, db, tx);
-                    const employees = reviewedEmployees.map(payrollEmployee).filter(e => employeeInMonth(e, yearMonth));
+                    const employees = reviewedEmployees.map(payrollCalculationEmployee).filter(e => employeeInMonth(e, yearMonth));
                     const records = selectPayrollClockEvidence(clockSnap.docs.map(d => ({ ...d.data(), id: d.id } as ClockRecord)), yearMonth, employees.map(e => e.id));
                     const leaves = selectPayrollLeaveEvidence(leaveSnap.docs.map(d => ({ ...d.data(), id: d.id } as LeaveRequest)), yearMonth, employees.map(e => e.id));
                     const schedules = scheduleSnap.docs.filter(d => d.id.startsWith(yearMonth)).map(d => normalizeScheduleDoc(d.data(), d.id, ''));
                     const requests = await readPendingSources(tx);
                     const revisionSnap = await tx.get(db.collection('attendanceRevisions'));
                     const caseSnap = await tx.get(db.collection('attendanceCases'));
-                    const preflight = evaluatePayrollMonth({ month: yearMonth, employees, schedules, records, leaves, requests, revisions: revisionSnap.docs.map(d => ({ ...d.data(), id: d.id })), cases: caseSnap.docs.map(d => ({ ...d.data(), id: d.id })) });
+                    const cases=caseSnap.docs.map(d => ({ ...d.data(), id: d.id }));
+                    const caseEvidence=await readPayrollCaseEvidence(yearMonth,employees,cases,tx);
+                    const preflight = evaluatePayrollMonth({ month: yearMonth, employees, schedules, records, leaves, requests, revisions: revisionSnap.docs.map(d => ({ ...d.data(), id: d.id })), cases, caseEvidence });
                     assertPayrollReady(preflight);
                     const salaries = preflight.salaries;
                     const createdAt = new Date().toISOString();
