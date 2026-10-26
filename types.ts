@@ -424,6 +424,7 @@ export interface SalaryDetail {
     baseSalary: number | null;
     overtimePay: number | null;
     compSettlementPay?: number | null; // 未休補休依原加班日倍率結清（勞基法第32條之1）
+    insuranceDetail?: import('./utils/payroll/insurance').InsuranceResult; // 主檔員工依投保資料計算的保費明細
     grossSalary: number | null;
     // 扣除項目（勞基法）
     laborInsurance: number | null;

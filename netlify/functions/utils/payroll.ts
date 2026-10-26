@@ -5,6 +5,7 @@ import { LeaveStatus, isOutingLeaveType } from '../../../types';
 import { clockInterval, confirmedWork, shiftIntervals, intervalMinutes, hhmmMinutes, leaveEndMinutes, validDate, clockSourceKey } from '../../../utils/attendance';
 import { roundMoney } from '../../../utils/format';
 import { add, rational, rounded } from '../../../utils/payroll/rational';
+import { insuranceForMonth } from '../../../utils/payroll/insurance';
 const fraction = (x: { numerator: string; denominator: string }) => rational(BigInt(x.numerator), BigInt(x.denominator));
 
 const leaveInstant = (value: string): number => Date.parse(/(Z|[+-]\d\d:\d\d)$/.test(value || '') ? value : value + '+08:00');
@@ -216,8 +217,13 @@ export const calculateSalaryForEmployee = (
         if (remaining > 0) reasons.add(`${date} 超過已覆核加班級距`);
     }
     knownMinutes = intervalMinutes(records.flatMap(r => (confirmedWork(r) || []).map(range => absolute(r, range))));
-    const insurance = review?.insurance;
-    if (!insurance || [insurance.labor, insurance.health, insurance.pensionSelf].some(n => !Number.isFinite(n) || n < 0)) reasons.add('本月投保級距/身分及自付金額待覆核');
+    // Master-based pay computes premiums from the approved insurance timeline; the
+    // monthly review's hand-entered amounts remain only for the legacy path.
+    const insuranceResult = emp.normalPayDays ? (Array.isArray(emp.insurancePeriods) ? insuranceForMonth(yearMonth, emp.insurancePeriods) : null) : undefined;
+    const insurance = insuranceResult === undefined ? review?.insurance : insuranceResult ? { labor: insuranceResult.labor, health: insuranceResult.health, pensionSelf: insuranceResult.pensionSelf } : undefined;
+    if (insuranceResult === null) reasons.add('投保資料（勞健保、勞退自提）尚未核定');
+    else if (insuranceResult) for (const issue of insuranceResult.issues) reasons.add(issue);
+    else if (!insurance || [insurance.labor, insurance.health, insurance.pensionSelf].some(n => !Number.isFinite(n) || n < 0)) reasons.add('本月投保級距/身分及自付金額待覆核');
     const normalPreview = emp.normalPayDays ? normalPayPreview(emp,yearMonth,clockRecords,leaveRequests,validLeaveAllocations,[...reasons].filter(r=>/卡|重疊|排班|實際工作|請假|外勤/.test(r))) : undefined;
     // Master-based pay: normal pay (C2a) + overtime (C2b) from the effective master,
     // day-type calendars and reviewed work. The monthly review's per-date regular
@@ -252,6 +258,7 @@ export const calculateSalaryForEmployee = (
         laborInsurance: ready ? insurance!.labor : null, healthInsurance: ready ? insurance!.health : null,
         laborPensionSelf: ready ? insurance!.pensionSelf : null, leaveDeduction: ready ? deduction : null,
         totalDeductions: ready ? totalDeductions : null, netSalary: ready ? money(gross - totalDeductions) : null,
+        ...(insuranceResult ? { insuranceDetail: insuranceResult } : {}),
     };
 };
 

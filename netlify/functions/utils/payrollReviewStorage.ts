@@ -39,7 +39,7 @@ export const loadMonthlyPayrollEmployees = async (employees: any[], yearMonth: s
     for (const employee of employees) {
         const ref = database.collection('payrollReviews').doc(payrollReviewDocumentId(employee.id, yearMonth));
         const snapshot = transaction ? await transaction.get(ref) : await ref.get();
-        const reviewed=withMonthlyPayrollReview(employee,yearMonth,snapshot.exists?snapshot.data() as StoredPayrollReview:null,snapshot.exists);const effective=await effectiveMasterForMonth(database,transaction,{...reviewed,legacyPayrollSourceKey:employeePayrollSourceKey(employee)},yearMonth,snapshot.exists?snapshot.data():null);if(effective.normalPayDays){const {compNormalPayEvidence}=await import('./compWorkflow');effective.normalPayCompEvidence=await compNormalPayEvidence(database,transaction,employee.id,yearMonth);}result.push(await withEmploymentAuthority(database,transaction,effective));
+        const reviewed=withMonthlyPayrollReview(employee,yearMonth,snapshot.exists?snapshot.data() as StoredPayrollReview:null,snapshot.exists);const effective=await effectiveMasterForMonth(database,transaction,{...reviewed,legacyPayrollSourceKey:employeePayrollSourceKey(employee)},yearMonth,snapshot.exists?snapshot.data():null);if(effective.normalPayDays){const {compNormalPayEvidence}=await import('./compWorkflow');effective.normalPayCompEvidence=await compNormalPayEvidence(database,transaction,employee.id,yearMonth);const {loadInsurancePeriods}=await import('./insuranceTimeline');effective.insurancePeriods=await loadInsurancePeriods(database,transaction,employee.id);}result.push(await withEmploymentAuthority(database,transaction,effective));
     }
     return result;
 };

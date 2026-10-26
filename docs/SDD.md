@@ -362,6 +362,10 @@ chiayiyouthlabclock/
 
 `payrollPolicyVersion.ts`：`list/propose/review-payroll-policy-version`。提案 `payrollPolicyProposals/{ppp_…}`（proposed → approved／returned），核定建立 `payrollPolicyVersions/{ppv_…}`（`status`、`version`、`approvedBy/At`、`proposedBy`、`employeeIds`、`from/to`、`normalPay`）。`normalPay` 由 `buildNormalPayPolicy()` 依已確認規則產生，只有「其他」假別給薪可選。
 
+#### 4.5.x 社會保險（C3a，2026-10-26）
+
+`utils/payroll/insurance.ts` `insuranceForMonth(month, periods)` 依法定費率計算員工負擔；`insuranceTimeline.ts` 提供 `get/propose/review-insurance-timeline`，資料存 `insuranceTimelineVersions`、`insuranceTimelineHeads/{empId}`、`insuranceTimelineCommands`。主檔員工於 `payrollReviewStorage` 載入 `insurancePeriods`，`payroll.ts` 以計算結果填 `laborInsurance`（含就保）、`healthInsurance`、`laborPensionSelf` 與 `insuranceDetail`。
+
 ### 4.6 員工管理模組
 
 | 項目 | 說明 |

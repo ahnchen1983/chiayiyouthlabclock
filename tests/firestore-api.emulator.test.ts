@@ -616,7 +616,7 @@ describe('C2b official salary on real Firestore: designation → master → over
   await db.collection('payrollMasterVersions').doc('C2BM').set({empId:employee.id,status:'approved',approvedBy:'EMULATOR_ADMIN',approvedAt:review.reviewedAt,timeline});await db.collection('payrollMasterHeads').doc(employee.id).set({currentVersionId:'C2BM',revision:1});
   await db.collection('payrollPolicyVersions').doc('C2BP').set({status:'approved',version:review.policy.version,approvedBy:'EMULATOR_ADMIN',approvedAt:review.reviewedAt,employeeIds:[employee.id],from:'2026-04-01',to:'2026-04-30',normalPay:{...normalPolicy(),overtimeRules:{schemaVersion:'overtime-rules-v1',weekStartDay:0,wageComponents:'single-contract-amount',monthlyHourlyDivisor:240}}});
   await db.collection('payrollReviews').doc(employee.id+'_2026-04').set({empId:employee.id,yearMonth:'2026-04',review:{...review,policy:{...review.policy,regularDates:[]}},employeeSourceKey:employeePayrollSourceKey(e),masterVersionId:'C2BM'});
-  await db.collection('clockRecords').doc('C2B-OT').set({...card('2026-04-06','08:00','17:00'),id:'C2B-OT'});
+  await db.collection('clockRecords').doc('C2B-OT').set({...card('2026-04-06','08:00','17:00'),id:'C2B-OT'});await db.doc('insuranceTimelineHeads/'+employee.id).set({currentVersionId:'EMU_INS',revision:1});await db.doc('insuranceTimelineVersions/EMU_INS').set({empId:employee.id,status:'approved',approvedBy:'EMULATOR_ADMIN',approvedAt:review.reviewedAt,periods:[{from:'2026-01-01',to:'2026-12-31',laborInsured:false,laborSalary:0,employmentInsured:false,healthInsuredHere:false,healthAmount:0,healthDependants:0,pensionWage:0,pensionSelfPercent:0}]});
   const res=await call('get-employee-salary',{empId:employee.id,yearMonth:'2026-04'});expect(res.statusCode,res.body).toBe(200);const s=JSON.parse(res.body);
   expect(s.normalPayPreview.combined.status,JSON.stringify(s.normalPayPreview.combined.issues)).toBe('ready');// The suite seeds an 8h card on 04-01 too: 1600 + (1600 + 800/3) on 04-06.
   expect(s.normalPayPreview.combined.amount).toBe('3466.67');
@@ -645,9 +645,21 @@ describe('payroll policy version created through the API drives the official sal
   await db.collection('payrollMasterVersions').doc('PPVM').set({empId:employee.id,status:'approved',approvedBy:'EMULATOR_ADMIN',approvedAt:review.reviewedAt,timeline});await db.collection('payrollMasterHeads').doc(employee.id).set({currentVersionId:'PPVM',revision:1});
   await db.collection('dayTypeCalendars').doc('PPVD').set({status:'approved',version:'synthetic',approvedBy:'EMULATOR_ADMIN',approvedAt:review.reviewedAt,employeeIds:[employee.id],days:Object.fromEntries(normalDays('2026-04').map(d=>[d.date,'normal']))});
   await db.collection('payrollReviews').doc(employee.id+'_2026-04').set({empId:employee.id,yearMonth:'2026-04',review:{...review,policy:{...review.policy,version:versionId,regularDates:[]}},employeeSourceKey:employeePayrollSourceKey(e),masterVersionId:'PPVM'});
-  await db.collection('clockRecords').doc('PPV-OT').set({...card('2026-04-06','08:00','17:00'),id:'PPV-OT'});
+  await db.collection('clockRecords').doc('PPV-OT').set({...card('2026-04-06','08:00','17:00'),id:'PPV-OT'});await db.doc('insuranceTimelineHeads/'+employee.id).set({currentVersionId:'EMU_INS',revision:1});await db.doc('insuranceTimelineVersions/EMU_INS').set({empId:employee.id,status:'approved',approvedBy:'EMULATOR_ADMIN',approvedAt:review.reviewedAt,periods:[{from:'2026-01-01',to:'2026-12-31',laborInsured:false,laborSalary:0,employmentInsured:false,healthInsuredHere:false,healthAmount:0,healthDependants:0,pensionWage:0,pensionSelfPercent:0}]});
   vi.mocked(adminAuth.verifyIdToken).mockResolvedValue({uid:'EMULATOR_ADMIN'} as any);const s=JSON.parse((await call('get-employee-salary',{empId:employee.id,yearMonth:'2026-04'})).body);
   // Seeded 04-01 8h card + 04-06 9h: 1600 + 1600 + 800/3, final whole-dollar rounding → 3467.
   expect(s.normalPayPreview.combined.status,JSON.stringify(s.normalPayPreview.combined.issues)).toBe('ready');expect(s.normalPayPreview.combined.amount).toBe('3467');expect(s.calculationStatus,JSON.stringify(s.reviewReasons)).toBe('ready');expect(s.grossSalary).toBe(3467);
+ });
+});
+describe('insurance timeline two-person approval on real Firestore',()=>{
+ const period={from:'2026-04-01',to:'2026-12-31',laborInsured:true,laborSalary:29500,employmentInsured:true,healthInsuredHere:true,healthAmount:29500,healthDependants:1,pensionWage:30300,pensionSelfPercent:6};
+ it('propose → different admin approves moves the head; locked months are refused',async()=>{await db.collection('employees').doc('EMU_ADMIN_2').set({id:'EMU_ADMIN_2',name:'合成管理者二',role:UserRole.Admin,accountKind:'system-account',hireDate:'2020-01-01',hourlyRate:0,monthlySalary:0});
+  const p=await call('propose-insurance-timeline',{empId:employee.id,periods:[period],expectedHeadRevision:0,operationId:'emu-ins-1',reason:'合成投保資料'});expect(p.statusCode,p.body).toBe(200);const v=JSON.parse(p.body);
+  expect((await call('review-insurance-timeline',{empId:employee.id,versionId:v.id,expectedRevision:1,expectedHeadRevision:0,operationId:'emu-ins-2',mode:'approve',reason:'提案人自核測試'})).statusCode).toBe(403);
+  vi.mocked(adminAuth.verifyIdToken).mockResolvedValue({uid:'EMU_ADMIN_2'} as any);const a=await call('review-insurance-timeline',{empId:employee.id,versionId:v.id,expectedRevision:1,expectedHeadRevision:0,operationId:'emu-ins-3',mode:'approve',reason:'第二人核定投保'});expect(a.statusCode,a.body).toBe(200);
+  expect((await db.doc('insuranceTimelineHeads/'+employee.id).get()).data()?.currentVersionId).toBe(v.id);
+  await db.collection('monthLocks').doc('2026-04').set({yearMonth:'2026-04',lockedAt:'2026-05-05T00:00:00Z',lockedBy:'EMULATOR_ADMIN'});
+  const locked=await call('propose-insurance-timeline',{empId:employee.id,periods:[{...period,healthDependants:2}],expectedHeadRevision:1,operationId:'emu-ins-4',reason:'鎖月後更動測試'});expect(locked.statusCode).toBe(423);
+  const later=await call('propose-insurance-timeline',{empId:employee.id,periods:[{...period,to:'2026-05-31'},{...period,from:'2026-06-01',healthDependants:2}],expectedHeadRevision:1,operationId:'emu-ins-5',reason:'六月起眷屬變更'});expect(later.statusCode,later.body).toBe(200);
  });
 });

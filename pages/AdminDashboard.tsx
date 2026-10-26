@@ -1,6 +1,7 @@
 import PayrollMasterTimeline from '../components/PayrollMasterTimeline';
 import DayTypeDesignationPanel from '../components/DayTypeDesignationPanel';
 import PayrollPolicyVersions from '../components/admin/PayrollPolicyVersions';
+import InsuranceTimeline from '../components/admin/InsuranceTimeline';
 import CompWorkflow from '../components/CompWorkflow';
 import OvertimeWorkflow from '../components/OvertimeWorkflow';
 
@@ -64,7 +65,7 @@ const CompareIcon: React.FC<{ className?: string }> = ({ className }) => (
   </svg>
 );
 
-type AdminView = 'master' | 'dayTypes' | 'payrollPolicy' | 'comp' | 'overtime' | 'cases' | 'overview' | 'schedule' | 'attendance' | 'leave' | 'employees' | 'monthlyReport' | 'comparison' | 'salary' | 'auditLog' | 'systemSettings' | 'makeupApproval' | 'openShifts' | 'loaApproval' | 'shiftSwapApproval' | 'myClock' | 'myLeave' | 'myRecords' | 'mySalary' | 'myMakeup' | 'myLeaveBalance' | 'myPreferences' | 'myOpenShifts' | 'myLeaveOfAbsence';
+type AdminView = 'master' | 'dayTypes' | 'payrollPolicy' | 'insurance' | 'comp' | 'overtime' | 'cases' | 'overview' | 'schedule' | 'attendance' | 'leave' | 'employees' | 'monthlyReport' | 'comparison' | 'salary' | 'auditLog' | 'systemSettings' | 'makeupApproval' | 'openShifts' | 'loaApproval' | 'shiftSwapApproval' | 'myClock' | 'myLeave' | 'myRecords' | 'mySalary' | 'myMakeup' | 'myLeaveBalance' | 'myPreferences' | 'myOpenShifts' | 'myLeaveOfAbsence';
 
 const AdminDashboard: React.FC = () => {
   const { user, logout } = useAuth();
@@ -77,6 +78,7 @@ const AdminDashboard: React.FC = () => {
     switch (currentView) {
       case 'master': return <PayrollMasterTimeline />;
       case 'payrollPolicy': return <PayrollPolicyVersions />;
+      case 'insurance': return <InsuranceTimeline />;
       case 'dayTypes': return <div className="p-4 max-w-5xl mx-auto"><DayTypeDesignationPanel mode="admin" /></div>;
       case 'comp': return <CompWorkflow />;
       case 'overtime': return <OvertimeWorkflow />;
@@ -151,6 +153,7 @@ const AdminDashboard: React.FC = () => {
             <NavItem view="master" icon={<SendIcon className="w-6 h-6" />} label="薪資有效期主檔" />
             <NavItem view="dayTypes" icon={<CalendarIcon className="w-6 h-6" />} label="例假／休息日核定" />
             <NavItem view="payrollPolicy" icon={<SendIcon className="w-6 h-6" />} label="計薪政策版本" />
+            <NavItem view="insurance" icon={<SendIcon className="w-6 h-6" />} label="投保資料" />
         <NavItem view="comp" icon={<SendIcon className="w-6 h-6" />} label="補休帳本" />
         <NavItem view="overtime" icon={<SendIcon className="w-6 h-6" />} label="加班申請" />
         <NavItem view="leave" icon={<CheckSquareIcon className="w-6 h-6" />} label="請假/外勤審核" />
