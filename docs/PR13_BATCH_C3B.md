@@ -28,3 +28,5 @@
 ## 驗證
 
 單元 13 例（各扣繳方式、免稅加班 46 小時、起扣點、非居住者、補充保費門檻、待核情形）；真實 handler：月薪 30,000、非本單位投保 → 補充保費 633、所得稅 0、實發 29,367；E2E 2 例（明細與薪資條顯示）。
+
+`npm run verify:pr13`（commit `0b3410747e705b6f0f3e95f4ac727274d2f073e6`，sourceHash `c72d5d10bbeab622e3fe1611113fe27bff9e4f6637c8d3be07442cfe787f62eb`，manifest `.verification/pr13/2026-10-26T04-49-41-180Z/`）：audit、typecheck、unit/API 936、emulator 92、E2E 100、build 全部通過。未做獨立 review；未部署。
