@@ -33,3 +33,38 @@ describe('manual comparison arithmetic',()=>{
  it('uses exact decimals for signed differences and preserves explicit zero',()=>{expect(comparePayrollAmounts('0','0')).toEqual({status:'comparable',delta:f('0')});expect(comparePayrollAmounts('1.10','1.20')).toEqual({status:'comparable',delta:f('-1','10')});});
  it('unknown or invalid amounts never become zero difference',()=>{for(const value of [null,undefined,'NaN','1e3','-1'] as any[])expect(comparePayrollAmounts(value,'0')).toEqual({status:'unresolved',delta:null});});
 });
+
+describe('approved fixed item comparison application',()=>{
+ const applied=()=>{
+  const s=salary(),inv=inventory();
+  inv.inventory.mode='items';inv.inventory.items=[
+   {itemCode:'fixed',kind:'earning',amount:'0.5',from:'2026-08-01',to:'2026-08-31',sourceRefs:['AUTH-E'],reason:'Synthetic explicit fixed earning'},
+   {itemCode:'authorized',kind:'deduction',amount:'1.5',from:'2026-08-01',to:'2026-08-31',sourceRefs:['AUTH-D'],reason:'Synthetic authorized deduction'}];
+  s.itemApplication={status:'ready',issues:[],source:{id:'EXEC',revision:2,evidenceVersion:'EXEC-HASH'},lines:inv.inventory.items.map((i:any)=>({...i,code:'item:'+i.itemCode,exact:i.kind==='earning'?f('1','2'):f('3','2'),recipe:i.kind==='earning'?'fixed-taxable-earning':'fixed-posttax-deduction',appliedAmount:i.kind==='earning'?'1':'2'})),earningsExact:f('1','2'),deductionsExact:f('3','2'),earningsAmount:'1',deductionsAmount:'2',grossExact:f('182003','6'),applicationStatus:'calculated-not-posted',paymentStatus:'not-paid'};
+  s.grossSalary=30334;s.totalDeductions=1198;s.netSalary=29136;
+  return {s,inv,sources:[...refs,{kind:'payroll-item-execution',id:'EXEC',version:'EXEC-HASH'}]};
+ };
+ it('uses cumulative allocated amounts, retaining exact nominal earning and deduction evidence',()=>{
+  const {s,inv,sources}=applied(),r=run(s,sources,inv);
+  expect(r.status).toBe('comparable');expect(r.totals).toEqual({gross:'30334',deductions:'1198',net:'29136'});
+  expect(r.lines.find(l=>l.code==='item:authorized')).toMatchObject({amount:'2',recordedAmount:'1.5',exact:f('3','2')});
+  expect(s.normalPayPreview.combined.amount).toBe('30333');
+  expect(r).toMatchObject({formalEligibility:'BLOCKED',paymentStatus:'not-paid',applicationStatus:'not-applied'});
+ });
+ it.each(['missing-source','wrong-source','amount','period','exact','duplicate','gross-exact','earning-total','deduction-total','incorrect-net-rounding','redistribute'])('holds invalid application: %s',kind=>{
+  const {s,inv,sources}=applied();
+  if(kind==='missing-source')sources.pop();
+  if(kind==='wrong-source')s.itemApplication.source.evidenceVersion='OTHER';
+  if(kind==='amount')s.itemApplication.lines[0].amount='50';
+  if(kind==='period')s.itemApplication.lines[0].from='2026-08-02';
+  if(kind==='exact')s.itemApplication.lines[0].exact=f('1');
+  if(kind==='duplicate')s.itemApplication.lines[1]=s.itemApplication.lines[0];
+  if(kind==='gross-exact')s.itemApplication.grossExact=f('30334');
+  if(kind==='earning-total')s.itemApplication.earningsExact=f('1');
+  if(kind==='deduction-total')s.itemApplication.deductionsExact=f('1');
+  if(kind==='incorrect-net-rounding'){s.itemApplication.lines[1].appliedAmount='1';s.itemApplication.deductionsAmount='1';s.totalDeductions=1197;s.netSalary=29137;}
+  if(kind==='redistribute'){s.baseSalary--;s.itemApplication.lines[0].appliedAmount='2';s.itemApplication.earningsAmount='2';}
+  const r=run(s,sources,inv);expect(r.status).toBe('needs-review');expect(r.totals.net).toBeNull();
+ });
+ it('cannot silently drop a recorded item when application evidence is absent',()=>{const {s,inv,sources}=applied();delete s.itemApplication;expect(run(s,sources,inv).totals.net).toBeNull();});
+});

@@ -29,3 +29,8 @@ it('insurance provenance stays missing for absent, malformed or foreign approved
   expect((await loadInsuranceEvidence(db,null,'E1')).source).toBeNull();
  }
 });
+
+it('keeps explicit zero tax declaration distinct from health dependants',()=>{expect(validateInsurancePeriods([P({withholdingSpouseAndDependants:0,withholdingCountSourceRef:'decl-1',healthDependants:3})])[0]).toMatchObject({withholdingSpouseAndDependants:0,withholdingCountSourceRef:'decl-1',healthDependants:3});});
+it.each([{withholdingSpouseAndDependants:0},{withholdingCountSourceRef:'decl-1'},{withholdingSpouseAndDependants:1.2,withholdingCountSourceRef:'decl-1'},{withholdingSpouseAndDependants:1,withholdingCountSourceRef:'private/path'},{withholdingSpouseAndDependants:0,withholdingCountSourceRef:'decl-1',withholdingMethod:'flat-5'}])('rejects incomplete or inapplicable declaration %j',extra=>{expect(code(()=>validateInsurancePeriods([P(extra)]))).toBe(400);});
+
+it('retains a confirmed above-table dependant count for the official extension without computing tax in the declaration',()=>{const value=validateInsurancePeriods([P({withholdingSpouseAndDependants:14,withholdingCountSourceRef:'SYNTH-TAX-DECL-14'})])[0];expect(value).toMatchObject({withholdingSpouseAndDependants:14,withholdingCountSourceRef:'SYNTH-TAX-DECL-14'});expect(value).not.toHaveProperty('incomeTax');});

@@ -1,0 +1,10 @@
+import {describe,it,expect} from 'vitest';
+import {projectPayrollAdjustments} from '../utils/payroll/adjustment';
+const amounts=(earning:string,deduction:string,net:string)=>({lines:[{code:'normal',kind:'earning' as const,amount:earning},{code:'insurance',kind:'deduction' as const,amount:deduction}],net});
+describe('exact incremental reconciliation adjustments',()=>{
+ it('applies target minus recorded baseline and preserves recorded actual net',()=>{const base=amounts('900','50','850'),target=amounts('1000','60','940'),first=projectPayrollAdjustments(base,target);expect(first.outstanding.net).toBe('90');expect(first.outstanding.lines.find(l=>l.code==='insurance')?.amount).toBe('10');const posted=projectPayrollAdjustments(base,target,[first.outstanding]);expect(posted.accountedTarget).toEqual(posted.target);expect(posted.outstanding.net).toBe('0');expect(posted.recordedActualNet).toBe('850');expect(posted.paymentStatus).toBe('not-paid');});
+ it('retains offsetting nonzero components even when net is zero',()=>{const p=projectPayrollAdjustments(amounts('100','10','90'),amounts('110','20','90'));expect(p.outstanding.net).toBe('0');expect(p.outstanding.lines.map(l=>l.amount)).toEqual(['10','10']);});
+ it('preserves exact negative decimals without inventing future deduction',()=>{const p=projectPayrollAdjustments(amounts('100.25','1.05','99.20'),amounts('99.10','1.15','97.95'));expect(p.outstanding.net).toBe('-1.25');expect(p.automaticWageDeduction).toBe(false);});
+ it('computes only incremental change after a prior application',()=>{const b=amounts('100','10','90'),first=projectPayrollAdjustments(b,amounts('110','10','100'));expect(projectPayrollAdjustments(b,amounts('115','10','105'),[first.outstanding]).outstanding.net).toBe('5');});
+ it('rejects unknown, duplicate, changed-kind and unreconciled inputs',()=>{const b=amounts('100','10','90');for(const invalid of [{...b,net:'91'},{...b,net:null},{...b,lines:[b.lines[0],b.lines[0]]},{...b,lines:[{code:'normal',kind:'deduction',amount:'100'}],net:'-100'}])expect(()=>projectPayrollAdjustments(b,invalid as any)).toThrow();});
+});

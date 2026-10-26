@@ -1,5 +1,5 @@
 import {UserRole} from '../../../types';
-import {assessPayrollItemInventory,validPayrollItemVersionHistory,assertPayrollItemFields,payrollItemIdentifier,payrollItemIdentity,payrollItemMonth,payrollItemReason,validatePayrollItemInventory,type PayrollItemInventoryVersion} from '../../../utils/payroll/items';
+import {assessPayrollItemInventory,validPayrollItemVersionHistory,assertPayrollItemFields,payrollItemIdentifier,payrollItemIdentity,payrollItemMonth,payrollItemReason,validatePayrollItemInventory,type PayrollItemInventoryVersion,type PayrollItemAssessment} from '../../../utils/payroll/items';
 import {evidenceHash} from './attendanceCaseLifecycle';
 import {runPayrollMutation,assertTransactionMonths} from './monthGuard';
 
@@ -28,6 +28,16 @@ async function verifyImmutableHistory(db:any,reader:any,current:any,empId:string
   previous=version;
  }
  if(evidenceHash(current)!==evidenceHash(previous))fail(409,'薪資項目目前紀錄與不可變歷史不一致');
+}
+
+/** Internal trusted-reader boundary. Authorization belongs to the API caller;
+ * every source read uses its supplied transaction, including immutable history. */
+export async function loadPayrollItemInventoryEvidence(db:any,reader:{get:(ref:any)=>Promise<any>},empId:string,month:string):Promise<{version:PayrollItemInventoryVersion|null;source:{id:string;revision:number;evidenceVersion:string}|null;assessment:PayrollItemAssessment}>{
+ if(!payrollItemIdentity(empId)||!payrollItemMonth(month))fail(400,'員工／月份識別無效');
+ const id=payrollItemInventoryId(empId,month);
+ const version=await read(reader,db.collection('payrollItemInventories').doc(id),true);
+ await verifyImmutableHistory(db,reader,version,empId,month,id);
+ return {version,source:version?{id,revision:version.revision,evidenceVersion:evidenceHash(version)}:null,assessment:assessPayrollItemInventory(version)};
 }
 
 /** Salary-confidential evidence workflow, parallel to C2m authorisation. All state

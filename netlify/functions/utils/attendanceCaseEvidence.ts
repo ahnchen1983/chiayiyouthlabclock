@@ -1,3 +1,7 @@
+import {clockInterval,validDate,taipeiDate} from '../../../utils/attendance';
+import {loadAttendancePolicyDeclarationEvidence} from './attendancePolicyDeclaration';
+import {buildAttendanceOvertimeClassification} from './attendanceOvertimeClassification';
+import {assessAttendanceExplanationInventory} from './attendanceExplanationInventory';
 import {foldCompLedger} from './compLedger';
 import {normalizeScheduleDoc} from './calculations';
 import {CASE_TYPES,type AttendanceCase,type CaseObservation,type DetectorInput} from './attendanceCaseTypes';
@@ -6,22 +10,41 @@ import {caseKey,evidenceHash} from './attendanceCaseLifecycle';
 import {loadMonthlyPayrollEmployees} from './payrollReviewStorage';
 const error=(statusCode:number,message:string):never=>{throw Object.assign(new Error(message),{statusCode});};
 const validId=(v:any):v is string=>typeof v==='string'&&v.length>0&&v.length<=150&&!v.includes('/');
-export const attendanceCaseMonthWindow=(month:string)=>{
- if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(month||''))error(400,'月份無效');
- const start=Date.parse(month+'-01T00:00:00+08:00')/60000;
- const next=new Date(month+'-01T00:00:00Z');next.setUTCMonth(next.getUTCMonth()+1);
- return {start,end:Date.parse(next.toISOString().slice(0,10)+'T00:00:00+08:00')/60000};
-};
+import {attendanceCaseMonthWindow} from './attendanceWindow';
+export {attendanceCaseMonthWindow} from './attendanceWindow';
 const rows=async(db:any,tx:any,name:string,empId?:string)=>{
  const query=empId?db.collection(name).where('empId','==',empId):db.collection(name);
  const snap=await tx.get(query.limit(501));if(snap.size>500)error(409,'來源超出本批安全掃描上限；未產生部分案件');
  return snap.docs.map((d:any)=>({...d.data(),id:d.id}));
 };
+/** Bounded complete employee inventory, then a conservative relevance filter.
+ * The extra prior day preserves overnight tails into the six-day week context.
+ * Malformed/ambiguous rows consume capacity rather than disappearing. */
+export async function loadAttendanceClockRecords(db:any,tx:any,empId:string,month:string):Promise<any[]> {
+ const window=attendanceCaseMonthWindow(month),start=window.start-6*1440,end=window.end+6*1440;
+ const snap=await tx.get(db.collection('clockRecords').where('empId','==',empId).limit(10001));
+ if(snap.size>10000)error(409,'打卡完整來源清冊超出安全讀取容量；未產生部分案件');
+ const records=snap.docs.map((d:any)=>({...d.data(),id:d.id})).filter((r:any)=>{
+  if(!validDate(r.date))return true;
+  const span=clockInterval(r);if(!span)return true;
+  const base=Date.parse(r.date+'T00:00:00+08:00')/60000;
+  for(const key of ['clockInAt','clockOutAt'])if(r[key]!==undefined&&r[key]!==null){
+   const value=r[key];
+   if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.test(value)||!validDate(value.slice(0,10))||!Number.isFinite(Date.parse(value)))return true;
+   if(key==='clockInAt'&&taipeiDate(new Date(value))!==r.date)return true;
+   if(Date.parse(value)/60000!==base+(key==='clockInAt'?span.start:span.end))return true;
+  }
+  if(r.workIntervals!==undefined&&(!Array.isArray(r.workIntervals)||r.workIntervals.some((w:any)=>!w||!Number.isSafeInteger(w.start)||!Number.isSafeInteger(w.end)||w.end<=w.start||w.start<span.start||w.end>span.end)))return true;
+  return base+span.start<end&&base+span.end>start;
+ });
+ if(records.length>500)error(409,'相關或待釐清打卡來源超出本批安全掃描上限；未產生部分案件');
+ return records;
+}
 // Trusted server loader only. No client observation/policy/coverage is accepted.
 export const loadAttendanceCaseInput=async(db:any,tx:any,empId:string,month:string,at:string):Promise<DetectorInput>=>{
  const employeeSnap=await tx.get(db.collection('employees').doc(empId));if(!employeeSnap.exists)error(404,'員工不存在');
  const [e]=await loadMonthlyPayrollEmployees([{...employeeSnap.data(),id:empId}],month,db,tx);
- const records=await rows(db,tx,'clockRecords',empId);
+ const records=await loadAttendanceClockRecords(db,tx,empId,month);
  const schedules=(await rows(db,tx,'dailySchedule')).map((d:any)=>normalizeScheduleDoc(d,d.id,''));
  // Read complete employee sources, including full cross-month evidence.
  const comps=[...await rows(db,tx,'compRequests',empId),...await rows(db,tx,'compSettlementTasks',empId)];
@@ -31,12 +54,16 @@ export const loadAttendanceCaseInput=async(db:any,tx:any,empId:string,month:stri
  const swaps=(await rows(db,tx,'shiftSwapRequests')).filter((r:any)=>r.fromEmpId===empId||r.toEmpId===empId);
  const revisions=(await rows(db,tx,'attendanceRevisions')).filter((r:any)=>r.before?.empId===empId||r.after?.empId===empId);
  const review=e.payrollReview, p=review?.policy;
+ const declaration=await loadAttendancePolicyDeclarationEvidence(db,tx,empId,month);
+ const explanationInventory=assessAttendanceExplanationInventory({empId,
+  explanations:await rows(db,tx,'anomalyExplanations'),links:await rows(db,tx,'caseExplanationLinks'),
+  events:await rows(db,tx,'anomalyExplanationEvents'),cases:await rows(db,tx,'attendanceCases')});
  return { employee:{...(e.employmentAuthority?{employmentAuthority:e.employmentAuthority}:{}),id:empId,hireDate:e.hireDate||'',...(e.resignDate?{resignDate:e.resignDate}:{}),...(e.leaveOfAbsenceStart?{leaveOfAbsenceStart:e.leaveOfAbsenceStart}:{}),...(e.leaveOfAbsenceEnd?{leaveOfAbsenceEnd:e.leaveOfAbsenceEnd}:{})},
- window:attendanceCaseMonthWindow(month),asOf:Date.parse(at)/60000,records,schedules,leaves,makeups,comps,overtimes,absences,swaps,revisions,
- coverage:{records:'complete',schedules:schedules.some((d:any)=>d.shifts.some((s:any)=>!s.empId))?'unknown':'complete',requests:'complete',employment:'complete',revisions:'complete',explanations:'unknown'},
- // Existing payroll policy does not attest attendance grace/close/break targets.
- // Keep those unknown; do not reinterpret general system defaults as approval.
- policy:p?{version:p.version,reviewedBy:review.reviewedBy,reviewedAt:review.reviewedAt,workDateRule:p.workDateRule}:null };
+ explanationInventory,overtimeClassification:buildAttendanceOvertimeClassification(e,month,records,leaves),window:attendanceCaseMonthWindow(month),asOf:Date.parse(at)/60000,records,schedules,leaves,makeups,comps,overtimes,absences,swaps,revisions,
+ coverage:{records:'complete',schedules:schedules.some((d:any)=>d.shifts.some((s:any)=>!s.empId))?'unknown':'complete',requests:'complete',employment:'complete',revisions:'complete',explanations:explanationInventory.status==='complete'?'complete':'unknown'},
+ // Only the independently approved declaration supplies detector thresholds.
+ // Legacy payroll policy still supplies no invented grace/close/break targets.
+ policy:declaration.assessment.status==='verified'?declaration.assessment.policy:p?{version:p.version,reviewedBy:review.reviewedBy,reviewedAt:review.reviewedAt,workDateRule:p.workDateRule}:null };
 };
 // Source-scope observations have no entity anchor in B1. Namespace those
 // by scan month at the persistence boundary so April cannot overwrite May.

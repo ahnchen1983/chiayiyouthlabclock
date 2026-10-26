@@ -1,4 +1,5 @@
 import {attendanceCaseMonthWindow as monthWindow,loadAttendanceCaseInput as loadInput,scanCaseObservations as scanObservations,retainAffectedWindow} from './attendanceCaseEvidence';
+import {prepareAttendanceScanCertificate} from './attendanceScanStorage';
 import { UserRole } from '../../../types';
 import { CASE_TYPES } from './attendanceCaseTypes';
 import type { AttendanceCase, CaseObservation } from './attendanceCaseTypes';
@@ -47,7 +48,7 @@ export const appendCaseWorkflowEvent=(c:StoredCase,data:any,actor:string,at:stri
 export const handleAttendanceCaseAction=async(db:any,uid:string,action:string,data:any,clock:()=>Date=()=>new Date())=>{
  if(!CASE_ACTIONS.includes(action as any))error(400,'案件操作無效');
  // Server-owned evidence fields are never accepted, even for administrators.
- if(['proof','observation','coverage','policy','actor','at','sourceVersion','clearedObservation'].some(k=>k in data))error(400,'不得提交伺服器證據或時間');
+ if(['proof','observation','coverage','policy','actor','at','sourceVersion','clearedObservation','certificate','certificateId','caseHeads'].some(k=>k in data))error(400,'不得提交伺服器證據或時間');
  if(action==='list-attendance-cases'){
   const actor=await actorFor(db,uid);assertScope(actor,data.empId);const window=monthWindow(data.yearMonth);
   const snap=await db.collection('attendanceCases').where('empId','==',data.empId).limit(501).get();if(snap.size>500)error(409,'案件查詢需縮小範圍');
@@ -75,10 +76,15 @@ export const handleAttendanceCaseAction=async(db:any,uid:string,action:string,da
    const updates: {previous:StoredCase|undefined,next:StoredCase}[]=[];
    for(const o of result.observations){const previous=existing.find((c:any)=>c.id===o.id);const next=reconcileCase(previous,retainAffectedWindow(previous,o),uid,at);if(next&&next!==previous)updates.push({previous,next:{...next,scanMonth:data.yearMonth,sourceVersion}});}
    if(updates.reduce((n,u)=>n+u.next.history.length-(u.previous?.history.length||0),0)>100)error(409,'單次案件變更過多，須拆分來源；未部分寫入');
+   const projected=new Map(existing.map((c:any)=>[c.id,c]));for(const u of updates)projected.set(u.next.id,u.next);
+   // Validate retained IDs against the ORIGINAL inventory, before any projected
+   // recreation can hide deleted history. Planning only reads; commit is deferred.
+   const certificate=await prepareAttendanceScanCertificate(db,tx,{empId:data.empId,month:data.yearMonth,
+    explanationDigest:input.explanationInventory?.sourceDigest,observations:result.observations,cases:existing,projectedCases:[...projected.values()],actor:uid,at,allowLegacyUpgrade:true});
    const months=[...new Set(updates.flatMap(u=>[...affectedMonths(u.next.observation),...(u.previous?affectedMonths(u.previous.observation):[])]))];
-   await assertTransactionMonths(db,tx,months);
+   await assertTransactionMonths(db,tx,[...new Set([...certificate.requiredMonths,...months])]);
    for(const u of updates)persistCaseWorkflow(db,tx,u.previous,u.next);
-   tx.set(db.collection('attendanceCaseScans').doc(evidenceHash([data.empId,data.yearMonth])),{empId:data.empId,yearMonth:data.yearMonth,sourceVersion,at,actor:uid,detectorVersion:'detector-v1',complete:false,missingCapabilities:result.missingCapabilities});
+   certificate.commit();
    return {changed:updates.length,complete:false,settlementEligibility:'BLOCKED'};
   });
  }

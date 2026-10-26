@@ -7,13 +7,13 @@ import type {CaseObservation,CaseStatus,DetectorInput} from './attendanceCaseTyp
 
 export interface AttendanceScanCertificate {
  schemaVersion:'attendance-scan-v1'; empId:string; month:string; detectorVersion:'detector-v1';
- observationDigest:string;
+ explanationDigest?:string|null; observationDigest:string;
  caseHeads:{id:string;revision:number;evidenceVersion:string;status:CaseStatus}[];
  actor:string; at:string;
 }
 export interface AttendanceMonthEvidence {
  empId:string;month:string;inventory:'complete'|'unknown';scan:'missing'|'stale'|'current'|'unknown';
- observationDigest:string|null;missingCaseIds:string[];missingDetectorInputs:string[];
+ staleAcceptedIds?:string[];observationDigest:string|null;missingCaseIds:string[];missingDetectorInputs:string[];
  findings:CaseObservation[];unknowns:CaseObservation[];
 }
 const text=(v:unknown):v is string=>typeof v==='string'&&v.trim().length>0;
@@ -33,8 +33,8 @@ export const attendanceObservationDigest=(empId:string,month:string,observations
 
 // Pure, read-only assessment. Certificate provenance must be established by a
 // trusted server adapter; this does not replace immutable case/event verification.
-export function assessAttendanceMonth(args:{empId:string;month:string;input:DetectorInput|undefined;cases:unknown;certificate:AttendanceScanCertificate|null|undefined}):AttendanceMonthEvidence {
- const result:AttendanceMonthEvidence={empId:args.empId,month:args.month,inventory:'complete',scan:args.certificate==null?'missing':'unknown',observationDigest:null,missingCaseIds:[],missingDetectorInputs:[],findings:[],unknowns:[]};
+export function assessAttendanceMonth(args:{empId:string;month:string;input:DetectorInput|undefined;cases:unknown;certificate:AttendanceScanCertificate|null|undefined;explanationDigest?:string|null}):AttendanceMonthEvidence {
+ const result:AttendanceMonthEvidence={empId:args.empId,month:args.month,inventory:'complete',scan:args.certificate==null?'missing':'unknown',staleAcceptedIds:[],observationDigest:null,missingCaseIds:[],missingDetectorInputs:[],findings:[],unknowns:[]};
  const missing=new Set<string>(),missingCases=new Set<string>();
  let sourceValid=true,caseValid=true;
  let observations:CaseObservation[]=[],heads:AttendanceScanCertificate['caseHeads']=[];
@@ -74,6 +74,7 @@ export function assessAttendanceMonth(args:{empId:string;month:string;input:Dete
    if(!card.clockOutAt&&!card.clockOutTime)requiredPolicy('closeAfterMinutes');
    if(span&&span.end>1440)requiredPolicy('workDateRule');
   }
+  result.staleAcceptedIds=[...(input.explanationInventory?.staleAcceptedIds||[])];
   result.observationDigest=attendanceObservationDigest(args.empId,args.month,observations);
   result.findings=observations.filter(o=>o.outcome==='finding');result.unknowns=observations.filter(o=>o.outcome==='unknown');
  }catch{sourceValid=false;missing.add('source.inventory');}
@@ -95,7 +96,7 @@ export function assessAttendanceMonth(args:{empId:string;month:string;input:Dete
   if(valid){
    const currentIds=new Set(heads.map(h=>h.id));
    for(const h of cert.caseHeads)if(!currentIds.has(h.id))missingCases.add(h.id);
-   if(sourceValid&&caseValid)result.scan=cert.observationDigest!==result.observationDigest||missingCases.size>0||JSON.stringify(sortedHeads(cert.caseHeads))!==JSON.stringify(sortedHeads(heads))?'stale':'current';
+   if(sourceValid&&caseValid)result.scan=cert.observationDigest!==result.observationDigest||(args.explanationDigest!==undefined&&cert.explanationDigest!==args.explanationDigest)||missingCases.size>0||JSON.stringify(sortedHeads(cert.caseHeads))!==JSON.stringify(sortedHeads(heads))?'stale':'current';
   }
  }
  // A matching scan can record unresolved findings; it is not payroll readiness.

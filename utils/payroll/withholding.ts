@@ -1,3 +1,4 @@
+import {lookupWithholding2026} from './withholdingTable2026';
 import {mul,rational,sum,evidence,type Rational,type FractionEvidence} from './rational';
 import type {OTLine} from './overtime';
 /** Income tax withholding and part-time supplementary health premium (C3b).
@@ -15,8 +16,9 @@ import type {OTLine} from './overtime';
  * - Supplementary premium 2.11% on pay to a person not enrolled for health insurance
  *   in this unit, per payment reaching the minimum wage (29,500 in 2026)
  *   (NHIA https://www.nhi.gov.tw/ch/cp-4516-74b0f-2613-1.html).
- * The full tax table and the rounding of a fractional withholding amount were not
- * obtained; those cases are held for review instead of guessed. Untaken comp time
+ * Published 115 table cells require a reviewed spouse/dependant declaration.
+ * Official out-of-table formulas accept exact integer results only.
+ * Fractional placement and fractional tax rounding remain held. Untaken comp time
  * paid out is treated as taxable salary (no exemption ruling found).
  */
 export type WithholdingMethod='table'|'flat-5'|'part-time-5'|'non-resident';
@@ -36,15 +38,24 @@ export function exemptOvertime(lines:OTLine[]):Rational{
   values.push(take===l.minutes?f(l.exact):mul(f(l.exact),rational(BigInt(take),BigInt(l.minutes))));}
  return sum(values);
 }
-export function withholdingForMonth(input:{month:string;gross:Rational;overtimeLines:OTLine[];pensionSelf:number;method:WithholdingMethod|null|undefined;healthInsuredHere:boolean}):WithholdingResult{
+export function withholdingForMonth(input:{month:string;gross:Rational;overtimeLines:OTLine[];pensionSelf:number;method:WithholdingMethod|null|undefined;healthInsuredHere:boolean;spouseAndDependantsCount?:number;countConfirmed?:boolean;countSourceRef?:string}):WithholdingResult{
  const issues:string[]=[],exempt=exemptOvertime(input.overtimeLines);
+ if(input.overtimeLines.filter(l=>['weekday-overtime','rest-day-additional'].includes(l.kind)).reduce((n,l)=>n+l.minutes,0)>EXEMPT_OT_MINUTES)issues.push('超過46小時之加班免稅範圍須依適用制度及完整核定來源另行確認');
  const base=sum([input.gross,mul(exempt,rational(-1n)),rational(BigInt(-input.pensionSelf))]),taxable=base.n<0n?rational(0n):base;
  const salaryPaid=sum([input.gross,mul(exempt,rational(-1n))]);
  if(!/^2026-(0[1-9]|1[0-2])$/.test(input.month))issues.push('此月份扣繳標準未建立');
  let incomeTax=0;const pct=(p:bigint)=>mul(taxable,rational(p,100n));
  const take=(t:Rational)=>{if(integer(t))return Number(t.n);issues.push('扣繳稅額有角分，進位方式待確認');return 0;};
  switch(input.method){
-  case 'table':if(ge(taxable,START_2026))issues.push('超過扣繳稅額表起扣點，需依115年度扣繳稅額表核定');break;
+  case 'table':{
+   if(gt(taxable,START_2026-1)){
+    const sourceValid=typeof input.countSourceRef==='string'&&/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,149}$/.test(input.countSourceRef);
+    const lookup=lookupWithholding2026({month:input.month,taxableSalary:integer(taxable)?Number(taxable.n):null,spouseAndDependantsCount:input.spouseAndDependantsCount,countConfirmed:input.countConfirmed===true&&sourceValid});
+    if(lookup.status==='ready')incomeTax=lookup.incomeTax!;
+    else issues.push('扣繳稅額表需有效核定人數及完整適用級距：'+lookup.issues.join('、'));
+   }
+   break;
+  }
   case 'flat-5':{const t=pct(5n);if(t.n>2000n*t.d)incomeTax=take(t);break;}
   case 'part-time-5':if(ge(taxable,START_2026))issues.push('兼職／非每月扣繳需核定單次給付資料，月合計不能代替單次給付');break;
   case 'non-resident':incomeTax=take(pct(gt(taxable,NON_RESIDENT_LOW_2026)?18n:6n));break;

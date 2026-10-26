@@ -57,6 +57,19 @@ const call = async (action: string, body: Record<string, unknown> = {}, token = 
     return { statusCode: response.statusCode, body: response.body };
 };
 
+// Explicit synthetic evidence setup; never called globally for negative tests.
+const readyLegacyAttendance = async (targets:Record<string,number>={'2026-04-01':480}) => {
+ const {seedAttendanceReady}=await import('./fixtures/attendanceReady');
+ const reviewer='EMU_ATTENDANCE_REVIEWER';
+ await db.doc('employees/'+reviewer).set({id:reviewer,role:UserRole.SuperAdmin,accountKind:'system-account',hireDate:'2020-01-01'});
+ for(const [date,minutes] of Object.entries(targets)){
+  const ref=db.doc('dailySchedule/'+date),existing=await ref.get();
+  if(!existing.exists){if(minutes!==480&&minutes!==540)throw Error('Explicit schedule required');await ref.set(schedule(date,minutes===540?'08:00':'09:00','17:00'));}
+ }
+ await seedAttendanceReady(db,{syntheticOnly:true,empId:employee.id,month,proposer:'EMULATOR_ADMIN',reviewer,at:'2026-05-02T00:00:00Z',expectedMinutesByDate:targets,operationPrefix:'emu-legacy-attendance'});
+ return (await db.doc('payrollControl/revision').get()).data()!.revision as number;
+};
+
 const clearEmulator = async () => {
     const response = await fetch(`http://${emulator.host}/emulator/v1/projects/${emulator.projectId}/databases/(default)/documents`, { method: 'DELETE' });
     if (!response.ok) throw new Error(`Cannot clear demo Firestore emulator: ${response.status}`);
@@ -115,6 +128,7 @@ describe('actual API against a disposable Firestore emulator', () => {
         const response = await call('get-payroll-review-inputs', { yearMonth: month });
         expect(response.statusCode, response.body).toBe(200);
         expect(JSON.parse(response.body).employees.find(e => e.id === employee.id).payrollReview.policy.version).toBe(review.policy.version);
+        const setupRevision=await readyLegacyAttendance();
         const locked = await call('lock-month', { yearMonth: month });
         expect(locked.statusCode, locked.body).toBe(200);
         expect((await storedRun()).salaries[0].grossSalary).toBe(1600);
@@ -136,6 +150,7 @@ describe('actual API against a disposable Firestore emulator', () => {
         await db.collection('dailySchedule').doc('2026-04-01').set({
             status: '營運', shifts: schedule().shifts,
         });
+        const setupRevision=await readyLegacyAttendance();
         const response = await call('lock-month', { yearMonth: month });
         expect(response.statusCode, response.body).toBe(200);
         const run = await storedRun();
@@ -144,10 +159,11 @@ describe('actual API against a disposable Firestore emulator', () => {
         expect(run.salaries).toHaveLength(1);
         expect(run.salaries[0].grossSalary).toBe(1600);
         expect(run.salaries[0].calculationStatus).toBe('locked');
-        expect((await db.collection('payrollControl').doc('revision').get()).data()?.revision).toBe(1);
+        expect((await db.collection('payrollControl').doc('revision').get()).data()?.revision).toBe(setupRevision+1);
     });
 
     it('returns the stored salary after live employee rates change', async () => {
+        const setupRevision=await readyLegacyAttendance();
         const locked = await call('lock-month', { yearMonth: month });
         expect(locked.statusCode, locked.body).toBe(200);
         const before = await storedRun();
@@ -159,6 +175,7 @@ describe('actual API against a disposable Firestore emulator', () => {
     });
 
     it('rejects a locked card mutation without writing a revision or changing the run', async () => {
+        const setupRevision=await readyLegacyAttendance();
         const locked = await call('lock-month', { yearMonth: month });
         expect(locked.statusCode, locked.body).toBe(200);
         const before = await storedRun();
@@ -169,34 +186,44 @@ describe('actual API against a disposable Firestore emulator', () => {
         expect(response.statusCode, response.body).toBe(423);
         expect((await db.collection('clockRecords').doc('C1').get()).data()).toEqual(original);
         expect((await db.collection('attendanceRevisions').get()).empty).toBe(true);
-        expect((await db.collection('payrollControl').doc('revision').get()).data()?.revision).toBe(1);
+        expect((await db.collection('payrollControl').doc('revision').get()).data()?.revision).toBe(setupRevision+1);
         expect(await storedRun()).toEqual(before);
     });
 
     it.each(['lock-first', 'mutation-first'] as const)('serializes a concurrent valid card edit and month lock (%s)', async order => {
-        // No schedule restriction: either reviewed 8 h or reviewed 7 h is a
-        // valid ready month. The stored evidence must match the committed edit.
-        await db.collection('dailySchedule').doc('2026-04-01').delete();
+        // A changed actual interval invalidates the approved scan. Only the
+        // unchanged scanned source can win settlement; no automatic rescan.
+        const setupRevision=await readyLegacyAttendance();
         const lock = () => call('lock-month', { yearMonth: month });
         const edit = () => call('update-clock-record', {
             recordId: 'C1', clockInTime: '09:00', clockOutTime: '16:00', workIntervals: [{ start: 540, end: 960 }],
         });
-        const operations = order === 'lock-first' ? [lock(), edit()] : [edit(), lock()];
-        const responses = await Promise.all(operations);
-        const [lockResponse, editResponse] = order === 'lock-first' ? responses : [...responses].reverse();
-        expect(lockResponse.statusCode, lockResponse.body).toBe(200);
-        expect([200, 423], editResponse.body).toContain(editResponse.statusCode);
-        const current = (await db.collection('clockRecords').doc('C1').get()).data()!;
-        const run = await storedRun();
-        expect(run.inputs.records).toHaveLength(1);
-        expect(run.inputs.records[0]).toEqual(current);
-        expect(run.salaries[0].grossSalary).toBe(editResponse.statusCode === 200 ? 1400 : 1600);
-        expect(current.clockOutTime).toBe(editResponse.statusCode === 200 ? '16:00' : '17:00');
-        expect((await db.collection('attendanceRevisions').get()).size).toBe(editResponse.statusCode === 200 ? 1 : 0);
-        expect((await db.collection('payrollControl').doc('revision').get()).data()?.revision).toBe(editResponse.statusCode === 200 ? 2 : 1);
+        const responses = await Promise.all(order === 'lock-first' ? [lock(), edit()] : [edit(), lock()]);
+        const [locked,edited]=order==='lock-first'?responses:[...responses].reverse();
+        expect([200,409],locked.body).toContain(locked.statusCode);
+        expect([200,423],edited.body).toContain(edited.statusCode);
+        expect(responses.filter(r=>r.statusCode===200)).toHaveLength(1);
+        const current=(await db.doc('clockRecords/C1').get()).data()!;
+        expect(current.clockOutTime).toBe(edited.statusCode===200?'16:00':'17:00');
+        expect((await db.collection('attendanceRevisions').get()).size).toBe(edited.statusCode===200?1:0);
+        expect((await db.doc('payrollControl/revision').get()).data()?.revision).toBe(setupRevision+1);
+        if(locked.statusCode===200){
+            const run=await storedRun();expect(run.inputs.records).toHaveLength(1);
+            const evidenceFields=['id','empId','date','clockInTime','clockOutTime','clockInAt','clockOutAt','workHours','status','workIntervals','workReview','attendanceRevisionId','rawMinutes','payableMinutes','calculationVersion','reviewReasons','source','manuallyEdited','editedBy','editedAt','note','notes'];
+            const expectedEvidence=Object.fromEntries(evidenceFields.filter(key=>current[key]!==undefined).map(key=>[key,current[key]]));
+            expect(run.inputs.records[0]).toEqual(expectedEvidence);
+            for(const key of ['name','verificationData','verificationMethod','method'])expect(run.inputs.records[0]).not.toHaveProperty(key);
+            expect(run.salaries[0].grossSalary).toBe(1600);
+        }else{
+            expect((await db.collection('payrollRuns').get()).empty).toBe(true);
+            expect((await db.collection('monthLocks').get()).empty).toBe(true);
+            const salary=JSON.parse((await call('get-employee-salary',{empId:employee.id,yearMonth:month})).body);
+            expect(salary.preflight.trialStatus).toBe('BLOCKED');expect(salary.netSalary).toBeNull();
+        }
     });
 
     it('commits exactly one payroll run when two real month-lock requests contend', async () => {
+        const setupRevision=await readyLegacyAttendance();
         const actualTransaction = db.runTransaction.bind(db);
         let attempts = 0, readyToCommit = 0;
         let release!: () => void;
@@ -232,7 +259,7 @@ describe('actual API against a disposable Firestore emulator', () => {
         expect(responses.filter(r => [409, 423].includes(r.statusCode))).toHaveLength(1);
         const run = await storedRun();
         expect(run.salaries[0].grossSalary).toBe(1600);
-        expect((await db.collection('payrollControl').doc('revision').get()).data()?.revision).toBe(1);
+        expect((await db.collection('payrollControl').doc('revision').get()).data()?.revision).toBe(setupRevision+1);
         expect((await db.collection('auditLogs').get()).size).toBe(1);
     });
 
@@ -255,12 +282,14 @@ describe('pending request settlement barrier with actual Firestore transactions'
         expect((await db.collection('monthLocks').get()).empty).toBe(true);
         expect((await db.collection('payrollRuns').get()).empty).toBe(true);
         await db.collection('makeupRequests').doc(JSON.parse(submitted.body).id).update({ status: '駁回' });
+        await readyLegacyAttendance();
         const retry = await call('lock-month', { yearMonth: month });
         expect(retry.statusCode, retry.body).toBe(200);
         expect((await storedRun()).salaries[0].grossSalary).toBe(1600);
     });
 
     it.each(['lock-first', 'request-first'])('concurrent pending correction and settlement cannot both commit (%s)', async order => {
+        const setupRevision=await readyLegacyAttendance();
         const lock = () => call('lock-month', { yearMonth: month });
         const submit = () => call('submit-makeup-request', { date: '2026-04-01', type: '補下班', reason: '合成案例核實下班時間', recordId: 'C1', requestedClockOut: '17:00' }, 'synthetic-employee');
         const responses = await Promise.all(order === 'lock-first' ? [lock(), submit()] : [submit(), lock()]);
@@ -271,7 +300,7 @@ describe('pending request settlement barrier with actual Firestore transactions'
         expect((await db.collection('payrollRuns').get()).size).toBe(locked.statusCode === 200 ? 1 : 0);
         expect((await db.collection('monthLocks').get()).size).toBe(locked.statusCode === 200 ? 1 : 0);
         expect((await db.collection('makeupRequests').get()).size).toBe(submitted.statusCode === 200 ? 1 : 0);
-        expect((await db.collection('payrollControl').doc('revision').get()).data()?.revision).toBe(1);
+        expect((await db.collection('payrollControl').doc('revision').get()).data()?.revision).toBe(setupRevision+1);
     });
 });
 
@@ -297,6 +326,7 @@ describe('actual formal gate and application evidence against emulator', () => {
         const savedEvidence = revisions.docs[0].data();
         const edited = await call('update-clock-record', { recordId: 'C1', clockInTime: '09:00', clockOutTime: '17:00', workIntervals: [{ start: 540, end: 1020 }] });
         expect(edited.statusCode, edited.body).toBe(200);
+        await readyLegacyAttendance();
         const salaryResponse = await call('get-all-salary-details', { yearMonth: month });
         const salary = JSON.parse(salaryResponse.body)[0];
         expect(salary.preflight).toMatchObject({ status: 'BLOCKED', trialStatus: 'READY' });
@@ -447,7 +477,24 @@ describe('B4b metadata transactions with fake private storage/scanner (not a sto
 });
 describe('B4c independent explanation/leave actual metadata transactions',()=>{
  const employeeCall=(action:string,data:any)=>call(action,data,'synthetic-employee');
- const setup=async()=>{await db.collection('employees').doc(employee.id).update({role:UserRole.Employee});await call('scan-attendance-cases',{empId:employee.id,yearMonth:month});const c=(await db.collection('attendanceCases').get()).docs.find(d=>d.data().anchor==='scope:'+month)!;return c.id;};
+ const setup=async()=>{
+  const {handleAttendancePolicyDeclarationAction}=await import('../netlify/functions/utils/attendancePolicyDeclaration');
+  await db.collection('employees').doc(employee.id).update({role:UserRole.Employee});
+  // Explicit 09–17 and 18–19 sessions versus the retained verified 09–17
+  // actual card: the second session has no attendance evidence.
+  const day=schedule('2026-04-01','09:00','17:00');
+  day.shifts.push({...day.shifts[0],from:'18:00',to:'19:00'});
+  await db.doc('dailySchedule/2026-04-01').set(day);
+  const reviewer='B4C_POLICY_REVIEWER';await db.doc('employees/'+reviewer).set({id:reviewer,role:UserRole.SuperAdmin,accountKind:'system-account',hireDate:'2020-01-01'});
+  const scope={empId:employee.id,month};
+  const view=await handleAttendancePolicyDeclarationAction(db,'EMULATOR_ADMIN','get-attendance-policy-declaration',scope);
+  expect(view.scheduleTargets).toHaveLength(1);expect(view.scheduleTargets[0].date).toBe('2026-04-01');
+  const proposed=await handleAttendancePolicyDeclarationAction(db,'EMULATOR_ADMIN','propose-attendance-policy-declaration',{...scope,expectedRevision:0,operationId:'b4c-policy-propose',reason:'Synthetic explicit full scheduled obligation',closeAfterMinutes:0,lateGraceMinutes:0,earlyGraceMinutes:0,workDifferenceTolerance:0,expectedWorkByDate:{'2026-04-01':{minutes:540,scheduleVersion:view.scheduleTargets[0].scheduleVersion}}});
+  await handleAttendancePolicyDeclarationAction(db,reviewer,'review-attendance-policy-declaration',{...scope,expectedRevision:proposed.revision,operationId:'b4c-policy-review',mode:'approve',reason:'Independent synthetic detector policy review'});
+  const scan=await call('scan-attendance-cases',{empId:employee.id,yearMonth:month});expect(scan.statusCode,scan.body).toBe(200);
+  const c=(await db.collection('attendanceCases').get()).docs.find(d=>d.data().anchor==='schedule-day:2026-04-01'&&d.data().type==='unexplained-absence');
+  expect(c?.data().observation.outcome).toBe('finding');if(!c)throw Error('Expected source-bound synthetic absence case');return c.id;
+ };
  const cmd=async(id:string,extra:any={})=>{const c=(await db.collection('attendanceCases').doc(id).get()).data()!;return {caseId:id,expectedCaseRevision:c.revision,expectedEvidenceVersion:c.observation.evidenceVersion,operationId:crypto.randomUUID(),reason:'合成異常來源核對',...extra};};
  const leaveInput={leaveType:'事假',startDate:'2026-04-01T13:00:00+08:00',endDate:'2026-04-01T17:00:00+08:00'};
  it('same explanation operation concurrency persists once, including sandbox event',async()=>{const id=await setup(),command=await cmd(id,{text:'合成本人說明不改薪資'});const before=(await db.collection('attendanceCaseOutbox').get()).size;const r=await Promise.all([employeeCall('submit-anomaly-explanation',command),employeeCall('submit-anomaly-explanation',command)]);expect(r.map(x=>x.statusCode)).toEqual([200,200]);expect((await db.collection('anomalyExplanations').get()).size).toBe(1);expect((await db.collection('anomalyExplanationEvents').get()).size).toBe(1);expect((await db.collection('attendanceCaseOutbox').get()).size).toBe(before+1);expect((await db.collection('notifications').get()).size).toBe(0);});
@@ -619,6 +666,8 @@ describe('C2b official salary on real Firestore: designation → master → over
   await db.collection('payrollPolicyVersions').doc('C2BP').set({status:'approved',version:review.policy.version,approvedBy:'EMULATOR_ADMIN',approvedAt:review.reviewedAt,employeeIds:[employee.id],from:'2026-04-01',to:'2026-05-06',normalPay:{...normalPolicy(),overtimeRules:{schemaVersion:'overtime-rules-v1',weekStartDay:0,wageComponents:'single-contract-amount',monthlyHourlyDivisor:240}}});
   await db.collection('payrollReviews').doc(employee.id+'_2026-04').set({empId:employee.id,yearMonth:'2026-04',review:{...review,policy:{...review.policy,regularDates:[]}},employeeSourceKey:employeePayrollSourceKey(e),masterVersionId:'C2BM'});
   await db.collection('clockRecords').doc('C2B-OT').set({...card('2026-04-06','08:00','17:00'),id:'C2B-OT'});await db.doc('insuranceTimelineHeads/'+employee.id).set({currentVersionId:'EMU_INS',revision:1});await db.doc('insuranceTimelineVersions/EMU_INS').set({empId:employee.id,status:'approved',approvedBy:'EMULATOR_ADMIN',approvedAt:review.reviewedAt,periods:[{from:'2026-01-01',to:'2026-12-31',laborInsured:false,laborSalary:0,employmentInsured:false,healthInsuredHere:false,healthAmount:0,healthDependants:0,pensionWage:0,pensionSelfPercent:0,withholdingMethod:'table'}]});
+  await db.doc('dailySchedule/2026-04-06').set(schedule('2026-04-06','08:00','17:00'));
+  await readyLegacyAttendance({'2026-04-01':480,'2026-04-06':540});
   const res=await call('get-employee-salary',{empId:employee.id,yearMonth:'2026-04'});expect(res.statusCode,res.body).toBe(200);const s=JSON.parse(res.body);
   expect(s.normalPayPreview.combined.status,JSON.stringify(s.normalPayPreview.combined.issues)).toBe('ready');// The suite seeds an 8h card on 04-01 too: 1600 + (1600 + 800/3) on 04-06.
   expect(s.normalPayPreview.combined.amount).toBe('3466.67');
@@ -649,6 +698,8 @@ describe('payroll policy version created through the API drives the official sal
   await db.collection('dayTypeCalendars').doc('PPVD').set({status:'approved',version:'synthetic',approvedBy:'EMULATOR_ADMIN',approvedAt:review.reviewedAt,employeeIds:[employee.id],days:Object.fromEntries([...normalDays('2026-04'),...normalDays('2026-05').slice(0,6)].map(d=>[d.date,'normal']))});
   await db.collection('payrollReviews').doc(employee.id+'_2026-04').set({empId:employee.id,yearMonth:'2026-04',review:{...review,policy:{...review.policy,version:versionId,regularDates:[]}},employeeSourceKey:employeePayrollSourceKey(e),masterVersionId:'PPVM'});
   await db.collection('clockRecords').doc('PPV-OT').set({...card('2026-04-06','08:00','17:00'),id:'PPV-OT'});await db.doc('insuranceTimelineHeads/'+employee.id).set({currentVersionId:'EMU_INS',revision:1});await db.doc('insuranceTimelineVersions/EMU_INS').set({empId:employee.id,status:'approved',approvedBy:'EMULATOR_ADMIN',approvedAt:review.reviewedAt,periods:[{from:'2026-01-01',to:'2026-12-31',laborInsured:false,laborSalary:0,employmentInsured:false,healthInsuredHere:false,healthAmount:0,healthDependants:0,pensionWage:0,pensionSelfPercent:0,withholdingMethod:'table'}]});
+  await db.doc('dailySchedule/2026-04-06').set(schedule('2026-04-06','08:00','17:00'));
+  await readyLegacyAttendance({'2026-04-01':480,'2026-04-06':540});
   vi.mocked(adminAuth.verifyIdToken).mockResolvedValue({uid:'EMULATOR_ADMIN'} as any);const s=JSON.parse((await call('get-employee-salary',{empId:employee.id,yearMonth:'2026-04'})).body);
   // Seeded 04-01 8h card + 04-06 9h: 1600 + 1600 + 800/3, final whole-dollar rounding → 3467.
   expect(s.normalPayPreview.combined.status,JSON.stringify(s.normalPayPreview.combined.issues)).toBe('ready');expect(s.normalPayPreview.combined.amount).toBe('3467');expect(s.calculationStatus,JSON.stringify(s.reviewReasons)).toBe('ready');expect(s.grossSalary).toBe(3467);
@@ -755,6 +806,8 @@ it('modern master salary snapshot matches the exact read source on real Firestor
  const {seedMasterPayroll}=await import('./fixtures/masterPayroll');
  await db.doc('employees/'+employee.id).update({privateContact:'SYNTHETIC_PRIVATE_FIELD'});
  await seedMasterPayroll((path,value)=>db.doc(path).set(value).then(()=>{}),(await db.doc('employees/'+employee.id).get()).data(),'EMULATOR_ADMIN');
+ await db.doc('dailySchedule/2026-04-01').set(schedule('2026-04-01','08:00','17:00'));
+ await readyLegacyAttendance({'2026-04-01':540});
  const response=await call('get-employee-salary',{empId:employee.id,yearMonth:month});expect(response.statusCode,response.body).toBe(200);const salary=JSON.parse(response.body);
  expect(salary.normalPayPreview.combined.amount).toBe('1866.67');
  // Only the existing transaction-contract gate is mocked. Production formal
@@ -766,4 +819,498 @@ it('modern master salary snapshot matches the exact read source on real Firestor
  expect(JSON.stringify(run)).not.toContain('SYNTHETIC_PRIVATE_FIELD');
  await db.doc('employees/'+employee.id).update({hourlyRate:99999});await db.doc('payrollMasterVersions/CANON_MASTER').update({status:'returned'});await db.doc('insuranceTimelineVersions/CANON_INS').update({periods:[]});
  const replay=JSON.parse((await call('get-employee-salary',{empId:employee.id,yearMonth:month})).body);expect(replay.normalPayPreview).toEqual(salary.normalPayPreview);
+});
+
+describe('operational declaration and payment evidence on real Firestore transactions',()=>{
+ const reviewer='EVIDENCE_REVIEWER';
+ beforeEach(async()=>{
+  await db.doc('employees/'+employee.id).update({role:UserRole.Employee});
+  await db.doc('employees/'+reviewer).set({id:reviewer,name:'合成證據核對人',role:UserRole.SuperAdmin,accountKind:'system-account'});
+  vi.mocked(adminAuth.verifyIdToken).mockImplementation(async token=>({uid:token==='synthetic-evidence-reviewer'?reviewer:token==='synthetic-employee'?employee.id:'EMULATOR_ADMIN'}) as any);
+ });
+ const policyProposal=async()=>{
+  const r=await call('get-attendance-policy-declaration',{empId:employee.id,month});expect(r.statusCode,r.body).toBe(200);
+  const targets=JSON.parse(r.body).scheduleTargets;expect(targets).toHaveLength(1);
+  return {empId:employee.id,month,expectedRevision:0,operationId:'emu-policy-proposal',reason:'合成出勤基準來源核對',closeAfterMinutes:0,lateGraceMinutes:0,earlyGraceMinutes:0,workDifferenceTolerance:0,expectedWorkByDate:Object.fromEntries(targets.map((t:any)=>[t.date,{minutes:480,scheduleVersion:t.scheduleVersion}]))};
+ };
+ const policyReview={empId:employee.id,month,expectedRevision:1,operationId:'emu-policy-review',mode:'approve',reason:'合成第二人基準核對'};
+ const paymentProposal=()=>({expectedRevision:0,operationId:'emu-payment-proposal',inventory:{empId:employee.id,month,mode:'events',sourceRefs:['SYNTHETIC-MONTH'],reason:'合成實際給付單據核對',events:[{id:'SYNTH-PAY',evidenceLocator:'ROW-1',paidOn:'2026-05-05',amount:'30000',sourceRefs:['SYNTHETIC-STATEMENT'],reason:'合成實際給付紀錄',incomeClassification:'salary-monthly',insuredCategory:'category-2-union',exemption:{kind:'category-2-union',from:'2026-01-01',to:'2026-12-31',sourceRefs:['SYNTHETIC-UNION-PROOF']}}]}});
+ const paymentReview={empId:employee.id,month,expectedRevision:1,operationId:'emu-payment-review',mode:'approve',reason:'合成第二人給付單據核對'};
+ it('persists independent policy approval with all real SDK reads before writes',async()=>{
+  const proposal=await policyProposal(),p=await call('propose-attendance-policy-declaration',proposal);expect(p.statusCode,p.body).toBe(200);const id=JSON.parse(p.body).id;
+  expect((await call('review-attendance-policy-declaration',policyReview)).statusCode).toBe(403);
+  const approved=await call('review-attendance-policy-declaration',policyReview,'synthetic-evidence-reviewer');expect(approved.statusCode,approved.body).toBe(200);
+  expect((await db.doc('attendancePolicyDeclarationVersions/'+id+'_1').get()).data()?.status).toBe('proposed');
+  expect((await db.doc('attendancePolicyDeclarationVersions/'+id+'_2').get()).data()?.status).toBe('approved');
+  const get=await call('get-attendance-policy-declaration',{empId:employee.id,month});expect(get.statusCode,get.body).toBe(200);expect(JSON.parse(get.body).assessment.status).toBe('verified');
+ });
+ it('rejects stale schedules, employee mutations and month locks without partial policy approval',async()=>{
+  const proposal=await policyProposal();expect((await call('propose-attendance-policy-declaration',proposal,'synthetic-employee')).statusCode).toBe(403);
+  const p=await call('propose-attendance-policy-declaration',proposal);expect(p.statusCode,p.body).toBe(200);const id=JSON.parse(p.body).id;
+  await db.doc('dailySchedule/2026-04-01').update({shifts:schedule('2026-04-01','09:00','18:00').shifts});
+  const stale=await call('review-attendance-policy-declaration',policyReview,'synthetic-evidence-reviewer');expect(stale.statusCode,stale.body).toBe(409);
+  await db.doc('monthLocks/'+month).set({yearMonth:month,lockedAt:'2026-05-01T00:00:00Z',lockedBy:'EMULATOR_ADMIN'});
+  expect((await call('review-attendance-policy-declaration',policyReview,'synthetic-evidence-reviewer')).statusCode).toBe(423);
+  expect((await db.doc('attendancePolicyDeclarations/'+id).get()).data()?.revision).toBe(1);
+  expect((await db.collection('attendancePolicyDeclarationVersions').get()).size).toBe(1);expect((await db.collection('attendancePolicyDeclarationCommands').get()).size).toBe(1);
+ });
+ it('records independently reviewed actual payment facts while canonical net remains unresolved',async()=>{
+  const proposal=paymentProposal(),p=await call('propose-payroll-payment-evidence',proposal);expect(p.statusCode,p.body).toBe(200);const draft=JSON.parse(p.body);
+  expect(draft.sourceBinding.net).toBeNull();expect(draft.assessment.status).toBe('needs-review');expect(draft.assessment.issues).toContain('monthly-payable-unresolved');
+  expect((await call('review-payroll-payment-evidence',paymentReview)).statusCode).toBe(403);
+  const hidden=await call('get-payroll-payment-evidence',{empId:employee.id,month},'synthetic-employee');expect(hidden.statusCode,hidden.body).toBe(200);expect(JSON.parse(hidden.body)).toMatchObject({current:null,assessment:null});
+  const approved=await call('review-payroll-payment-evidence',paymentReview,'synthetic-evidence-reviewer');expect(approved.statusCode,approved.body).toBe(200);
+  expect(JSON.parse(approved.body)).toMatchObject({status:'approved',sourceBinding:{net:null},assessment:{status:'needs-review',formalEligibility:'BLOCKED',incomeTaxBase:null,pensionBasis:null},applicationStatus:'not-applied',paymentExecution:'none',legalValidation:'unresolved'});
+  const read=await call('get-payroll-payment-evidence',{empId:employee.id,month});expect(read.statusCode,read.body).toBe(200);expect(JSON.parse(read.body)).toMatchObject({sourceAvailable:true,reconciliationAvailable:false,stale:false});
+  expect((await db.collection('payrollPaymentEvidenceVersions').get()).size).toBe(2);expect((await db.collection('payrollRuns').get()).size).toBe(0);
+ });
+ it('guards payment scope/auth, source changes and locks without writing approval',async()=>{
+  const proposal=paymentProposal();expect((await call('propose-payroll-payment-evidence',proposal,'synthetic-employee')).statusCode).toBe(403);
+  expect((await call('get-payroll-payment-evidence',{empId:'EMULATOR_ADMIN',month},'synthetic-employee')).statusCode).toBe(403);
+  const p=await call('propose-payroll-payment-evidence',proposal);expect(p.statusCode,p.body).toBe(200);const id=JSON.parse(p.body).id;
+  await db.doc('clockRecords/C1').update({clockOutTime:'18:00'});
+  const stale=await call('review-payroll-payment-evidence',paymentReview,'synthetic-evidence-reviewer');expect(stale.statusCode,stale.body).toBe(409);
+  await db.doc('monthLocks/'+month).set({yearMonth:month,lockedAt:'2026-05-01T00:00:00Z',lockedBy:'EMULATOR_ADMIN'});
+  expect((await call('review-payroll-payment-evidence',paymentReview,'synthetic-evidence-reviewer')).statusCode).toBe(423);
+  expect((await db.doc('payrollPaymentEvidence/'+id).get()).data()?.revision).toBe(1);expect((await db.collection('payrollPaymentEvidenceVersions').get()).size).toBe(1);expect((await db.collection('payrollPaymentEvidenceCommands').get()).size).toBe(1);
+ });
+});
+
+it('records real-source D review and separate adoption, then rejects a stale replacement without applying salary',async()=>{
+ const {seedMasterPayroll}=await import('./fixtures/masterPayroll');
+ const {seedAttendanceReady}=await import('./fixtures/attendanceReady');
+ const second='DIFFERENCE_REVIEWER';
+ await db.doc('employees/'+employee.id).update({role:UserRole.Employee});
+ await db.doc('employees/'+second).set({id:second,name:'合成差額核對人',role:UserRole.SuperAdmin,accountKind:'system-account'});
+ vi.mocked(adminAuth.verifyIdToken).mockImplementation(async token=>({uid:token==='synthetic-difference-reviewer'?second:'EMULATOR_ADMIN'}) as any);
+ const person=(await db.doc('employees/'+employee.id).get()).data();
+ await seedMasterPayroll((path,value)=>db.doc(path).set(value).then(()=>{}),person,'EMULATOR_ADMIN');
+ // Clear-path fixture explicitly records 09:00–17:00 and 480 verified
+ // minutes. No break is inferred or subtracted from a nine-hour source.
+ await db.doc('clockRecords/C1').set({...card('2026-04-01','09:00','17:00'),id:'C1'});
+ await db.doc('dailySchedule/2026-04-01').set({...schedule('2026-04-01','09:00','17:00'),openingHours:'09:00-17:00',requiredHeadcount:1});
+ const ready=await seedAttendanceReady(db,{syntheticOnly:true,empId:employee.id,month,proposer:'EMULATOR_ADMIN',reviewer:second,at:'2026-05-02T00:00:00Z',expectedMinutesByDate:{'2026-04-01':480},operationPrefix:'emu-d-attendance'});
+ expect(ready.assessment).toMatchObject({inventory:'complete',scan:'current',findings:[],unknowns:[]});
+ const inventory={empId:employee.id,month,mode:'none',sourceRefs:['SYNTHETIC-D-INVENTORY'],reason:'合成逐項盤點無其他項目',items:[]};
+ const ip=await call('propose-payroll-item-inventory',{inventory,expectedRevision:0,operationId:'emu-d-items-propose'});expect(ip.statusCode,ip.body).toBe(200);
+ const ia=await call('review-payroll-item-inventory',{empId:employee.id,month,expectedRevision:1,operationId:'emu-d-items-approve',mode:'approve',reason:'合成第二人盤點核定'},'synthetic-difference-reviewer');expect(ia.statusCode,ia.body).toBe(200);
+ const get=await call('get-payroll-difference',{empId:employee.id,month});expect(get.statusCode,get.body).toBe(200);const source=JSON.parse(get.body).source;
+ expect(source.status,JSON.stringify(source)).toBe('comparable');expect(source.formalEligibility).toBe('BLOCKED');expect(source.totals.net).not.toBeNull();
+ // Each explicit synthetic actual line mirrors this fixture's independently
+ // generated source. Production actual values must come from their own records.
+ const actual={currency:'TWD',items:source.lines.map((line:any,index:number)=>({sourceCode:line.code,kind:line.kind,amount:line.amount,sourceRefs:['SYNTHETIC-ACTUAL-ROW-'+index],reason:'合成逐項實際帳冊來源'})),netAmount:source.totals.net,sourceRefs:['SYNTHETIC-ACTUAL-NET'],reason:'合成實發帳冊加總來源'};
+ const scope={empId:employee.id,month,reason:'合成差額逐項獨立核對'};
+ const p=await call('propose-payroll-difference',{...scope,actual,expectedRevision:0,operationId:'emu-d-propose'});expect(p.statusCode,p.body).toBe(200);const proposed=JSON.parse(p.body);expect(proposed.comparison.varianceStatus).toBe('zero');
+ const a=await call('review-payroll-difference',{...scope,expectedRevision:proposed.revision,operationId:'emu-d-review',mode:'approve'},'synthetic-difference-reviewer');expect(a.statusCode,a.body).toBe(200);const reviewed=JSON.parse(a.body);expect(reviewed).toMatchObject({status:'reviewed',adoptionStatus:'not-recorded'});
+ const adoptedResponse=await call('adopt-payroll-difference',{...scope,expectedRevision:reviewed.revision,operationId:'emu-d-adopt'},'synthetic-difference-reviewer');expect(adoptedResponse.statusCode,adoptedResponse.body).toBe(200);const adopted=JSON.parse(adoptedResponse.body);
+ expect(adopted).toMatchObject({status:'adoption-recorded',adoptionScope:'reviewed-comparison-evidence-only',formalEligibility:'BLOCKED',applicationStatus:'not-applied',paymentStatus:'not-paid'});
+ expect((await db.collection('payrollDifferenceAdoptions').get()).size).toBe(1);
+ const afterAdoption=await call('get-employee-salary',{empId:employee.id,yearMonth:month});expect(afterAdoption.statusCode,afterAdoption.body).toBe(200);
+ const formal=JSON.parse(afterAdoption.body).preflight;expect(formal.status).toBe('BLOCKED');
+ for(const satisfied of ['PAYROLL_ITEM_REQUIREMENTS','ATTENDANCE_CASE_WORKFLOW','MANUAL_DIFF_APPROVAL'])expect(formal.gaps).not.toContain(satisfied);
+ expect(formal.gaps).toContain('PRODUCTION_RECONCILIATION');expect(formal.gaps).toContain('OT_MONTHLY_AND_QUARTER_LIMITS');
+ const replacement=await call('propose-payroll-difference',{...scope,actual,expectedRevision:adopted.revision,operationId:'emu-d-replacement'});expect(replacement.statusCode,replacement.body).toBe(200);const staleProposal=JSON.parse(replacement.body);
+ await db.doc('clockRecords/C1').update({clockOutTime:'18:00'});
+ const stale=await call('review-payroll-difference',{...scope,expectedRevision:staleProposal.revision,operationId:'emu-d-stale-review',mode:'approve'},'synthetic-difference-reviewer');expect(stale.statusCode,stale.body).toBe(409);
+ expect((await db.doc('payrollDifferenceHeads/'+proposed.id).get()).data()?.revision).toBe(staleProposal.revision);
+ expect((await db.collection('payrollDifferenceAdoptions').get()).size).toBe(1);
+ expect((await db.collection('payrollRuns').get()).empty).toBe(true);expect((await db.collection('monthLocks').get()).empty).toBe(true);
+ expect((await db.doc('employees/'+employee.id).get()).data()).toEqual(person);
+});
+
+it('reviews a genuine stored historical run through the real reader without altering its original bytes',async()=>{
+ const {seedMasterPayroll}=await import('./fixtures/masterPayroll');
+ const {seedAttendanceReady}=await import('./fixtures/attendanceReady');
+ const {loadPayrollMonthSource}=await import('../netlify/functions/utils/payrollSourceReader');
+ const reviewer='HISTORICAL_REVIEWER';
+ await db.doc('employees/'+employee.id).update({role:UserRole.Employee});
+ await db.doc('employees/'+reviewer).set({id:reviewer,name:'合成歷史核對人',role:UserRole.SuperAdmin,accountKind:'system-account'});
+ vi.mocked(adminAuth.verifyIdToken).mockImplementation(async token=>({uid:token==='synthetic-history-reviewer'?reviewer:'EMULATOR_ADMIN'}) as any);
+ await seedMasterPayroll((path,value)=>db.doc(path).set(value).then(()=>{}),(await db.doc('employees/'+employee.id).get()).data(),'EMULATOR_ADMIN');
+ await db.doc('clockRecords/C1').set({...card('2026-04-01','09:00','17:00'),id:'C1'});
+ await db.doc('dailySchedule/2026-04-01').set({...schedule('2026-04-01','09:00','17:00'),openingHours:'09:00-17:00',requiredHeadcount:1});
+ await seedAttendanceReady(db,{syntheticOnly:true,empId:employee.id,month,proposer:'EMULATOR_ADMIN',reviewer,at:'2026-05-02T00:00:00Z',expectedMinutesByDate:{'2026-04-01':480},operationPrefix:'emu-historical-attendance'});
+ const inventory={empId:employee.id,month,mode:'none',sourceRefs:['SYNTHETIC-HISTORY-INVENTORY'],reason:'合成歷史盤點無其他項目',items:[]};
+ const ip=await call('propose-payroll-item-inventory',{inventory,expectedRevision:0,operationId:'emu-history-items-propose'});expect(ip.statusCode,ip.body).toBe(200);
+ const ia=await call('review-payroll-item-inventory',{empId:employee.id,month,expectedRevision:1,operationId:'emu-history-items-review',mode:'approve',reason:'合成第二人盤點核定'},'synthetic-history-reviewer');expect(ia.statusCode,ia.body).toBe(200);
+ const live=await db.runTransaction(tx=>loadPayrollMonthSource(db,tx,{month,at:'2026-05-02T00:00:00Z'}));expect(live.kind).toBe('live');if(live.kind!=='live')throw Error('Synthetic live source required');
+ expect(live.comparisons[employee.id].status,JSON.stringify(live.comparisons[employee.id])).toBe('comparable');expect(live.evaluation.status).toBe('BLOCKED');
+ // Direct synthetic fixture persistence, not production lock authorization. The
+ // genuine source inputs/hash and stored salary fields must satisfy the reader.
+ const run={...makePayrollRun('SYNTHETIC-HISTORICAL-RUN',month,'2026-05-02T00:00:00Z',live.evaluation.salaries,live.snapshotInputs),sourceEvidence:live.sourceEvidence};
+ const lock={yearMonth:month,payrollRunId:run.id,lockedAt:'2026-05-02T00:00:00Z',lockedBy:'EMULATOR_ADMIN',lockedByName:'Synthetic historical fixture',totalAmount:run.salaries.reduce((n,s)=>n+s.grossSalary,0),employeeCount:run.salaries.length};
+ await db.doc('payrollRuns/'+run.id).set(run);await db.doc('monthLocks/'+month).set(lock);
+ const originalBytes=async()=>JSON.stringify([(await db.doc('payrollRuns/'+run.id).get()).data(),(await db.doc('monthLocks/'+month).get()).data()]);const before=await originalBytes();
+ const loaded=await db.runTransaction(tx=>loadPayrollMonthSource(db,tx,{month,at:'2026-05-03T00:00:00Z'}));expect(loaded.kind).toBe('locked');if(loaded.kind!=='locked')throw Error('Real locked reader must accept fixture');expect(loaded.completeness).toBe('complete');expect(loaded.originalInputHash).toBe(run.inputHash);
+ const got=await call('get-historical-payroll-difference',{empId:employee.id,month});expect(got.statusCode,got.body).toBe(200);const view=JSON.parse(got.body);expect(view.original.status).toBe('recorded');expect(view.source.status,JSON.stringify(view.source)).toBe('comparable');
+ const actual={currency:'TWD',items:view.source.lines.map((line:any,index:number)=>({sourceCode:line.code,kind:line.kind,amount:line.amount,sourceRefs:['SYNTHETIC-HISTORY-LINE-'+index],reason:'合成歷史逐項帳冊'})),netAmount:view.source.totals.net,sourceRefs:['SYNTHETIC-HISTORY-NET'],reason:'合成歷史實發帳冊'};
+ const scope={empId:employee.id,month,reason:'合成原始鎖月差額核對'};
+ const proposal={...scope,actual,expectedRevision:0,operationId:'emu-history-propose'};
+ const p=await call('propose-historical-payroll-difference',proposal);expect(p.statusCode,p.body).toBe(200);const proposed=JSON.parse(p.body);
+ // Current employee/card changes must not recompute the frozen historical basis.
+ await db.doc('employees/'+employee.id).update({hourlyRate:99999});await db.doc('clockRecords/C1').update({clockOutTime:'18:00'});
+ const reviewedResponse=await call('review-historical-payroll-difference',{...scope,expectedRevision:proposed.revision,mode:'approve',operationId:'emu-history-review'},'synthetic-history-reviewer');expect(reviewedResponse.statusCode,reviewedResponse.body).toBe(200);const reviewed=JSON.parse(reviewedResponse.body);
+ const adoptCommand={...scope,expectedRevision:reviewed.revision,operationId:'emu-history-adopt'};
+ const adoptedResponse=await call('adopt-historical-payroll-difference',adoptCommand,'synthetic-history-reviewer');expect(adoptedResponse.statusCode,adoptedResponse.body).toBe(200);
+ expect(JSON.parse(adoptedResponse.body)).toMatchObject({status:'adoption-recorded',formalEligibility:'BLOCKED',applicationStatus:'not-applied',paymentStatus:'not-paid',legalValidation:'not-certified'});
+ expect(await originalBytes()).toBe(before);
+ await db.doc('employees/'+reviewer).update({role:UserRole.Employee});
+ expect((await call('adopt-historical-payroll-difference',adoptCommand,'synthetic-history-reviewer')).statusCode).toBe(403);
+ expect(await originalBytes()).toBe(before);expect((await db.collection('payrollRuns').get()).size).toBe(1);expect((await db.collection('historicalPayrollDifferenceAdoptions').get()).size).toBe(1);
+});
+
+it.each([false,true])('540-minute overtime classification requires supervisor verification (%s) and never authorises payroll',async verified=>{
+ const {seedMasterPayroll}=await import('./fixtures/masterPayroll');
+ const {handleAttendancePolicyDeclarationAction}=await import('../netlify/functions/utils/attendancePolicyDeclaration');
+ const {handleAttendanceCaseAction}=await import('../netlify/functions/utils/attendanceCaseService');
+ const {loadAttendanceCaseInput}=await import('../netlify/functions/utils/attendanceCaseEvidence');
+ const {loadAttendanceScanCertificate}=await import('../netlify/functions/utils/attendanceScanStorage');
+ const {assessAttendanceMonth}=await import('../netlify/functions/utils/attendanceMonthEvidence');
+ const {loadPayrollMonthSource}=await import('../netlify/functions/utils/payrollSourceReader');
+ const {detectAttendanceCases}=await import('../netlify/functions/utils/attendanceCaseDetector');
+ const reviewer='OVERTIME_EVIDENCE_REVIEWER',at='2026-05-02T00:00:00Z';
+ await db.doc('employees/'+employee.id).update({role:UserRole.Employee});
+ await db.doc('employees/'+reviewer).set({id:reviewer,role:UserRole.SuperAdmin,accountKind:'system-account'});
+ await seedMasterPayroll((path,value)=>db.doc(path).set(value).then(()=>{}),(await db.doc('employees/'+employee.id).get()).data(),'EMULATOR_ADMIN');
+ // The negative case explicitly lacks supervisor verification. Its actual
+ // 08:00–17:00 timestamps and 540 recorded minutes are retained, not shortened.
+ if(!verified)await db.doc('clockRecords/C1').set({...card('2026-04-01','08:00','17:00',false),id:'C1',workIntervals:[{start:480,end:1020}]});
+ await db.doc('dailySchedule/2026-04-01').set({...schedule('2026-04-01','08:00','17:00'),openingHours:'08:00-17:00',requiredHeadcount:1});
+ const scope={empId:employee.id,month},get=await handleAttendancePolicyDeclarationAction(db,'EMULATOR_ADMIN','get-attendance-policy-declaration',scope);
+ const proposed=await handleAttendancePolicyDeclarationAction(db,'EMULATOR_ADMIN','propose-attendance-policy-declaration',{...scope,expectedRevision:0,operationId:'emu-540-propose',reason:'合成九小時實際工作證據',closeAfterMinutes:0,lateGraceMinutes:0,earlyGraceMinutes:0,workDifferenceTolerance:0,expectedWorkByDate:Object.fromEntries(get.scheduleTargets.map((t:any)=>[t.date,{minutes:540,scheduleVersion:t.scheduleVersion}]))});
+ await handleAttendancePolicyDeclarationAction(db,reviewer,'review-attendance-policy-declaration',{...scope,expectedRevision:proposed.revision,operationId:'emu-540-review',reason:'合成獨立九小時來源核對',mode:'approve'});
+ await handleAttendanceCaseAction(db,reviewer,'scan-attendance-cases',{empId:employee.id,yearMonth:month},()=>new Date(at));
+ const reader={get:(ref:any)=>ref.get()},input=await loadAttendanceCaseInput(db,reader,employee.id,month,at),certificate=await loadAttendanceScanCertificate(db,reader,scope);
+ const cases=(await db.collection('attendanceCases').where('empId','==',employee.id).get()).docs.map(d=>({...d.data(),id:d.id}));
+ const assessed=assessAttendanceMonth({...scope,input,cases,certificate:certificate.certificate,explanationDigest:input.explanationInventory?.sourceDigest});
+ expect(assessed.inventory).toBe('complete');expect(assessed.scan).toBe('current');
+ const overtime=detectAttendanceCases(input).observations.find(o=>o.type==='hours-difference'&&o.anchor==='overtime-candidate:2026-04-01');
+ expect(overtime).toMatchObject({outcome:verified?'clear':'unknown',payrollDecision:'none'});
+ if(verified){expect(input.overtimeClassification).toMatchObject({status:'classified',formalEligibility:'BLOCKED'});expect(overtime?.reason).toContain('不代表法定加班授權');}
+ else{expect(input.overtimeClassification?.status).toBe('unknown');expect(assessed.unknowns).toEqual(expect.arrayContaining([expect.objectContaining({type:'hours-difference',anchor:'overtime-candidate:2026-04-01',outcome:'unknown'})]));expect((await db.doc('clockRecords/C1').get()).data()?.workReview).toBeUndefined();}
+ const source=await db.runTransaction(tx=>loadPayrollMonthSource(db,tx,{month,at}));expect(source.kind).toBe('live');if(source.kind!=='live')throw Error('Synthetic live source required');
+ expect(source.comparisons[employee.id].status).toBe('needs-review');expect(source.evaluation.status).toBe('BLOCKED');
+ expect((await db.doc('clockRecords/C1').get()).data()?.workIntervals).toEqual([{start:480,end:1020}]);
+ expect((await db.collection('payrollRuns').get()).empty).toBe(true);
+});
+
+it('worktime declaration real SDK approval preserves immutable facts and rejects locked writes and demoted receipt replay',async()=>{
+ const {loadWorktimeDeclarationEvidence}=await import('../netlify/functions/utils/worktimeDeclarations');
+ const reviewer='EMU_WORKTIME_REVIEWER';
+ await db.doc('employees/'+reviewer).set({id:reviewer,role:UserRole.SuperAdmin,accountKind:'system-account',hireDate:'2020-01-01'});
+ vi.mocked(adminAuth.verifyIdToken).mockImplementation(async token=>({uid:token==='synthetic-worktime-reviewer'?reviewer:token==='synthetic-employee'?employee.id:'EMULATOR_ADMIN'}) as any);
+ const scope={empId:employee.id,month};
+ const declaration={regime:'standard-8-40',weekStartsOn:0,headcount:12,unionExists:false,overtimeMode:'46',cycle:null,rotation:'not-rotating',rotationRest:'unknown',exception:'none',sourceRefs:['SYNTH-WORKTIME-REGISTER'],authorities:[{purpose:'regime',authorityOccurredAt:'2026-03-01T09:15:32.125+08:00',effectiveFrom:'2026-04-01',effectiveTo:'2026-04-30',sourceRefs:['SYNTH-REGIME-EVENT'],reason:'Synthetic recorded regime event; other legal evidence unresolved'}]};
+ const proposal={...scope,expectedRevision:0,operationId:'emu-worktime-propose',reason:'Synthetic factual declaration',declaration};
+ const proposed=await call('propose-worktime-declaration',proposal);expect(proposed.statusCode,proposed.body).toBe(200);const p=JSON.parse(proposed.body);
+ const approval={...scope,expectedRevision:1,operationId:'emu-worktime-review',mode:'approve',reason:'Independent synthetic document facts review'};
+ expect((await call('review-worktime-declaration',approval)).statusCode).toBe(403);
+ expect((await call('get-worktime-declaration',{...scope,empId:'OTHER'},'synthetic-employee')).statusCode).toBe(403);
+ const reviewed=await call('review-worktime-declaration',approval,'synthetic-worktime-reviewer');expect(reviewed.statusCode,reviewed.body).toBe(200);const a=JSON.parse(reviewed.body);
+ expect(a).toMatchObject({revision:2,status:'approved',recordApprovedBy:reviewer,approvalScope:'recorded-declaration-only',activationStatus:'not-activated',formalEligibility:'BLOCKED',applicationStatus:'not-applied',paymentStatus:'not-paid',legalValidation:'unresolved'});
+ const loaded=await db.runTransaction(tx=>loadWorktimeDeclarationEvidence(db,tx,employee.id,month));
+ expect(loaded.approved).toEqual(a);expect(loaded.source?.revision).toBe(2);expect(loaded.issues).toContain('classified-source-history-not-assessed');expect(loaded.issues).toContain('work-rules-evidence-unknown');
+ expect(a.declaration.authorities[0].authorityOccurredAt).toBe(declaration.authorities[0].authorityOccurredAt);
+ const versionRef=db.doc('worktimeDeclarationVersions/'+p.id+'_1'),original=(await versionRef.get()).data();
+ const syntheticLock={yearMonth:month,lockedAt:'2026-05-02T00:00:00Z',lockedBy:'EMULATOR_ADMIN'};
+ await db.doc('monthLocks/'+month).set(syntheticLock);
+ expect((await call('propose-worktime-declaration',{...proposal,expectedRevision:2,operationId:'emu-worktime-after-lock'})).statusCode).toBe(423);
+ const replay=await call('review-worktime-declaration',approval,'synthetic-worktime-reviewer');expect(replay.statusCode,replay.body).toBe(200);expect(JSON.parse(replay.body)).toEqual(a);
+ await db.doc('employees/'+reviewer).update({role:UserRole.Employee});
+ expect((await call('review-worktime-declaration',approval,'synthetic-worktime-reviewer')).statusCode).toBe(403);
+ expect((await db.collection('worktimeDeclarationVersions').get()).size).toBe(2);expect((await db.collection('worktimeDeclarationCommands').get()).size).toBe(2);
+ expect((await versionRef.get()).data()).toEqual(original);expect((await db.doc('worktimeDeclarations/'+p.id).get()).data()).toEqual(a);expect((await db.doc('monthLocks/'+month).get()).data()).toEqual(syntheticLock);
+ expect((await db.collection('payrollRuns').get()).empty).toBe(true);expect((await db.collection('notifications').get()).empty).toBe(true);
+});
+
+it('joins approved actual payment allocation to canonical tax, D comparison and blocked production lock with real SDK transactions',async()=>{
+ const {seedMasterPayroll}=await import('./fixtures/masterPayroll');
+ const {seedAttendanceReady}=await import('./fixtures/attendanceReady');
+ const {loadPayrollPreWithholdingSource}=await import('../netlify/functions/utils/payrollPreWithholdingSource');
+ const reviewer='EMU_ALLOCATION_REVIEWER',scope={empId:employee.id,month};
+ await db.doc('employees/'+employee.id).update({role:UserRole.Employee});
+ await db.doc('employees/'+reviewer).set({id:reviewer,role:UserRole.SuperAdmin,accountKind:'system-account'});
+ vi.mocked(adminAuth.verifyIdToken).mockImplementation(async token=>({uid:token==='synthetic-allocation-reviewer'?reviewer:'EMULATOR_ADMIN'}) as any);
+ await seedMasterPayroll((path,value)=>db.doc(path).set(value).then(()=>{}),(await db.doc('employees/'+employee.id).get()).data(),'EMULATOR_ADMIN');
+ const master=(await db.doc('payrollMasterVersions/CANON_MASTER').get()).data()!;
+ await db.doc('payrollMasterVersions/CANON_MASTER').set({...master,timeline:{...master.timeline,periods:master.timeline.periods.map((p:any)=>({...p,amount:4000}))}});
+ const ins=(await db.doc('insuranceTimelineVersions/CANON_INS').get()).data()!;
+ await db.doc('insuranceTimelineVersions/CANON_INS').set({...ins,periods:ins.periods.map((p:any)=>({...p,withholdingMethod:'part-time-5'}))});
+ await db.doc('clockRecords/C1').set({...card('2026-04-01','09:00','17:00'),id:'C1'});
+ await db.doc('dailySchedule/2026-04-01').set({...schedule('2026-04-01','09:00','17:00'),openingHours:'09:00-17:00',requiredHeadcount:1});
+ await seedAttendanceReady(db,{syntheticOnly:true,...scope,proposer:'EMULATOR_ADMIN',reviewer,at:'2026-05-02T00:00:00Z',expectedMinutesByDate:{'2026-04-01':480},operationPrefix:'emu-allocation-attendance'});
+ const inventory={...scope,mode:'none',sourceRefs:['SYNTH-ALLOCATION-ITEMS'],reason:'Synthetic no additional items',items:[]};
+ const ip=await call('propose-payroll-item-inventory',{inventory,expectedRevision:0,operationId:'emu-allocation-items'});expect(ip.statusCode,ip.body).toBe(200);
+ const ia=await call('review-payroll-item-inventory',{...scope,expectedRevision:1,operationId:'emu-allocation-items-review',mode:'approve',reason:'Independent synthetic item review'},'synthetic-allocation-reviewer');expect(ia.statusCode,ia.body).toBe(200);
+ const upstream=await db.runTransaction(tx=>loadPayrollPreWithholdingSource(db,tx,{...scope,at:'2026-05-02T00:00:00Z'}));expect(upstream.source?.status,JSON.stringify(upstream)).toBe('ready');expect(upstream.source?.earnings.find(e=>e.code==='normal')?.amount).toBe('32000');
+ const event={id:'SYNTH-TRANSFER-1',evidenceLocator:'ROW-1',paidOn:'2026-05-02',amount:'31325',sourceRefs:['SYNTH-TRANSFER-STATEMENT'],reason:'Synthetic actual salary transfer',incomeClassification:'salary-nonmonthly',insuredCategory:'other',exemption:{kind:'none',from:'2026-05-01',to:'2026-05-31',sourceRefs:['SYNTH-NO-EXEMPTION']}};
+ const payment={...scope,mode:'events',sourceRefs:['SYNTH-TRANSFER-INVENTORY'],reason:'Synthetic complete payment inventory',events:[event]};
+ const pp=await call('propose-payroll-payment-evidence',{inventory:payment,expectedRevision:0,operationId:'emu-payment-facts'});expect(pp.statusCode,pp.body).toBe(200);expect(JSON.parse(pp.body).sourceBinding.net).toBeNull();
+ const pa=await call('review-payroll-payment-evidence',{...scope,expectedRevision:1,operationId:'emu-payment-facts-review',mode:'approve',reason:'Independent actual payment facts review'},'synthetic-allocation-reviewer');expect(pa.statusCode,pa.body).toBe(200);
+ const originalPayment=JSON.parse(pa.body);
+ const allocation={...scope,sourceRefs:['SYNTH-PAYROLL-REGISTER'],reason:'Synthetic complete event allocation',events:[{paymentEventId:event.id,earnings:upstream.source!.earnings.map(({code,amount})=>({code,amount})),taxExemptOvertime:'0',pensionSelf:'0',otherDeductions:upstream.source!.otherDeductions.map(({code,amount})=>({code,amount})),actualIncomeTax:'0',actualSupplementaryPremium:'675',sourceRefs:['SYNTH-REGISTER-ROW-1'],reason:'Synthetic exact gross and deduction allocation'}]};
+ const proposed=await call('propose-payroll-payment-allocation',{...scope,allocation,expectedRevision:0,operationId:'emu-allocation-propose',reason:'Synthetic allocation proposal'});expect(proposed.statusCode,proposed.body).toBe(200);
+ expect(JSON.parse(proposed.body).assessment).toMatchObject({status:'ready-calculation',reconciliationStatus:'zero',totals:{calculatedIncomeTax:0,calculatedSupplementaryPremium:675,expectedNet:'31325'}});
+ const approve={...scope,expectedRevision:1,operationId:'emu-allocation-review',mode:'approve',reason:'Independent exact allocation review'};
+ expect((await call('review-payroll-payment-allocation',approve)).statusCode).toBe(403);
+ const approved=await call('review-payroll-payment-allocation',approve,'synthetic-allocation-reviewer');expect(approved.statusCode,approved.body).toBe(200);
+ const salaryResponse=await call('get-employee-salary',{empId:employee.id,yearMonth:month});expect(salaryResponse.statusCode,salaryResponse.body).toBe(200);
+ const salary=JSON.parse(salaryResponse.body);expect(salary).toMatchObject({calculationStatus:'ready',grossSalary:32000,incomeTax:0,supplementaryPremium:675,netSalary:31325});expect(salary.preflight.status).toBe('BLOCKED');
+ const d=await call('get-payroll-difference',scope);expect(d.statusCode,d.body).toBe(200);expect(JSON.parse(d.body).source).toMatchObject({status:'comparable',totals:{gross:'32000',net:'31325'}});
+ expect((await db.doc('payrollPaymentEvidence/'+originalPayment.id).get()).data()).toEqual(originalPayment);
+ const actualGate=await vi.importActual<typeof import('../netlify/functions/utils/payrollPreflight')>('../netlify/functions/utils/payrollPreflight');vi.mocked(assertPayrollReady).mockImplementation(actualGate.assertPayrollReady);
+ const locked=await call('lock-month',{yearMonth:month});expect(locked.statusCode,locked.body).toBe(409);expect((await db.collection('payrollRuns').get()).empty).toBe(true);
+ await db.doc('payrollMasterVersions/CANON_MASTER').set({...master,timeline:{...master.timeline,periods:master.timeline.periods.map((p:any)=>({...p,amount:4100}))}});
+ const stale=await call('get-payroll-payment-allocation',scope);expect(stale.statusCode,stale.body).toBe(200);expect(JSON.parse(stale.body)).toMatchObject({sourceAvailable:false,stale:true});
+ const held=await call('get-employee-salary',{empId:employee.id,yearMonth:month});expect(held.statusCode,held.body).toBe(200);expect(JSON.parse(held.body).netSalary).toBeNull();
+ expect((await db.doc('payrollPaymentEvidence/'+originalPayment.id).get()).data()).toEqual(originalPayment);expect((await db.collection('notifications').get()).empty).toBe(true);
+});
+
+it('builds worktime checks from real approved multi-month sources and closes only evidenced formal prerequisites',async()=>{
+ const {seedMasterPayroll}=await import('./fixtures/masterPayroll');
+ const {seedAttendanceReady}=await import('./fixtures/attendanceReady');
+ const {normalDays}=await import('./fixtures/normalPay');
+ const {employeePayrollSourceKey}=await import('../netlify/functions/utils/payrollReviewStorage');
+ const reviewer='EMU_HISTORY_REVIEWER',scope={empId:employee.id,month};
+ await db.doc('employees/'+employee.id).update({role:UserRole.Employee});
+ const person=(await db.doc('employees/'+employee.id).get()).data();
+ await db.doc('employees/'+reviewer).set({id:reviewer,role:UserRole.SuperAdmin,accountKind:'system-account'});
+ vi.mocked(adminAuth.verifyIdToken).mockImplementation(async token=>({uid:token==='synthetic-history-source-reviewer'?reviewer:'EMULATOR_ADMIN'}) as any);
+ await seedMasterPayroll((path,value)=>db.doc(path).set(value).then(()=>{}),person,'EMULATOR_ADMIN');
+ const master=(await db.doc('payrollMasterVersions/CANON_MASTER').get()).data()!,period=master.timeline.periods.at(-1);
+ await db.doc('payrollMasterVersions/CANON_MASTER').set({...master,timeline:{...master.timeline,from:'2026-01-01',to:'2026-06-30',periods:[{...period,from:'2026-01-01',to:'2026-06-30',employmentState:'active'}]}});
+ await db.doc('payrollPolicyVersions/CANON_POLICY').update({from:'2026-01-01',to:'2026-06-30'});
+ // Explicit synthetic personal designations, not facility closure or preferences.
+ const days=Object.fromEntries(['01','02','03','04','05','06'].flatMap(m=>normalDays('2026-'+m)).map(d=>{const weekday=new Date(d.date+'T00:00:00Z').getUTCDay();return [d.date,weekday===0?'regular-holiday':weekday===6?'rest':'normal'];}));
+ await db.doc('dayTypeCalendars/CANON_DAYS').update({days});
+ for(const m of ['2026-03','2026-05'])await db.doc('payrollReviews/'+employee.id+'_'+m).set({empId:employee.id,yearMonth:m,review:{...review,yearMonth:m,policy:{...review.policy,regularDates:[]}},employeeSourceKey:employeePayrollSourceKey(person),masterVersionId:'CANON_MASTER'});
+ await db.doc('clockRecords/C1').set({...card('2026-04-01','09:00','17:00'),id:'C1'});
+ await db.doc('dailySchedule/2026-04-01').set({...schedule('2026-04-01','09:00','17:00'),openingHours:'09:00-17:00',requiredHeadcount:1});
+ // Each active hourly month has explicit verified work; an empty monthly
+ // interval list is deliberately not treated as approved zero-work payroll.
+ for(const date of ['2026-03-23','2026-05-04']){
+  const id='HISTORY-'+date;await db.doc('clockRecords/'+id).set({...card(date,'09:00','17:00'),id});
+  await db.doc('dailySchedule/'+date).set({...schedule(date,'09:00','17:00'),openingHours:'09:00-17:00',requiredHeadcount:1});
+ }
+ const historyTargets:Record<string,Record<string,number>>={'2026-03':{'2026-03-23':480},[month]:{'2026-04-01':480},'2026-05':{'2026-05-04':480}};
+ for(const m of ['2026-03',month,'2026-05'])await seedAttendanceReady(db,{syntheticOnly:true,empId:employee.id,month:m,proposer:'EMULATOR_ADMIN',reviewer,at:'2026-07-01T00:00:00Z',expectedMinutesByDate:historyTargets[m],operationPrefix:'emu-work-history-'+m});
+ const authorities=['regime','collective-overtime','individual-overtime','rotation-applicability'].map(purpose=>({purpose,authorityOccurredAt:'2025-12-01T09:00:00+08:00',effectiveFrom:'2026-01-01',effectiveTo:'2026-06-30',sourceRefs:['SYNTH-AUTH-'+purpose],reason:'Synthetic original timely authority',...(purpose==='collective-overtime'?{consentBody:'labor-management'}:{})}));
+ const declaration={regime:'standard-8-40',weekStartsOn:0,headcount:12,unionExists:false,overtimeMode:'46',cycle:null,rotation:'not-rotating',rotationRest:'unknown',exception:'none',sourceRefs:['SYNTH-WORKTIME-REGIME'],authorities,workRules:{status:'recorded',basis:'below-30-recorded-terms',documentState:'effective',versionRef:'SYNTH-TERMS-1',authorityOccurredAt:'2025-12-01T09:00:00+08:00',effectiveFrom:'2026-01-01',effectiveTo:'2026-06-30',sourceRefs:['SYNTH-TERMS-SOURCE'],reason:'Synthetic effective recorded employment terms'}};
+ const p=await call('propose-worktime-declaration',{...scope,declaration,expectedRevision:0,operationId:'emu-work-history-declare',reason:'Synthetic complete worktime declaration'});expect(p.statusCode,p.body).toBe(200);
+ const a=await call('review-worktime-declaration',{...scope,expectedRevision:1,operationId:'emu-work-history-review',mode:'approve',reason:'Synthetic independent history and authority review'},'synthetic-history-source-reviewer');expect(a.statusCode,a.body).toBe(200);
+ const checked=await call('get-worktime-assessment',scope);expect(checked.statusCode,checked.body).toBe(200);const evidence=JSON.parse(checked.body);
+ expect(evidence.status,JSON.stringify(evidence)).toBe('within-checked-limits');expect(evidence.input).toBeUndefined();expect(evidence.checks).toHaveLength(6);expect(evidence.checks.every((c:any)=>c.status==='within-checked-limits')).toBe(true);expect(evidence.workRules.status).toBe('recorded-applicable');
+ const salary=await call('get-employee-salary',{empId:employee.id,yearMonth:month});expect(salary.statusCode,salary.body).toBe(200);const preflight=JSON.parse(salary.body).preflight;
+ for(const code of ['OT_MONTHLY_AND_QUARTER_LIMITS','OT_ROTATION_AND_CONSECUTIVE_REST','OT_REGIME_AND_EXCEPTION_AUTHORIZATION','EFFECTIVE_WORK_RULES_REVIEW'])expect(preflight.gaps).not.toContain(code);
+ expect(preflight.status).toBe('BLOCKED');expect(preflight.gaps).toContain('PRODUCTION_RECONCILIATION');expect(preflight.gaps).toContain('MANUAL_DIFF_APPROVAL');
+ await db.doc('clockRecords/C1').update({clockOutTime:'18:00'});
+ const changed=await call('get-worktime-assessment',scope);expect(changed.statusCode,changed.body).toBe(200);expect(JSON.parse(changed.body).status).toBe('needs-review');
+ expect((await db.collection('payrollRuns').get()).empty).toBe(true);expect((await db.collection('monthLocks').get()).empty).toBe(true);expect((await db.collection('notifications').get()).empty).toBe(true);
+});
+
+it('executes fixed items and accounts for a real nonzero payment difference without rewriting cash facts',async()=>{
+ const {seedMasterPayroll}=await import('./fixtures/masterPayroll');
+ const {seedAttendanceReady}=await import('./fixtures/attendanceReady');
+ const {ITEM_TREATMENT_PURPOSES}=await import('../utils/payroll/itemTreatment');
+ const {loadPayrollPreWithholdingSource}=await import('../netlify/functions/utils/payrollPreWithholdingSource');
+ const reviewer='EMU_ITEM_REVIEWER',poster='EMU_ADJUSTMENT_REVIEWER',scope={empId:employee.id,month};
+ await db.doc('employees/'+employee.id).update({role:UserRole.Employee});
+ for(const id of [reviewer,poster])await db.doc('employees/'+id).set({id,role:UserRole.SuperAdmin,accountKind:'system-account'});
+ vi.mocked(adminAuth.verifyIdToken).mockImplementation(async token=>({uid:token==='synthetic-item-reviewer'?reviewer:token==='synthetic-adjustment-reviewer'?poster:token==='synthetic-employee'?employee.id:'EMULATOR_ADMIN'}) as any);
+ const ok=async(action:string,data:any={},token?:string)=>{const r=await call(action,data,token);expect(r.statusCode,action+': '+r.body).toBe(200);return JSON.parse(r.body);};
+ await seedMasterPayroll((path,value)=>db.doc(path).set(value).then(()=>{}),(await db.doc('employees/'+employee.id).get()).data(),'EMULATOR_ADMIN');
+ const master=(await db.doc('payrollMasterVersions/CANON_MASTER').get()).data()!;
+ await db.doc('payrollMasterVersions/CANON_MASTER').set({...master,timeline:{...master.timeline,periods:master.timeline.periods.map((p:any)=>({...p,amount:4000}))}});
+ const ins=(await db.doc('insuranceTimelineVersions/CANON_INS').get()).data()!;
+ await db.doc('insuranceTimelineVersions/CANON_INS').set({...ins,periods:ins.periods.map((p:any)=>({...p,withholdingMethod:'part-time-5'}))});
+ await db.doc('clockRecords/C1').set({...card('2026-04-01','09:00','17:00'),id:'C1'});
+ await db.doc('dailySchedule/2026-04-01').set({...schedule('2026-04-01','09:00','17:00'),openingHours:'09:00-17:00',requiredHeadcount:1});
+ await seedAttendanceReady(db,{syntheticOnly:true,...scope,proposer:'EMULATOR_ADMIN',reviewer,at:'2026-05-02T00:00:00Z',expectedMinutesByDate:{'2026-04-01':480},operationPrefix:'emu-items-adjustment-attendance'});
+ const items=[{itemCode:'ALLOWANCE',kind:'earning',amount:'1000',from:'2026-04-01',to:'2026-04-30',sourceRefs:['SYNTH-ALLOWANCE'],reason:'Synthetic fixed taxable allowance'},{itemCode:'AUTHORIZED_DEDUCTION',kind:'deduction',amount:'100',from:'2026-04-01',to:'2026-04-30',sourceRefs:['SYNTH-DEDUCTION'],reason:'Synthetic authorized fixed posttax deduction'}];
+ const inventory={...scope,mode:'items',sourceRefs:['SYNTH-ITEM-REGISTER'],reason:'Synthetic complete fixed item inventory',items};
+ await ok('propose-payroll-item-inventory',{inventory,expectedRevision:0,operationId:'emu-items-inventory'});
+ await ok('review-payroll-item-inventory',{...scope,expectedRevision:1,operationId:'emu-items-inventory-review',mode:'approve',reason:'Independent fixed item evidence review'},'synthetic-item-reviewer');
+ const initial=await ok('get-payroll-item-execution',scope);
+ const policy={sourceRefs:['SYNTH-ITEM-EXECUTION'],reason:'Synthetic explicit supported item recipes',items:items.map(item=>({itemCode:item.itemCode,recipe:item.kind==='earning'?'fixed-taxable-earning':'fixed-posttax-deduction',normalWage:'excluded-by-reviewed-evidence',incomeTax:item.kind==='earning'?'included':'not-applicable',supplementaryPremium:item.kind==='earning'?'included':'not-applicable',insuranceReporting:item.kind==='earning'?'confirmed-timeline':'not-applicable',deductionAuthority:item.kind==='earning'?'not-applicable':'authorized',reason:'Synthetic documented fixed amount treatment',evidence:ITEM_TREATMENT_PURPOSES.map(purpose=>({purpose,status:'documented',sourceRefs:['SYNTH-'+item.itemCode+'-'+purpose],reason:'Synthetic documented governing source',authorityOccurredAt:'2026-03-01T09:00:00+08:00',effectiveFrom:'2026-04-01',effectiveTo:'2026-04-30'}))}))};
+ await ok('propose-payroll-item-execution',{...scope,expectedRevision:0,operationId:'emu-items-execution',reason:'Synthetic execution proposal',inventoryBinding:initial.inventoryBinding,policy});
+ const execution=await ok('review-payroll-item-execution',{...scope,expectedRevision:1,operationId:'emu-items-execution-review',mode:'approve',reason:'Independent typed recipe review'},'synthetic-item-reviewer');
+ expect(execution.assessment).toMatchObject({status:'ready',earningsExact:{numerator:'1000',denominator:'1'},deductionsExact:{numerator:'100',denominator:'1'}});
+ const upstream=await db.runTransaction(tx=>loadPayrollPreWithholdingSource(db,tx,{...scope,at:'2026-05-02T00:00:00Z'}));
+ expect(upstream.source?.status,JSON.stringify(upstream)).toBe('ready');
+ expect(upstream.source!.earnings.reduce((sum,e)=>sum+Number(e.amount),0)).toBe(33000);expect(upstream.source!.otherDeductions.reduce((sum,e)=>sum+Number(e.amount),0)).toBe(100);
+ const event={id:'SYNTH-CASH-ITEMS',evidenceLocator:'ROW-ITEMS',paidOn:'2026-05-02',amount:'32104',sourceRefs:['SYNTH-BANK-ITEMS'],reason:'Synthetic actual historical cash transfer',incomeClassification:'salary-nonmonthly',insuredCategory:'other',exemption:{kind:'none',from:'2026-05-01',to:'2026-05-31',sourceRefs:['SYNTH-ELIGIBILITY-ITEMS']}};
+ await ok('propose-payroll-payment-evidence',{inventory:{...scope,mode:'events',sourceRefs:['SYNTH-CASH-REGISTER'],reason:'Synthetic complete actual cash facts',events:[event]},expectedRevision:0,operationId:'emu-items-cash'});
+ const cash=await ok('review-payroll-payment-evidence',{...scope,expectedRevision:1,operationId:'emu-items-cash-review',mode:'approve',reason:'Independent actual cash fact review'},'synthetic-item-reviewer');
+ const allocation={...scope,sourceRefs:['SYNTH-ALLOCATION-ITEMS'],reason:'Synthetic documented actual deductions',events:[{paymentEventId:event.id,earnings:upstream.source!.earnings.map(({code,amount})=>({code,amount})),taxExemptOvertime:'0',pensionSelf:'0',otherDeductions:upstream.source!.otherDeductions.map(({code,amount})=>({code,amount})),actualIncomeTax:'100',actualSupplementaryPremium:'696',sourceRefs:['SYNTH-ACTUAL-DEDUCTIONS'],reason:'Synthetic recorded tax differs from computed obligation'}]};
+ await ok('propose-payroll-payment-allocation',{...scope,allocation,expectedRevision:0,operationId:'emu-items-allocation',reason:'Synthetic allocation proposal'});
+ const allocated=await ok('review-payroll-payment-allocation',{...scope,expectedRevision:1,operationId:'emu-items-allocation-review',mode:'approve',reason:'Independent actual deductions review'},'synthetic-item-reviewer');
+ expect(allocated.assessment).toMatchObject({status:'ready-calculation',reconciliationStatus:'nonzero',totals:{calculatedIncomeTax:0,actualIncomeTax:'100',calculatedSupplementaryPremium:696,expectedNet:'32204'}});
+ const paymentDocuments=async()=>{const result:any[]=[];for(const name of ['payrollPaymentEvidence','payrollPaymentEvidenceVersions','payrollPaymentAllocations','payrollPaymentAllocationVersions']){const snap=await db.collection(name).get();result.push(...snap.docs.map(doc=>({path:doc.ref.path,value:doc.data()})));}return JSON.stringify(result.sort((a,b)=>a.path.localeCompare(b.path)));};
+ const originalPaymentDocuments=await paymentDocuments();
+ const originalCash=JSON.stringify((await db.doc('payrollPaymentEvidence/'+cash.id).get()).data());
+ const originalAllocation=JSON.stringify((await db.doc('payrollPaymentAllocations/'+allocated.id).get()).data());
+ const readSalary=()=>ok('get-employee-salary',{empId:employee.id,yearMonth:month});
+ const salary=await readSalary();expect(salary).toMatchObject({grossSalary:33000,incomeTax:0,supplementaryPremium:696,netSalary:32204});expect(salary.preflight.status).toBe('BLOCKED');
+ const difference=await ok('get-payroll-difference',scope);expect(difference.source).toMatchObject({status:'comparable',totals:{gross:'33000',net:'32204'}});
+ const actual={currency:'TWD',items:difference.source.lines.map((line:any)=>({sourceCode:line.code,kind:line.kind,amount:line.code==='tax:income'?'100':line.amount,sourceRefs:['SYNTH-ACTUAL-REGISTER'],reason:'Synthetic actual recorded line'})),netAmount:'32104',sourceRefs:['SYNTH-ACTUAL-REGISTER'],reason:'Synthetic actual cash and deductions baseline'};
+ expect(actual.items.find((line:any)=>line.sourceCode==='tax:income')?.amount).toBe('100');
+ const mismatched={...actual,netAmount:'32204',items:actual.items.map((line:any)=>line.sourceCode==='tax:income'?{...line,amount:'0'}:line)};
+ expect((await call('propose-payroll-difference',{...scope,actual:mismatched,expectedRevision:0,operationId:'emu-items-bad-baseline',reason:'Synthetic contradictory baseline must reject'})).statusCode).toBe(409);
+ const dp=await ok('propose-payroll-difference',{...scope,actual,expectedRevision:0,operationId:'emu-items-difference',reason:'Synthetic nonzero actual comparison'});
+ await ok('review-payroll-difference',{...scope,expectedRevision:dp.revision,operationId:'emu-items-difference-review',mode:'approve',reason:'Independent nonzero difference review'},'synthetic-item-reviewer');
+ const adjustmentScope={...scope,scope:'current'};
+ const candidate=await ok('get-payroll-adjustment',adjustmentScope);expect(candidate.candidate,JSON.stringify(candidate.candidateIssues)).toBeTruthy();expect(candidate.candidate.projection.outstanding.net).toBe('100');
+ let adjustment=await ok('propose-payroll-adjustment',{...adjustmentScope,expectedRevision:0,operationId:'emu-items-adjustment-propose',postingMonth:'2026-06',comparisonRef:candidate.candidate.comparisonRef,sourceRefs:['SYNTH-ADJUSTMENT-REGISTER'],reason:'Synthetic explicit accounting adjustment'});
+ for(const [action,operationId,mode] of [['review-payroll-adjustment','emu-items-adjustment-review','approve'],['adopt-payroll-adjustment','emu-items-adjustment-adopt',null],['apply-payroll-adjustment','emu-items-adjustment-apply',null]] as const){adjustment=await ok(action,{...adjustmentScope,expectedRevision:adjustment.revision,operationId,reason:'Independent synthetic accounting action',...(mode?{mode}:{})},'synthetic-adjustment-reviewer');}
+ expect(adjustment.status).toBe('applied');
+ const accounted=await ok('get-payroll-adjustment',adjustmentScope);expect(accounted.projection).toMatchObject({recordedActualNet:'32104',cumulativeAdjustments:{net:'100'},accountedTarget:{net:'32204'},outstanding:{net:'0'}});expect(accounted.runs).toHaveLength(1);expect(accounted.paymentStatus).toBe('not-paid');
+ const after=await readSalary();expect(after).toMatchObject({baseSalary:salary.baseSalary,grossSalary:33000,incomeTax:0,supplementaryPremium:696,netSalary:32204,adjustmentEvidence:{status:'verified',scopes:{current:{projection:{recordedActualNet:'32104',cumulativeAdjustments:{net:'100'},accountedTarget:{net:'32204'}}}}}});expect(after.preflight.status).toBe('BLOCKED');
+ expect(JSON.stringify((await db.doc('payrollPaymentEvidence/'+cash.id).get()).data())).toBe(originalCash);expect(JSON.stringify((await db.doc('payrollPaymentAllocations/'+allocated.id).get()).data())).toBe(originalAllocation);
+ expect(await paymentDocuments()).toBe(originalPaymentDocuments);
+ expect((await db.collection('payrollAdjustmentRuns').get()).size).toBe(1);expect((await db.collection('payrollRuns').get()).empty).toBe(true);expect((await db.collection('monthLocks').get()).empty).toBe(true);expect((await db.collection('notifications').get()).empty).toBe(true);
+});
+
+
+// Full synthetic formal prerequisites, using real proposal/review/scan services.
+// The accounting month has one paid employee; all managers are explicit system accounts.
+async function seedReconciliableSdkMonth(){
+ const {seedMasterPayroll}=await import('./fixtures/masterPayroll');
+ const {seedAttendanceReady}=await import('./fixtures/attendanceReady');
+ const {normalDays}=await import('./fixtures/normalPay');
+ const {employeePayrollSourceKey}=await import('../netlify/functions/utils/payrollReviewStorage');
+ const reviewer='EMU_HISTORY_REVIEWER',scope={empId:employee.id,month};
+ await db.doc('employees/'+employee.id).update({role:UserRole.Employee});
+ const person=(await db.doc('employees/'+employee.id).get()).data();
+ await db.doc('employees/'+reviewer).set({id:reviewer,role:UserRole.SuperAdmin,accountKind:'system-account'});
+ vi.mocked(adminAuth.verifyIdToken).mockImplementation(async token=>({uid:token==='synthetic-history-source-reviewer'?reviewer:'EMULATOR_ADMIN'}) as any);
+ await seedMasterPayroll((path,value)=>db.doc(path).set(value).then(()=>{}),person,'EMULATOR_ADMIN');
+ const master=(await db.doc('payrollMasterVersions/CANON_MASTER').get()).data()!,period=master.timeline.periods.at(-1);
+ await db.doc('payrollMasterVersions/CANON_MASTER').set({...master,timeline:{...master.timeline,from:'2026-01-01',to:'2026-06-30',periods:[{...period,from:'2026-01-01',to:'2026-06-30',employmentState:'active'}]}});
+ await db.doc('payrollPolicyVersions/CANON_POLICY').update({from:'2026-01-01',to:'2026-06-30'});
+ // Explicit synthetic personal designations, not facility closure or preferences.
+ const days=Object.fromEntries(['01','02','03','04','05','06'].flatMap(m=>normalDays('2026-'+m)).map(d=>{const weekday=new Date(d.date+'T00:00:00Z').getUTCDay();return [d.date,weekday===0?'regular-holiday':weekday===6?'rest':'normal'];}));
+ await db.doc('dayTypeCalendars/CANON_DAYS').update({days});
+ for(const m of ['2026-03','2026-05'])await db.doc('payrollReviews/'+employee.id+'_'+m).set({empId:employee.id,yearMonth:m,review:{...review,yearMonth:m,policy:{...review.policy,regularDates:[]}},employeeSourceKey:employeePayrollSourceKey(person),masterVersionId:'CANON_MASTER'});
+ await db.doc('clockRecords/C1').set({...card('2026-04-01','09:00','17:00'),id:'C1'});
+ await db.doc('dailySchedule/2026-04-01').set({...schedule('2026-04-01','09:00','17:00'),openingHours:'09:00-17:00',requiredHeadcount:1});
+ // Each active hourly month has explicit verified work; an empty monthly
+ // interval list is deliberately not treated as approved zero-work payroll.
+ for(const date of ['2026-03-23','2026-05-04']){
+  const id='HISTORY-'+date;await db.doc('clockRecords/'+id).set({...card(date,'09:00','17:00'),id});
+  await db.doc('dailySchedule/'+date).set({...schedule(date,'09:00','17:00'),openingHours:'09:00-17:00',requiredHeadcount:1});
+ }
+ const historyTargets:Record<string,Record<string,number>>={'2026-03':{'2026-03-23':480},[month]:{'2026-04-01':480},'2026-05':{'2026-05-04':480}};
+ for(const m of ['2026-03',month,'2026-05'])await seedAttendanceReady(db,{syntheticOnly:true,empId:employee.id,month:m,proposer:'EMULATOR_ADMIN',reviewer,at:'2026-07-01T00:00:00Z',expectedMinutesByDate:historyTargets[m],operationPrefix:'emu-work-history-'+m});
+ const authorities=['regime','collective-overtime','individual-overtime','rotation-applicability'].map(purpose=>({purpose,authorityOccurredAt:'2025-12-01T09:00:00+08:00',effectiveFrom:'2026-01-01',effectiveTo:'2026-06-30',sourceRefs:['SYNTH-AUTH-'+purpose],reason:'Synthetic original timely authority',...(purpose==='collective-overtime'?{consentBody:'labor-management'}:{})}));
+ const declaration={regime:'standard-8-40',weekStartsOn:0,headcount:12,unionExists:false,overtimeMode:'46',cycle:null,rotation:'not-rotating',rotationRest:'unknown',exception:'none',sourceRefs:['SYNTH-WORKTIME-REGIME'],authorities,workRules:{status:'recorded',basis:'below-30-recorded-terms',documentState:'effective',versionRef:'SYNTH-TERMS-1',authorityOccurredAt:'2025-12-01T09:00:00+08:00',effectiveFrom:'2026-01-01',effectiveTo:'2026-06-30',sourceRefs:['SYNTH-TERMS-SOURCE'],reason:'Synthetic effective recorded employment terms'}};
+ const p=await call('propose-worktime-declaration',{...scope,declaration,expectedRevision:0,operationId:'emu-work-history-declare',reason:'Synthetic complete worktime declaration'});expect(p.statusCode,p.body).toBe(200);
+ const a=await call('review-worktime-declaration',{...scope,expectedRevision:1,operationId:'emu-work-history-review',mode:'approve',reason:'Synthetic independent history and authority review'},'synthetic-history-source-reviewer');expect(a.statusCode,a.body).toBe(200);
+
+ const ok=async(action:string,data:any={},token?:string)=>{const response=await call(action,data,token);expect(response.statusCode,action+': '+response.body).toBe(200);return JSON.parse(response.body);};
+ const inventory={...scope,mode:'none',sourceRefs:['SYNTH-FORMAL-ITEMS'],reason:'Synthetic complete no-extra-items declaration',items:[]};
+ await ok('propose-payroll-item-inventory',{inventory,expectedRevision:0,operationId:'emu-formal-items'});
+ await ok('review-payroll-item-inventory',{...scope,expectedRevision:1,operationId:'emu-formal-items-review',mode:'approve',reason:'Independent complete inventory review'},'synthetic-history-source-reviewer');
+ const payment={...scope,mode:'events',sourceRefs:['SYNTH-FORMAL-CASH-REGISTER'],reason:'Synthetic complete actual paid salary inventory',events:[{id:'FORMAL-CASH-1',evidenceLocator:'ROW-1',paidOn:'2026-05-02',amount:'1600',sourceRefs:['SYNTH-FORMAL-BANK-STATEMENT'],reason:'Synthetic actual paid salary',incomeClassification:'salary-nonmonthly',insuredCategory:'other',exemption:{kind:'none',from:'2026-05-01',to:'2026-05-31',sourceRefs:['SYNTH-FORMAL-ELIGIBILITY']}}]};
+ await ok('propose-payroll-payment-evidence',{inventory:payment,expectedRevision:0,operationId:'emu-formal-payment'});
+ const actualPayment=await ok('review-payroll-payment-evidence',{...scope,expectedRevision:1,operationId:'emu-formal-payment-review',mode:'approve',reason:'Independent actual payment evidence review'},'synthetic-history-source-reviewer');
+ const d=await ok('get-payroll-difference',scope);expect(d.source).toMatchObject({status:'comparable',totals:{net:'1600'}});
+ const actual={currency:'TWD',items:d.source.lines.map((line:any,index:number)=>({sourceCode:line.code,kind:line.kind,amount:line.amount,sourceRefs:['SYNTH-FORMAL-ACTUAL-'+index],reason:'Synthetic independently checked actual line'})),netAmount:'1600',sourceRefs:['SYNTH-FORMAL-ACTUAL-NET'],reason:'Synthetic actual payment reconciles exactly'};
+ const contradictoryCash={...actual,netAmount:'1599',items:actual.items.map((line:any)=>line.sourceCode==='normal'?{...line,amount:'1599'}:line)};
+ expect((await call('propose-payroll-difference',{...scope,actual:contradictoryCash,expectedRevision:0,operationId:'formal-contradictory-cash',reason:'Synthetic wrong net must not replace approved cash facts'})).statusCode).toBe(409);
+ const difference=await ok('propose-payroll-difference',{...scope,actual,expectedRevision:0,operationId:'emu-formal-difference',reason:'Synthetic exact actual comparison'});
+ expect(difference.comparison.varianceStatus).toBe('zero');
+ const reviewed=await ok('review-payroll-difference',{...scope,expectedRevision:difference.revision,operationId:'emu-formal-difference-review',mode:'approve',reason:'Independent exact difference review'},'synthetic-history-source-reviewer');
+ await ok('adopt-payroll-difference',{...scope,expectedRevision:reviewed.revision,operationId:'emu-formal-difference-adopt',reason:'Separate adoption of exact comparison'},'synthetic-history-source-reviewer');
+ const actualGate=await vi.importActual<typeof import('../netlify/functions/utils/payrollPreflight')>('../netlify/functions/utils/payrollPreflight');vi.mocked(assertPayrollReady).mockImplementation(actualGate.assertPayrollReady);
+ const before=await ok('get-employee-salary',{empId:employee.id,yearMonth:month});
+ expect(before.netSalary).toBe(1600);expect(before.preflight.trialStatus).toBe('READY');expect(before.preflight.gaps).toEqual(['PRODUCTION_RECONCILIATION']);
+ const reconciliation=await ok('get-payroll-reconciliation',{month});
+ expect(reconciliation.candidate,JSON.stringify(reconciliation.candidateIssues)).toBeTruthy();
+ expect(reconciliation.candidate.employeeIds).toEqual([employee.id]);expect(reconciliation.candidate.employees).toEqual([expect.objectContaining({empId:employee.id,netSalary:1600,paymentStatus:'verified-recorded'})]);
+ return {ok,reconciliation,actualPayment};
+}
+async function approveSdkMonthReconciliation(fixture:Awaited<ReturnType<typeof seedReconciliableSdkMonth>>){
+ const {ok,reconciliation}=fixture;
+ const p=await ok('propose-payroll-reconciliation',{month,expectedRevision:0,operationId:'emu-formal-reconciliation',reason:'Synthetic complete monthly manifest reconciliation',sourceRefs:['SYNTH-FORMAL-MONTH-MANIFEST'],expectedCandidateHash:reconciliation.candidate.prerequisitesHash});
+ const command={month,expectedRevision:p.revision,operationId:'emu-formal-reconciliation-review',reason:'Independent full roster and source manifest review',mode:'approve'};
+ expect((await call('review-payroll-reconciliation',command)).statusCode).toBe(403);
+ return ok('review-payroll-reconciliation',command,'synthetic-history-source-reviewer');
+}
+
+it('real formal gate locks only after complete monthly reconciliation and preserves immutable manifest proof',async()=>{
+ const fixture=await seedReconciliableSdkMonth(),approved=await approveSdkMonthReconciliation(fixture);
+ const manifestBefore=JSON.stringify((await db.doc('payrollReconciliationVersions/'+approved.id+'_'+approved.revision).get()).data());
+ const cashBefore=JSON.stringify((await db.doc('payrollPaymentEvidence/'+fixture.actualPayment.id).get()).data());
+ const salary=await fixture.ok('get-employee-salary',{empId:employee.id,yearMonth:month});expect(salary.preflight).toMatchObject({status:'READY',trialStatus:'READY',gaps:[],issues:[]});
+ const locked=await fixture.ok('lock-month',{yearMonth:month});expect(locked.payrollRunId).toBeTruthy();
+ const run=await storedRun();expect(run.salaries).toHaveLength(1);expect(run.salaries[0]).toMatchObject({empId:employee.id,calculationStatus:'locked',netSalary:1600});
+ expect((run as any).formalEvidence).toMatchObject({month,formalEligibility:'READY',reconciliation:{satisfied:true,identity:{id:approved.id,revision:approved.revision}}});
+ expect((run as any).sourceEvidence.sourceHash).toBe(approved.candidate.sourceHash);
+ expect((run as any).formalEvidence.employees[employee.id].payment.satisfied).toBe(true);
+ expect(JSON.stringify((await db.doc('payrollReconciliationVersions/'+approved.id+'_'+approved.revision).get()).data())).toBe(manifestBefore);
+ expect(JSON.stringify((await db.doc('payrollPaymentEvidence/'+fixture.actualPayment.id).get()).data())).toBe(cashBefore);
+ const stored=JSON.stringify(run);await db.doc('employees/'+employee.id).update({hourlyRate:99999});
+ const reread=await fixture.ok('get-employee-salary',{empId:employee.id,yearMonth:month});expect(reread).toMatchObject({calculationStatus:'locked',netSalary:1600});expect(JSON.stringify(await storedRun())).toBe(stored);
+ expect((await db.collection('notifications').get()).empty).toBe(true);
+});
+it('real formal gate refuses a missing reconciliation manifest without partial lock or run',async()=>{
+ const fixture=await seedReconciliableSdkMonth();
+ expect((await db.collection('payrollReconciliationHeads').get()).empty).toBe(true);
+ const gateBefore=(await db.doc('payrollControl/revision').get()).data();
+ const rejected=await call('lock-month',{yearMonth:month});expect(rejected.statusCode,rejected.body).toBe(409);
+ expect((await db.collection('payrollRuns').get()).empty).toBe(true);expect((await db.collection('monthLocks').get()).empty).toBe(true);expect((await db.doc('payrollControl/revision').get()).data()).toEqual(gateBefore);
+ expect((await fixture.ok('get-employee-salary',{empId:employee.id,yearMonth:month})).preflight.gaps).toContain('PRODUCTION_RECONCILIATION');
+});
+it('real formal gate refuses a source changed after reconciliation approval and retains its original manifest',async()=>{
+ const fixture=await seedReconciliableSdkMonth(),approved=await approveSdkMonthReconciliation(fixture);
+ const original=JSON.stringify((await db.doc('payrollReconciliationVersions/'+approved.id+'_'+approved.revision).get()).data());
+ await db.doc('clockRecords/C1').update({clockOutTime:'18:00'});
+ const view=await fixture.ok('get-payroll-reconciliation',{month});expect(view.stale).toBe(true);
+ const rejected=await call('lock-month',{yearMonth:month});expect(rejected.statusCode,rejected.body).toBe(409);
+ expect((await db.collection('payrollRuns').get()).empty).toBe(true);expect((await db.collection('monthLocks').get()).empty).toBe(true);
+ expect(JSON.stringify((await db.doc('payrollReconciliationVersions/'+approved.id+'_'+approved.revision).get()).data())).toBe(original);
+ expect((await db.collection('notifications').get()).empty).toBe(true);
+});
+
+it('accounts for an independently corrected historical rate without rewriting the original lock or payment',async()=>{
+ const actors=['EMU_RATE_AUTHOR','EMU_RATE_REVIEWER','EMU_CORRECTED_D_AUTHOR','EMU_CORRECTED_D_REVIEWER','EMU_CORRECTED_ADJUSTMENT_AUTHOR','EMU_CORRECTED_ADJUSTMENT_REVIEWER'];
+ // Seed the complete manager roster before any canonical source is approved.
+ for(const id of actors)await db.doc('employees/'+id).set({id,role:UserRole.SuperAdmin,accountKind:'system-account'});
+ const fixture=await seedReconciliableSdkMonth();await approveSdkMonthReconciliation(fixture);
+ await fixture.ok('lock-month',{yearMonth:month});
+ const originalRun=JSON.stringify(await storedRun());
+ const preserved=async()=>{const values:any[]=[];for(const name of ['payrollRuns','monthLocks','payrollPaymentEvidence','payrollPaymentEvidenceVersions','payrollPaymentAllocations','payrollPaymentAllocationVersions']){const snap=await db.collection(name).get();values.push(...snap.docs.map(doc=>({path:doc.ref.path,value:doc.data()})));}return JSON.stringify(values.sort((a,b)=>a.path.localeCompare(b.path)));};
+ const originalDocuments=await preserved();
+ vi.mocked(adminAuth.verifyIdToken).mockImplementation(async token=>({uid:actors.includes(token)?token:token==='synthetic-history-source-reviewer'?'EMU_HISTORY_REVIEWER':'EMULATOR_ADMIN'}) as any);
+ const {ok}=fixture,scope={empId:employee.id,month};
+ const view=await ok('get-historical-payroll-correction',scope,actors[0]);
+ expect(view.originalSourceAvailable,JSON.stringify(view.sourceIssues)).toBe(true);
+ const target=view.rateTargets.find((day:any)=>day.date==='2026-04-01');
+ expect(target).toMatchObject({date:'2026-04-01',payBasis:'hourly'});expect(Number(target.amount)).toBe(200);expect(target.payVersion).toBeTruthy();
+ const correction={rates:[{from:target.date,to:target.date,payBasis:'hourly',amount:'210',originalPayVersion:target.payVersion,sourceRefs:['SYNTH-CORRECTED-CONTRACT'],authorityOccurredAt:'2026-03-01T00:00:00Z',reason:'Synthetic documented correction for the actual worked date'}],insuranceUnchanged:{sourceRefs:['SYNTH-UNCHANGED-ENROLLMENT'],authorityOccurredAt:'2026-03-01T00:00:00Z',reason:'Synthetic independently reviewed unchanged original enrollment'}};
+ let corrected=await ok('propose-historical-payroll-correction',{...scope,expectedRevision:0,operationId:'emu-rate-correction-propose',reason:'Synthetic historical rate correction',correction},actors[0]);
+ expect(corrected.assessment,JSON.stringify(corrected.assessment)).toMatchObject({status:'calculated',source:{status:'comparable',totals:{gross:'1680',net:'1680'}},formalEligibility:'BLOCKED'});
+ const reviewCorrection={...scope,expectedRevision:corrected.revision,operationId:'emu-rate-correction-review',mode:'approve',reason:'Independent original contract and enrollment review'};
+ expect((await call('review-historical-payroll-correction',reviewCorrection,actors[0])).statusCode).toBe(403);
+ corrected=await ok('review-historical-payroll-correction',reviewCorrection,actors[1]);
+ corrected=await ok('adopt-historical-payroll-correction',{...scope,expectedRevision:corrected.revision,operationId:'emu-rate-correction-adopt',reason:'Independent adoption of the reviewed correction candidate'},actors[1]);expect(corrected.status).toBe('adopted');
+ const adopted=await ok('get-historical-payroll-correction',scope,actors[2]);expect(adopted.correctionRef).toEqual(expect.objectContaining({id:corrected.id,revision:corrected.revision,calculatorVersion:corrected.assessment.calculatorVersion,adapterVersion:corrected.assessment.adapterVersion}));
+ const plain=await ok('get-historical-payroll-difference',scope,actors[2]);expect(plain.source.totals.net).toBe('1600');
+ const selected=await ok('get-historical-payroll-difference',{...scope,correctionRef:adopted.correctionRef},actors[2]);expect(selected).toMatchObject({comparisonBasis:'corrected-historical-rate',source:{status:'comparable',totals:{net:'1680'}}});
+ const actual={currency:'TWD',items:selected.source.lines.map((line:any)=>({sourceCode:line.code,kind:line.kind,amount:line.code==='normal'?'1600':'0',sourceRefs:['SYNTH-ORIGINAL-PAID-REGISTER'],reason:'Synthetic original paid amount retained'})),netAmount:'1600',sourceRefs:['SYNTH-ORIGINAL-PAID-REGISTER'],reason:'Original locked and paid payroll remains the actual baseline'};
+ expect(actual.items.find((line:any)=>line.sourceCode==='normal')).toBeTruthy();
+ const comparison=await ok('propose-historical-payroll-difference',{...scope,correctionRef:adopted.correctionRef,actual,expectedRevision:0,operationId:'emu-corrected-d-propose',reason:'Explicit comparison against independently adopted rate correction'},actors[2]);
+ expect(comparison.comparison.varianceStatus).toBe('nonzero');
+ const reviewDifference={...scope,expectedRevision:comparison.revision,operationId:'emu-corrected-d-review',mode:'approve',reason:'Independent review of the actual historical eighty dollar difference'};
+ expect((await call('review-historical-payroll-difference',reviewDifference,actors[0])).statusCode).toBe(403);
+ const reviewed=await ok('review-historical-payroll-difference',reviewDifference,actors[3]);expect(reviewed.status).toBe('reviewed');
+ const adjustmentScope={...scope,scope:'historical'};
+ const candidate=await ok('get-payroll-adjustment',adjustmentScope,actors[4]);expect(candidate.candidate,JSON.stringify(candidate.candidateIssues)).toBeTruthy();expect(candidate.candidate.projection.outstanding.net).toBe('80');
+ let adjustment=await ok('propose-payroll-adjustment',{...adjustmentScope,expectedRevision:0,operationId:'emu-corrected-adjustment-propose',postingMonth:'2026-06',comparisonRef:candidate.candidate.comparisonRef,sourceRefs:['SYNTH-CORRECTION-ADJUSTMENT'],reason:'Explicit separate historical accounting adjustment'},actors[4]);
+ for(const [action,operationId,mode] of [['review-payroll-adjustment','emu-corrected-adjustment-review','approve'],['adopt-payroll-adjustment','emu-corrected-adjustment-adopt',null],['apply-payroll-adjustment','emu-corrected-adjustment-apply',null]] as const){adjustment=await ok(action,{...adjustmentScope,expectedRevision:adjustment.revision,operationId,reason:'Independent synthetic historical accounting action',...(mode?{mode}:{})},actors[5]);}
+ expect(adjustment.status).toBe('applied');
+ const accounted=await ok('get-payroll-adjustment',adjustmentScope,actors[5]);expect(accounted.projection).toMatchObject({recordedActualNet:'1600',cumulativeAdjustments:{net:'80'},accountedTarget:{net:'1680'},outstanding:{net:'0'}});expect(accounted.runs).toHaveLength(1);expect(accounted.paymentStatus).toBe('not-paid');
+ const salary=await ok('get-employee-salary',{empId:employee.id,yearMonth:month});expect(salary).toMatchObject({calculationStatus:'locked',baseSalary:1600,netSalary:1600,adjustmentEvidence:{status:'verified',scopes:{historical:{projection:{recordedActualNet:'1600',cumulativeAdjustments:{net:'80'},accountedTarget:{net:'1680'}}}}}});
+ expect(await preserved()).toBe(originalDocuments);expect(JSON.stringify(await storedRun())).toBe(originalRun);
+ expect((await db.collection('payrollAdjustmentRuns').get()).size).toBe(1);expect((await db.collection('monthLocks').get()).size).toBe(1);expect((await db.collection('notifications').get()).empty).toBe(true);
 });

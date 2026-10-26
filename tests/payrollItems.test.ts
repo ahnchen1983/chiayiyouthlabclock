@@ -118,3 +118,13 @@ describe('existing employee identity compatibility',()=>{
   expect(status(()=>validatePayrollItemInventory(inventory({sourceRefs:['synthetic.source@example.test']})))).toBe(400);
  });
 });
+
+it('internal inventory loader uses the supplied reader and retains current pending evidence',async()=>{
+ const {loadPayrollItemInventoryEvidence}=await import('../netlify/functions/utils/payrollItems');
+ const reads:string[]=[];const reader={get:async(ref:any)=>{reads.push(ref.path);return ref.get();}};
+ expect(await loadPayrollItemInventoryEvidence(db,reader,'E1','2026-08')).toMatchObject({version:null,source:null,assessment:{status:'missing'}});
+ const p=await propose();const before=JSON.stringify([...data]);const loaded=await loadPayrollItemInventoryEvidence(db,reader,'E1','2026-08');
+ expect(loaded).toMatchObject({version:{revision:1,status:'proposed'},source:{id:p.id,revision:1},assessment:{status:'unreviewed'}});expect(loaded.source!.evidenceVersion).toMatch(/^[a-f0-9]{64}$/);
+ expect(reads).toContain('payrollItemInventoryVersions/'+p.id+'_1');expect(JSON.stringify([...data])).toBe(before);
+ data.delete('payrollItemInventoryVersions/'+p.id+'_1');await expect(loadPayrollItemInventoryEvidence(db,reader,'E1','2026-08')).rejects.toMatchObject({statusCode:409});
+});

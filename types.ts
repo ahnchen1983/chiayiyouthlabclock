@@ -399,7 +399,19 @@ export interface PayrollPreflight {
     issues: PayrollPreflightIssue[];
     gaps: string[];
 }
+export interface PayrollItemApplicationDetail {
+ status:'ready'|'needs-review';issues:string[];
+ source:{id:string;revision:number;evidenceVersion:string}|null;
+ lines:Array<import('./utils/payroll/itemApplication').ItemExecutionLine & {appliedAmount:string|null}>;
+ earningsExact:import('./utils/payroll/rational').FractionEvidence|null;
+ deductionsExact:import('./utils/payroll/rational').FractionEvidence|null;
+ earningsAmount:string|null;deductionsAmount:string|null;
+ grossExact:import('./utils/payroll/rational').FractionEvidence|null;
+ applicationStatus:'calculated-not-posted';paymentStatus:'not-paid';
+}
 export interface SalaryDetail {
+    itemApplication?:PayrollItemApplicationDetail;
+    adjustmentEvidence?:{status:'verified'|'unknown';issues:string[];scopes:Record<string,unknown>};
     normalPayPreview?: import('./utils/payroll/normalPay').NormalPayResult;
     payBasis?: 'monthly'|'hourly'|'daily'|null;
     employmentType?: string|null;
@@ -415,9 +427,9 @@ export interface SalaryDetail {
     position: '專責人員' | '兼職人員';
     yearMonth: string;
     // 出勤統計
-    totalWorkDays: number;
+    totalWorkDays: number | null;
     totalWorkHours: number | null;
-    totalLeaveHours: number;
+    totalLeaveHours: number | null;
     leaveDetails: { type: string; hours: number }[];
     overtimeHours: number | null;
     // 薪資項目

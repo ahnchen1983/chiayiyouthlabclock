@@ -485,7 +485,7 @@ export const apiWithdrawAttachment=(command:{attachmentId:string;expectedRevisio
 export const apiAttachmentAccess=(attachmentId:string):Promise<{accessToken:string;expiresAt:number}>=>callAPI('issue-makeup-attachment-access',{attachmentId});
 export const apiDownloadAttachment=(accessToken:string):Promise<{name:string;mime:string;size:number;contentBase64:string;disposition:string}>=>callAPI('download-makeup-attachment',{accessToken});
 
-export interface CaseExplanationWorkflow {caseId:string;empId:string;caseRevision:number;evidenceVersion:string;window:{start:number;end:number};explanations:import('../netlify/functions/utils/anomalyExplanationTypes').AnomalyExplanation[];leaves:LeaveRequest[];policyStatus:'needs-review';settlementEligibility:'BLOCKED'}
+export interface CaseExplanationWorkflow {caseStatus?:string;sourceFreshness?:'verified'|'unknown';explanationInventoryStatus?:'complete'|'unknown';resubmittableAcceptedIds?:string[];resubmittableReplacementIds?:string[];reviewableReplacementIds?:string[];caseId:string;empId:string;caseRevision:number;evidenceVersion:string;window:{start:number;end:number};explanations:import('../netlify/functions/utils/anomalyExplanationTypes').AnomalyExplanation[];leaves:LeaveRequest[];policyStatus:'needs-review';settlementEligibility:'BLOCKED'}
 export interface ExplanationCommand {caseId:string;expectedCaseRevision:number;expectedEvidenceVersion:string;operationId:string;reason:string;mode?:'request-info'|'accept'|'reject'|'cancel'|'resubmit';text?:string;explanationId?:string;expectedRevision?:number}
 export const apiExplanationWorkflow=(caseId:string):Promise<CaseExplanationWorkflow>=>callAPI('get-case-explanation-workflow',{caseId});
 export const apiSubmitExplanation=(command:ExplanationCommand):Promise<import('../netlify/functions/utils/anomalyExplanationTypes').AnomalyExplanation>=>callAPI('submit-anomaly-explanation',{...command});
@@ -493,10 +493,10 @@ export const apiActExplanation=(command:ExplanationCommand):Promise<import('../n
 export const apiSubmitCaseLeave=(command:ExplanationCommand & {leaveType:LeaveType;startDate:string;endDate:string}):Promise<LeaveRequest>=>callAPI('submit-case-leave',{...command});
 export const apiLinkCaseLeave=(command:ExplanationCommand & {leaveRequestId:string}):Promise<unknown>=>callAPI('link-case-leave',{...command});
 export const apiReviewCaseLeave=(command:Omit<ExplanationCommand,'mode'> & {leaveRequestId:string;mode:'approve'|'reject'}):Promise<LeaveRequest>=>callAPI('review-case-leave',{...command});
-export type AnomalyMutationAction='open-termination-adjustment'| 'save-termination-draft'|'submit-termination-draft'|'review-termination-draft'|'propose-payroll-master'|'review-payroll-master'|'submit-comp-request'|'act-comp-request'|'scan-comp-settlement'|'submit-overtime-request'|'act-overtime-request'|'act-leave-version'|'submit-anomaly-explanation'|'act-anomaly-explanation'|'submit-case-leave'|'link-case-leave'|'review-case-leave'|'submit-daytype-designation'|'review-daytype-designation'|'propose-overtime-comp-policy'|'agree-overtime-comp-policy'|'review-overtime-comp-policy'|'propose-payroll-policy-version'|'review-payroll-policy-version'|'propose-insurance-timeline'|'review-insurance-timeline'|'propose-payroll-item-inventory'|'review-payroll-item-inventory';
+export type AnomalyMutationAction='open-termination-adjustment'| 'save-termination-draft'|'submit-termination-draft'|'review-termination-draft'|'propose-payroll-master'|'review-payroll-master'|'submit-comp-request'|'act-comp-request'|'scan-comp-settlement'|'submit-overtime-request'|'act-overtime-request'|'act-leave-version'|'submit-anomaly-explanation'|'act-anomaly-explanation'|'submit-case-leave'|'link-case-leave'|'review-case-leave'|'submit-daytype-designation'|'review-daytype-designation'|'propose-overtime-comp-policy'|'agree-overtime-comp-policy'|'review-overtime-comp-policy'|'propose-payroll-policy-version'|'review-payroll-policy-version'|'propose-insurance-timeline'|'review-insurance-timeline'|'propose-payroll-item-inventory'|'review-payroll-item-inventory'|'propose-payroll-difference'|'review-payroll-difference'|'adopt-payroll-difference'|'propose-attendance-policy-declaration'|'review-attendance-policy-declaration'|'propose-payroll-payment-evidence'|'review-payroll-payment-evidence'|'propose-historical-payroll-difference'|'review-historical-payroll-difference'|'adopt-historical-payroll-difference'|'propose-worktime-declaration'|'review-worktime-declaration'|'propose-payroll-item-treatment'|'review-payroll-item-treatment'|'propose-payroll-payment-allocation'|'review-payroll-payment-allocation'|'propose-payroll-item-execution'|'review-payroll-item-execution'|'propose-payroll-adjustment'|'review-payroll-adjustment'|'adopt-payroll-adjustment'|'apply-payroll-adjustment'|'propose-payroll-reconciliation'|'review-payroll-reconciliation'|'propose-historical-payroll-correction'|'review-historical-payroll-correction'|'adopt-historical-payroll-correction';
 export const apiAnomalyMutation=(action:AnomalyMutationAction,command:Record<string,unknown>):Promise<any>=>{
  // Recovery scope is client metadata, not authority accepted by the strict item API.
- if(action==='propose-payroll-item-inventory'||action==='review-payroll-item-inventory'){
+ if(['propose-payroll-item-inventory','review-payroll-item-inventory','propose-payroll-difference','review-payroll-difference','adopt-payroll-difference','propose-attendance-policy-declaration','review-attendance-policy-declaration','propose-payroll-payment-evidence','review-payroll-payment-evidence','propose-historical-payroll-difference','review-historical-payroll-difference','adopt-historical-payroll-difference','propose-worktime-declaration','review-worktime-declaration','propose-payroll-item-treatment','review-payroll-item-treatment','propose-payroll-payment-allocation','review-payroll-payment-allocation','propose-payroll-item-execution','review-payroll-item-execution','propose-payroll-adjustment','review-payroll-adjustment','adopt-payroll-adjustment','apply-payroll-adjustment','propose-payroll-reconciliation','review-payroll-reconciliation','propose-historical-payroll-correction','review-historical-payroll-correction','adopt-historical-payroll-correction'].includes(action)){
   const {caseId:_scope,...payload}=command;return callAPI(action,payload);
  }
  return callAPI(action,command);
@@ -535,3 +535,25 @@ export const apiDayTypeDesignations=(yearMonth:string):Promise<{yearMonth:string
 export const apiTerminationSettlement=(empId:string,month:string,exitDate?:string):Promise<any>=>callAPI('get-termination-settlement',{empId,month,...(exitDate?{exitDate}:{})});
 
 export const apiTerminationSettlementVersion=(empId:string,month:string,draftId:string,revision:number):Promise<any>=>callAPI('get-termination-settlement-version',{empId,month,draftId,revision});
+
+export const apiPayrollDifference=(data:{empId:string;month:string}):Promise<any>=>callAPI('get-payroll-difference',data);
+
+export const apiAttendancePolicyDeclaration=(data:{empId:string;month:string}):Promise<any>=>callAPI('get-attendance-policy-declaration',data);
+export const apiPayrollPaymentEvidence=(data:{empId:string;month:string}):Promise<any>=>callAPI('get-payroll-payment-evidence',data);
+
+export const apiHistoricalPayrollDifference=(data:{empId:string;month:string;correctionRef?:{id:string;revision:number;evidenceVersion:string;calculatorVersion:string;adapterVersion:string}}):Promise<any>=>callAPI('get-historical-payroll-difference',data);
+
+export const apiWorktimeDeclaration=(data:{empId:string;month:string}):Promise<any>=>callAPI('get-worktime-declaration',data);
+
+export const apiPayrollItemTreatment=(data:{empId:string;month:string}):Promise<any>=>callAPI('get-payroll-item-treatment',data);
+
+export const apiPayrollPaymentAllocation=(data:{empId:string;month:string}):Promise<any>=>callAPI('get-payroll-payment-allocation',data);
+
+export const apiWorktimeAssessment=(data:{empId:string;month:string}):Promise<any>=>callAPI('get-worktime-assessment',data);
+
+export const getPayrollItemExecution=(data:{empId:string;month:string}):Promise<any>=>callAPI('get-payroll-item-execution',data);
+export const getPayrollAdjustment=(data:{scope:'current'|'historical';empId:string;month:string}):Promise<any>=>callAPI('get-payroll-adjustment',data);
+
+export const getPayrollReconciliation=(data:{month:string}):Promise<any>=>callAPI('get-payroll-reconciliation',data);
+
+export const getHistoricalPayrollCorrection=(data:{empId:string;month:string}):Promise<any>=>callAPI('get-historical-payroll-correction',data);

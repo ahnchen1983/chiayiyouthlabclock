@@ -1,3 +1,16 @@
+import {HISTORICAL_PAYROLL_CORRECTION_ACTIONS,handleHistoricalPayrollCorrectionAction} from './utils/historicalPayrollCorrection';
+import {PAYROLL_RECONCILIATION_ACTIONS,handlePayrollReconciliationAction} from './utils/payrollReconciliation';
+import {PAYROLL_ITEM_EXECUTION_ACTIONS,handlePayrollItemExecutionAction} from './utils/payrollItemExecution';
+import {PAYROLL_ADJUSTMENT_ACTIONS,handlePayrollAdjustmentAction} from './utils/payrollAdjustments';
+import {loadWorktimeSourceEvidence} from './utils/worktimeSourceEvidence';
+import {PAYROLL_PAYMENT_ALLOCATION_ACTIONS,handlePayrollPaymentAllocationAction} from './utils/payrollPaymentAllocation';
+import {PAYROLL_ITEM_TREATMENT_ACTIONS,handlePayrollItemTreatmentAction} from './utils/payrollItemTreatment';
+import {WORKTIME_DECLARATION_ACTIONS,handleWorktimeDeclarationAction} from './utils/worktimeDeclarations';
+import {HISTORICAL_PAYROLL_DIFFERENCE_ACTIONS,handleHistoricalPayrollDifferenceAction} from './utils/historicalPayrollDifference';
+import {ATTENDANCE_POLICY_ACTIONS,handleAttendancePolicyDeclarationAction} from './utils/attendancePolicyDeclaration';
+import {PAYROLL_PAYMENT_EVIDENCE_ACTIONS,handlePayrollPaymentEvidenceAction} from './utils/payrollPaymentEvidence';
+import {PAYROLL_DIFFERENCE_ACTIONS,handlePayrollDifferenceAction} from './utils/payrollDifference';
+import {loadPayrollMonthWithFormalEvidence} from './utils/payrollFormalEvidence';
 import {PAYROLL_ITEM_ACTIONS,handlePayrollItemsAction} from './utils/payrollItems';
 import { loadAttendanceCaseEvidence, type AttendanceCaseEvidence } from './utils/attendanceCaseEvidence';
 import {TERMINATION_ACTIONS,handleTerminationAction} from './utils/terminationSettlement';
@@ -707,24 +720,25 @@ const readPayrollCaseEvidence = async (month:string,employees:any[],cases:any[],
 
 const readSalaryMonth = async (month: string): Promise<SalaryDetail[]> => {
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month || '')) throw new Error('月份無效');
-    const lock = await getMonthLock(month);
-    if (lock && isMonthLocked(lock) && lock.payrollRunId) {
-        const run = await db.collection('payrollRuns').doc(lock.payrollRunId).get();
-        if (run.exists && run.data()?.id === lock.payrollRunId && run.data()?.yearMonth === month) return selectSalaryResults([], lock, run.data() as PayrollRun);
-    }
-    const [schedules, employees, cards, leaves] = await Promise.all([getMonthlyDailySchedule(month), db.collection('employees').get(), db.collection('clockRecords').get(), db.collection('leaveRequests').get()]);
-    const reviewedEmployees = await loadMonthlyPayrollEmployees(employees.docs.map(d => ({ ...d.data(), id: d.id })), month, db);
-    const requests = await readPendingSources();
-    const revisionSnap = await db.collection('attendanceRevisions').get();
-    const caseSnap = await db.collection('attendanceCases').get();
-    const eligibleEmployees=reviewedEmployees.filter(e => employeeInMonth(e, month));
-    const cases=caseSnap.docs.map(d => ({ ...d.data(), id: d.id }));
-    const caseEvidence=await readPayrollCaseEvidence(month,eligibleEmployees,cases);
-    const result = evaluatePayrollMonth({ month, employees: eligibleEmployees, schedules,
-        records: cards.docs.map(d => ({ ...d.data(), id: d.id } as ClockRecord)),
-        leaves: leaves.docs.map(d => ({ ...d.data(), id: d.id } as LeaveRequest)), requests, revisions: revisionSnap.docs.map(d => ({ ...d.data(), id: d.id })), cases, caseEvidence });
-    const salaries = result.salaries;
-    return selectSalaryResults(salaries, lock);
+    return db.runTransaction(async tx => {
+        const source=await loadPayrollMonthWithFormalEvidence(db,tx,{month,at:new Date().toISOString()});
+        if(source.kind==='locked')return source.salaries;
+        if(source.kind==='legacy-locked'){
+            // Identity-only placeholders: never recalculate an absent historical run
+            // from current rates, cards or policy. These identities are not proof of
+            // historical participation; every amount/statistic remains unknown.
+            const people=await tx.get(db.collection('employees').limit(10001));
+            if(people.size>10000)throw Object.assign(new Error('員工清冊超出完整讀取容量'),{statusCode:409});
+            return people.docs.filter(d=>d.data().accountKind!=='system-account').map(d=>({
+                empId:d.id,name:d.data().name||d.id,position:d.data().position,yearMonth:month,
+                calculationStatus:'legacy-review' as const,reviewReasons:source.issues,
+                totalWorkDays:null,totalWorkHours:null,totalLeaveHours:null,leaveDetails:[],overtimeHours:null,
+                baseSalary:null,overtimePay:null,compSettlementPay:null,grossSalary:null,laborInsurance:null,healthInsurance:null,
+                laborPensionSelf:null,leaveDeduction:null,totalDeductions:null,netSalary:null,incomeTax:null,supplementaryPremium:null
+            }));
+        }
+        return source.evaluation.salaries;
+    });
 };
 
 // ==================== Handler 主體 ====================
@@ -817,6 +831,27 @@ export const handler: Handler = async (event) => {
         if(DAYTYPE_ACTIONS.includes(action as any))return ok(await handleDayTypeAction(db,uid,action,data));
         if(OVERTIME_COMP_POLICY_ACTIONS.includes(action as any))return ok(await handleOvertimeCompPolicyAction(db,uid,action,data));
         if(PAYROLL_POLICY_ACTIONS.includes(action as any))return ok(await handlePayrollPolicyAction(db,uid,action,data));
+        if(action==='get-worktime-assessment'){
+            if(!isSuperAdmin&&uid!==data.empId)return fail(403,'不得讀取他人工時檢核');
+            const assessment=await db.runTransaction(async tx=>{
+                const actor=await tx.get(db.collection('employees').doc(uid));
+                if(!actor.exists||(uid!==data.empId&&actor.data()?.role!==UserRole.SuperAdmin))throw Object.assign(new Error('無工時檢核存取權限'),{statusCode:403});
+                return loadWorktimeSourceEvidence(db,tx,{empId:data.empId,month:data.month,at:new Date().toISOString()});
+            });
+            const {input,compliance,...visible}=assessment;
+            return ok({...visible,checks:compliance.checks});
+        }
+        if(WORKTIME_DECLARATION_ACTIONS.includes(action as any))return ok(await handleWorktimeDeclarationAction(db,uid,action,data));
+        if(ATTENDANCE_POLICY_ACTIONS.includes(action as any))return ok(await handleAttendancePolicyDeclarationAction(db,uid,action,data));
+        if(PAYROLL_ITEM_EXECUTION_ACTIONS.includes(action as any))return ok(await handlePayrollItemExecutionAction(db,uid,action,data));
+        if(HISTORICAL_PAYROLL_CORRECTION_ACTIONS.includes(action as any))return ok(await handleHistoricalPayrollCorrectionAction(db,uid,action,data));
+        if(PAYROLL_RECONCILIATION_ACTIONS.includes(action as any))return ok(await handlePayrollReconciliationAction(db,uid,action,data));
+        if(PAYROLL_ADJUSTMENT_ACTIONS.includes(action as any))return ok(await handlePayrollAdjustmentAction(db,uid,action,data));
+        if(PAYROLL_PAYMENT_ALLOCATION_ACTIONS.includes(action as any))return ok(await handlePayrollPaymentAllocationAction(db,uid,action,data));
+        if(PAYROLL_PAYMENT_EVIDENCE_ACTIONS.includes(action as any))return ok(await handlePayrollPaymentEvidenceAction(db,uid,action,data));
+        if(HISTORICAL_PAYROLL_DIFFERENCE_ACTIONS.includes(action as any))return ok(await handleHistoricalPayrollDifferenceAction(db,uid,action,data));
+        if(PAYROLL_DIFFERENCE_ACTIONS.includes(action as any))return ok(await handlePayrollDifferenceAction(db,uid,action,data));
+        if(PAYROLL_ITEM_TREATMENT_ACTIONS.includes(action as any))return ok(await handlePayrollItemTreatmentAction(db,uid,action,data));
         if(PAYROLL_ITEM_ACTIONS.includes(action as any))return ok(await handlePayrollItemsAction(db,uid,action,data));
         if(INSURANCE_ACTIONS.includes(action as any))return ok(await handleInsuranceAction(db,uid,action,data));
         if(COMP_ACTIONS.includes(action as any))return ok(await handleCompAction(db,uid,action,data));
@@ -1509,28 +1544,12 @@ export const handler: Handler = async (event) => {
                 const lock = await runPayrollMutation(db, [yearMonth], async tx => {
                     const prior = await tx.get(db.collection('monthLocks').doc(yearMonth));
                     if (prior.exists) throw new Error('已有歷史月結，請另建差額覆核，不能覆寫');
-                    // Keep query streams sequential inside this transaction. If contention
-                    // aborts one read, another in-flight stream can report an already-closed
-                    // transaction instead of the retryable conflict from the first read.
-                    const empSnap = await tx.get(db.collection('employees'));
-                    const clockSnap = await tx.get(db.collection('clockRecords'));
-                    const leaveSnap = await tx.get(db.collection('leaveRequests'));
-                    const scheduleSnap = await tx.get(db.collection('dailySchedule'));
-                    const reviewedEmployees = await loadMonthlyPayrollEmployees(empSnap.docs.map(d => ({ ...d.data(), id: d.id })), yearMonth, db, tx);
-                    const employees = reviewedEmployees.map(payrollCalculationEmployee).filter(e => employeeInMonth(e, yearMonth));
-                    const records = selectPayrollClockEvidence(clockSnap.docs.map(d => ({ ...d.data(), id: d.id } as ClockRecord)), yearMonth, employees.map(e => e.id));
-                    const leaves = selectPayrollLeaveEvidence(leaveSnap.docs.map(d => ({ ...d.data(), id: d.id } as LeaveRequest)), yearMonth, employees.map(e => e.id));
-                    const schedules = scheduleSnap.docs.filter(d => d.id.startsWith(yearMonth)).map(d => normalizeScheduleDoc(d.data(), d.id, ''));
-                    const requests = await readPendingSources(tx);
-                    const revisionSnap = await tx.get(db.collection('attendanceRevisions'));
-                    const caseSnap = await tx.get(db.collection('attendanceCases'));
-                    const cases=caseSnap.docs.map(d => ({ ...d.data(), id: d.id }));
-                    const caseEvidence=await readPayrollCaseEvidence(yearMonth,employees,cases,tx);
-                    const preflight = evaluatePayrollMonth({ month: yearMonth, employees, schedules, records, leaves, requests, revisions: revisionSnap.docs.map(d => ({ ...d.data(), id: d.id })), cases, caseEvidence });
-                    assertPayrollReady(preflight);
-                    const salaries = preflight.salaries;
                     const createdAt = new Date().toISOString();
-                    const run = makePayrollRun(runRef.id, yearMonth, createdAt, salaries, { employees, schedules, records, leaves });
+                    const source=await loadPayrollMonthWithFormalEvidence(db,tx,{month:yearMonth,at:createdAt});
+                    if(source.kind!=='live')throw Object.assign(new Error('已有月結來源，不能覆寫'),{statusCode:409});
+                    assertPayrollReady(source.evaluation);
+                    const salaries=source.evaluation.salaries;
+                    const run = {...makePayrollRun(runRef.id, yearMonth, createdAt, salaries, source.snapshotInputs),sourceEvidence:source.sourceEvidence,formalEvidence:source.formalEvidence};
                     // Firestore documents have a size limit; fail before writing, never partially lock.
                     if (Buffer.byteLength(JSON.stringify(run)) > 800000) throw new Error('快照過大，需要分檔結算；本次未鎖定');
                     const value: MonthLock = { yearMonth, lockedBy: uid, lockedByName: currentUserSnap.data()?.name || uid,
