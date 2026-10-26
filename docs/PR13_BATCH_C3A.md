@@ -27,3 +27,7 @@
 - 勞保局 115 年保險費分擔金額表為 PDF，字型編碼無法程式擷取，**金額未與官方表逐列比對**（公式與進位依官方說明；例 29,500：勞保 678.5→679、就保 59）。上線前請人工對照一次（驗證手冊 V11.09）。
 - 健保署分級表頁面回 403，未取得完整級距，只檢查不低於第一級 29,500。
 - 未處理：身心障礙保費補助、職災保險（雇主負擔，不扣員工）、二代健保補充保費與所得稅（C3b）。
+
+## 驗證
+
+`npm run verify:pr13`（commit `5335c3cbe82fdeafa39080c5c487b560cfe58a45`，sourceHash `35ad4d979bfea9e066f1bcebbebd1771215579a67fb3fd342b51ece5a746e92c`，manifest `.verification/pr13/2026-10-26T04-37-52-854Z/`）：audit、typecheck、unit/API 921、emulator 92、E2E 99、build 全部通過。未做獨立 review；未部署。
