@@ -22,6 +22,17 @@ export function assertFutureMaster(before:MasterTimeline|null,next:MasterTimelin
  if(before.from!==next.from||next.to<before.to||before.accountKind!==next.accountKind)fail('既有範圍／人員帳號類別不可覆寫，需獨立歷史更正流程');
  if(evidenceHash(masterDays(before).filter(d=>d.date<=today))!==evidenceHash(masterDays(next).filter(d=>d.date<=today)))fail('已生效主檔不可追溯覆寫');
 }
+// Versions created by the proposal workflow must not inherit its former default
+// standard regime without explicit scoped evidence. Keep immutable records intact;
+// hold their projection until a new properly reviewed version is supplied.
+const generatedRegimeAuthority=(p:any):boolean=>{
+ if(!p||!Object.prototype.hasOwnProperty.call(p,'proposalId'))return true;
+ if(p.normalPay?.workRegime!=='standard-8-40')return true;
+ return typeof p.proposalId==='string'&&!!p.proposalId&&p.workRegime==='standard-8-40'&&
+  typeof p.workRegimeEvidence==='string'&&p.workRegimeEvidence.trim().length>=5&&p.workRegimeEvidence.length<=2000&&
+  !!p.proposedBy&&p.proposedBy!==p.approvedBy&&p.workRegimeConfirmedBy===p.approvedBy&&
+  p.workRegimeConfirmedAt===p.approvedAt&&Number.isFinite(Date.parse(p.workRegimeConfirmedAt));
+};
 export async function effectiveMasterForMonth(db:any,tx:any,employee:any,month:string,storedReview:any){
  const get=(r:any)=>tx?tx.get(r):r.get(),head=await get(db.collection('payrollMasterHeads').doc(employee.id));if(!head.exists)return {...employee,masterAssessment:{status:'legacy-review-required',issues:employee.payrollMasterRequired?['新建員工尚未核定有效期主檔']:[],migrationPreview:{employmentType:null,payBasis:null,effectiveFrom:null,legacyPosition:employee.position||null}}};
  const h=head.data(),snap=await get(db.collection('payrollMasterVersions').doc(h.currentVersionId));const version=snap.data();
@@ -32,18 +43,18 @@ export async function effectiveMasterForMonth(db:any,tx:any,employee:any,month:s
  if(first<timeline.from||end>timeline.to)return blocked(['月份未有完整有效期主檔；部分月折算待C2']);
  if(timeline.accountKind==='system-account')return {...employee,accountKind:'system-account',masterAssessment:{status:'confirmed-system-account',versionId:h.currentVersionId,issues:[]}};
  const daily=masterDays(timeline).filter(d=>d.date>=first&&d.date<=end),issues:string[]=[];const refs=new Map<string,any>();
- const validPolicyRef=(p:any,d:any)=>!!p&&p.status==='approved'&&!!p.version&&!!p.approvedBy&&Number.isFinite(Date.parse(p.approvedAt))&&!!p.employeeIds?.includes(employee.id)&&validDate(p.from)&&validDate(p.to)&&p.from<=d.date&&p.to>=d.date;
+ const validPolicyRef=(p:any,d:any)=>!!p&&generatedRegimeAuthority(p)&&p.status==='approved'&&!!p.version&&!!p.approvedBy&&Number.isFinite(Date.parse(p.approvedAt))&&!!p.employeeIds?.includes(employee.id)&&validDate(p.from)&&validDate(p.to)&&p.from<=d.date&&p.to>=d.date;
  const validCalendarRef=(c:any,d:any)=>!!c&&c.status==='approved'&&!!c.version&&!!c.approvedBy&&Number.isFinite(Date.parse(c.approvedAt))&&!!c.employeeIds?.includes(employee.id)&&['normal','rest','regular-holiday','national-holiday','special'].includes(c.days?.[d.date]);
  const calKey=(d:any)=>d.dayTypeCalendarId===PERSONAL_MONTHLY_CALENDAR?'dayTypeCalendarHeads/'+employee.id+'_'+d.date.slice(0,7):'dayTypeCalendars/'+d.dayTypeCalendarId;
  const load=async(d:any)=>{for(const [col,key] of [['payrollPolicyVersions',d.policyVersionId],['dayTypeCalendars',d.dayTypeCalendarId]]){const id=col==='dayTypeCalendars'?calKey(d):col+'/'+key;if(refs.has(id))continue;
    if(id.startsWith('dayTypeCalendarHeads/')){const h=await get(db.collection('dayTypeCalendarHeads').doc(id.slice(21))),cid=h.exists?h.data().currentCalendarId:null,s=typeof cid==='string'&&cid&&!cid.includes('/')?await get(db.collection('dayTypeCalendars').doc(cid)):null,v=s?.exists?s.data():null;refs.set(id,v&&v.yearMonth===d.date.slice(0,7)?v:null);}
    else{const s=await get(db.collection(col).doc(key));refs.set(id,s.exists?s.data():null);}}};
  for(const d of daily){await load(d);
-  const p=refs.get('payrollPolicyVersions/'+d.policyVersionId),c=refs.get(calKey(d));if(!validPolicyRef(p,d))issues.push('日期適用政策未核定');else if(employee.payrollReview?.policy?.version!==p.version)issues.push('本月覆核政策版本與有效期參照不符');if(!validCalendarRef(c,d))issues.push('日期日別參照未核定');else if(employee.payrollReview?.policy?.regularDates?.includes(d.date)&&c.days[d.date]!=='normal')issues.push('月覆核一般工作日與有效日別衝突，待C2覆核');}
+  const p=refs.get('payrollPolicyVersions/'+d.policyVersionId),c=refs.get(calKey(d));if(!generatedRegimeAuthority(p))issues.push('政策工時制度來源與獨立核定證據未完整');if(!validPolicyRef(p,d))issues.push('日期適用政策未核定');else if(employee.payrollReview?.policy?.version!==p.version)issues.push('本月覆核政策版本與有效期參照不符');if(!validCalendarRef(c,d))issues.push('日期日別參照未核定');else if(employee.payrollReview?.policy?.regularDates?.includes(d.date)&&c.days[d.date]!=='normal')issues.push('月覆核一般工作日與有效日別衝突，待C2覆核');}
  const signatures=new Set(daily.map(d=>evidenceHash([d.employmentState,d.employmentType,d.payBasis,d.amount,d.policyVersionId,d.dayTypeCalendarId])));
  if(signatures.size!==1||daily.some(d=>d.employmentState!=='active'))issues.push('多段雇用／留停／調薪或部分月折算待C2');
  const row=daily[0];if(row.payBasis==='daily')issues.push('日薪計算待C2');if(storedReview?.masterVersionId!==h.currentVersionId)issues.push('本月薪資覆核尚未綁定有效期主檔版本');
- const normalPayDays=daily.map(d=>{const policy=refs.get('payrollPolicyVersions/'+d.policyVersionId);return {...d,amount:String(d.amount),payVersion:h.currentVersionId,policyId:d.policyVersionId,policy:policy?.normalPay||null,normalPayPolicySource:policy?{id:d.policyVersionId,status:policy.status,version:policy.version,from:policy.from,to:policy.to,employeeIds:policy.employeeIds,approvedBy:policy.approvedBy,approvedAt:policy.approvedAt}:null,dayType:refs.get(calKey(d))?.days?.[d.date]||'unknown'};});
+ const normalPayDays=daily.map(d=>{const policy=refs.get('payrollPolicyVersions/'+d.policyVersionId);return {...d,amount:String(d.amount),payVersion:h.currentVersionId,policyId:d.policyVersionId,policy:generatedRegimeAuthority(policy)?policy?.normalPay||null:null,normalPayPolicySource:policy?{id:d.policyVersionId,status:policy.status,version:policy.version,from:policy.from,to:policy.to,employeeIds:policy.employeeIds,approvedBy:policy.approvedBy,approvedAt:policy.approvedAt}:null,dayType:refs.get(calKey(d))?.days?.[d.date]||'unknown'};});
  // Six days either side cover every seven-day week touching the month, so weekly
  // limits use the adjacent month's own approved day types and wages (LSA Art.30/36).
  const contextDays:any[]=[];const all=new Map(masterDays(timeline).map(d=>[d.date,d]));

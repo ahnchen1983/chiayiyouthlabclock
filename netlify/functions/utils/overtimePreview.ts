@@ -53,6 +53,9 @@ export function overtimePreview(src:OvertimeSources):OvertimeOutcome {
  const weeks:OTWeek[]=[],workdays:OTWorkday[]=[];
  for(let d=shift(first,-6);d<=last;d=shift(d,1)){if(new Date(d+'T00:00:00Z').getUTCDay()!==rules.weekStartDay||shift(d,6)<first)continue;const dates=Array.from({length:7},(_,i)=>shift(d,i));weeks.push({id:'W'+d,dates,complete:true,...proof});
   for(const date of dates){const day=byDate.get(date),active=day?.covered&&day.employmentState==='active';
+   // Missing adjacent-month authority is not proof that the employee had not
+   // joined or had already left. Require explicit coverage of every week day.
+   if(!day?.covered||!['active','loa','not-employed'].includes(day.employmentState))issues.push(date+' 跨月任職來源未完整核定，不能視為非在職零工時');
    workdays.push({id:empId+':'+date,date,weekId:'W'+d,dayType:active?(day.dayType||'unknown'):'not-employed',regime:active?(day.policy?.workRegime||'unknown'):'standard-8-40',contractMinutes:480,holidayConsent:'unknown',emergency:'unknown',...proof});}}
  const known=new Set(workdays.map(w=>w.id));
  // Workday = the reviewed card's own date (Enforcement Rules Art.17: a shift

@@ -2,6 +2,7 @@ import {describe,it,expect,beforeEach} from 'vitest';
 import {UserRole} from '../types';
 import {handlePayrollPolicyAction,buildNormalPayPolicy} from '../netlify/functions/utils/payrollPolicyVersion';
 import {calculateNormalPay} from '../utils/payroll/normalPay';
+import {effectiveMasterForMonth} from '../netlify/functions/utils/effectiveMaster';
 import {normalDays} from './fixtures/normalPay';
 // Synthetic accounts only.
 const data=new Map<string,any>();
@@ -16,8 +17,8 @@ const code=async(p:Promise<any>)=>{try{await p;return 0;}catch(e:any){return e.s
 const propose=(uid='A1',extra:any={})=>act(uid,'propose-payroll-policy-version',{operationId:op(),employeeIds:['E1','E2'],from:'2026-08-01',to:'2026-12-31',otherLeave:null,reason:'建立八月起計薪政策',...extra});
 beforeEach(()=>{data.clear();data.set('employees/E1',{id:'E1',role:UserRole.Employee});data.set('employees/E2',{id:'E2',role:UserRole.Employee});data.set('employees/A1',{id:'A1',role:UserRole.Admin});data.set('employees/A2',{id:'A2',role:UserRole.SuperAdmin});data.set('employees/SYS',{id:'SYS',role:UserRole.SuperAdmin,accountKind:'system-account'});});
 describe('server-built policy content',()=>{
- it('passes the normal-pay engine validation and pays a full month exactly once rounded',()=>{const p=buildNormalPayPolicy('v','A2','2026-07-01T00:00:00Z',null);const days=normalDays('2026-08').map(d=>({...d,policy:p as any}));const r=calculateNormalPay('S','2026-08',days,[]);expect(r.status,r.issues.join()).toBe('ready');expect(r.amount).toBe('30000');});
- it('encodes the confirmed rules: Sunday week, final integer half-up, statutory leave pay',()=>{const p:any=buildNormalPayPolicy('v','A2','2026-07-01T00:00:00Z','paid');expect(p.overtimeRules.weekStartDay).toBe(0);expect(p.rounding).toMatchObject({stage:'final',precision:0,mode:'half-up'});expect(p.leavePaidFractions).toMatchObject({'特休':{numerator:1,denominator:1},'事假':{numerator:0,denominator:1},'病假':{numerator:1,denominator:2},'其他':{numerator:1,denominator:1}});expect(p.workRegime).toBe('standard-8-40');expect(p.monthlyStrategy).toBe('calendar-earned');});
+ it('passes the normal-pay engine validation and pays a full month exactly once rounded',()=>{const p=buildNormalPayPolicy('v','A2','2026-07-01T00:00:00Z',null,'standard-8-40');const days=normalDays('2026-08').map(d=>({...d,policy:p as any}));const r=calculateNormalPay('S','2026-08',days,[]);expect(r.status,r.issues.join()).toBe('ready');expect(r.amount).toBe('30000');});
+ it('encodes the confirmed rules: Sunday week, final integer half-up, statutory leave pay',()=>{const p:any=buildNormalPayPolicy('v','A2','2026-07-01T00:00:00Z','paid');expect(p.overtimeRules.weekStartDay).toBe(0);expect(p.rounding).toMatchObject({stage:'final',precision:0,mode:'half-up'});expect(p.leavePaidFractions).toMatchObject({'特休':{numerator:1,denominator:1},'事假':{numerator:0,denominator:1},'病假':{numerator:1,denominator:2},'其他':{numerator:1,denominator:1}});expect(p.workRegime).toBe('unknown');expect(p.monthlyStrategy).toBe('calendar-earned');});
  it('an undecided "other" leave stays absent so such leave is held, not paid at 0',()=>{expect((buildNormalPayPolicy('v','A2','2026-07-01T00:00:00Z',null) as any).leavePaidFractions['其他']).toBeUndefined();});
 });
 describe('two-person flow',()=>{
@@ -31,4 +32,21 @@ describe('two-person flow',()=>{
  it('replay returns the same proposal; changed content under the same id fails',async()=>{const body={operationId:'same',employeeIds:['E1'],from:'2026-08-01',to:'2026-08-31',otherLeave:null,reason:'建立八月計薪政策'};const a=await act('A1','propose-payroll-policy-version',body);expect((await act('A1','propose-payroll-policy-version',body)).id).toBe(a.id);expect(await code(act('A1','propose-payroll-policy-version',{...body,to:'2026-09-30'}))).toBe(409);});
  it('return keeps history and no version is created',async()=>{const p=await propose();const r=await act('A2','review-payroll-policy-version',{operationId:op(),proposalId:p.id,expectedRevision:1,mode:'return',reason:'期間需調整'});expect(r.status).toBe('returned');expect([...data.keys()].some(k=>k.startsWith('payrollPolicyVersions/'))).toBe(false);});
  it('admins list versions and proposals; employees cannot',async()=>{await propose();expect((await act('A1','list-payroll-policy-versions')).proposals).toHaveLength(1);expect(await code(act('E1','list-payroll-policy-versions'))).toBe(403);});
+});
+
+describe('work regime authority regression',()=>{
+ it('does not turn an unanswered regime into a ready normal-pay policy',()=>{const p=buildNormalPayPolicy('v','A2','2026-07-01T00:00:00Z',null);const r=calculateNormalPay('S','2026-08',normalDays('2026-08').map(d=>({...d,policy:p as any})),[]);expect(p.workRegime).toBe('unknown');expect(r.status).toBe('needs-review');expect(r.amount).toBeNull();});
+ it('an old proposal without regime evidence approves only an unknown regime',async()=>{const p=await propose();const old=data.get('payrollPolicyProposals/'+p.id);delete old.workRegime;delete old.workRegimeEvidence;const r=await act('A2','review-payroll-policy-version',{operationId:op(),proposalId:p.id,expectedRevision:1,mode:'approve',reason:'核對既有政策'});expect(data.get('payrollPolicyVersions/'+r.versionId).normalPay.workRegime).toBe('unknown');});
+ it('refuses a standard regime declaration without scoped evidence',async()=>{expect(await code(propose('A1',{workRegime:'standard-8-40'}))).toBe(400);});
+ it('does not accept an unimplemented special regime',async()=>{expect(await code(propose('A1',{workRegime:'variable',workRegimeEvidence:'合成制度核對文件'}))).toBe(400);});
+ it('requires the second admin to confirm the scoped regime evidence',async()=>{const p=await propose('A1',{workRegime:'standard-8-40',workRegimeEvidence:'合成一般工時制度依據'});const command={proposalId:p.id,expectedRevision:1,mode:'approve',reason:'核對適用員工制度'};expect(await code(act('A2','review-payroll-policy-version',{...command,operationId:op()}))).toBe(400);const r=await act('A2','review-payroll-policy-version',{...command,operationId:op(),confirmWorkRegime:true});const v=data.get('payrollPolicyVersions/'+r.versionId);expect(v.normalPay.workRegime).toBe('standard-8-40');expect(v.workRegimeEvidence).toBe('合成一般工時制度依據');expect(v.workRegimeConfirmedBy).toBe('A2');});
+});
+
+describe('generated policy loader authority',()=>{
+ it('holds an immutable legacy generated policy whose standard regime had no evidence',async()=>{
+  const policy={status:'approved',version:'V',approvedBy:'A2',approvedAt:'2026-07-01T00:00:00Z',proposedBy:'A1',proposalId:'old-ppp',employeeIds:['E1'],from:'2026-08-01',to:'2026-08-31',normalPay:buildNormalPayPolicy('V','A2','2026-07-01T00:00:00Z',null,'standard-8-40')};
+  data.set('payrollPolicyVersions/V',policy);data.set('payrollMasterHeads/E1',{currentVersionId:'M'});data.set('payrollMasterVersions/M',{empId:'E1',status:'approved',approvedBy:'A2',approvedAt:'2026-07-01T00:00:00Z',timeline:{accountKind:'employee',from:'2026-08-01',to:'2026-08-31',periods:[{from:'2026-08-01',to:'2026-08-31',employmentState:'active',employmentType:'full-time',payBasis:'monthly',amount:30000,policyVersionId:'V',dayTypeCalendarId:'C'}]}});data.set('dayTypeCalendars/C',{status:'approved',version:'C',approvedBy:'A2',approvedAt:'2026-07-01T00:00:00Z',employeeIds:['E1'],days:Object.fromEntries(normalDays('2026-08').map(d=>[d.date,'normal']))});
+  const employee={id:'E1',payrollReview:{policy:{version:'V',regularDates:[]}}};const result=await effectiveMasterForMonth(db,null,employee,'2026-08',{masterVersionId:'M'});expect(result.masterAssessment.status).toBe('needs-review');expect(result.normalPayDays[0].policy).toBeNull();expect(data.get('payrollPolicyVersions/V')).toEqual(policy);
+  data.set('payrollPolicyVersions/V',{...policy,workRegime:'standard-8-40',workRegimeEvidence:'合成一般工時制度依據',workRegimeConfirmedBy:'A2',workRegimeConfirmedAt:policy.approvedAt});const valid=await effectiveMasterForMonth(db,null,employee,'2026-08',{masterVersionId:'M'});expect(valid.masterAssessment.status).toBe('confirmed');expect(valid.normalPayDays[0].policy.workRegime).toBe('standard-8-40');
+ });
 });

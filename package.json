@@ -15,7 +15,7 @@
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:headed": "playwright test --headed",
     "test:emulator": "vitest run --config vitest.emulator.config.ts --configLoader runner",
-    "test:emulator:start": "FIREBASE_PROJECT_ID=demo-chiayi-payroll firebase emulators:exec --only firestore --project demo-chiayi-payroll --config firebase.test.json 'npm run test:emulator'",
+    "test:emulator:start": "FIREBASE_PROJECT_ID=demo-chiayi-payroll firebase emulators:exec --only firestore --project demo-chiayi-payroll --config firebase.test.json 'npm run test:emulator && echo PR13_EMULATOR_TESTS_COMPLETED:$PR13_VERIFICATION_RUN_ID'",
     "verify:pr13": "node scripts/verify-pr13.mjs",
     "audit:prod": "npm audit --audit-level=high --omit=dev",
     "audit:report": "npm audit --json > audit-report.json",

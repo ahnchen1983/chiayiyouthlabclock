@@ -123,7 +123,15 @@ export async function compNormalPayEvidence(db:any,tx:any,empId:string,month:str
  // Untaken comp time is a payroll source too: payroll settles it on expiry or
  // exit from the ledger itself, so a missed settlement scan cannot drop it.
  const ledger=await rows(db,readTx,'compLedger',empId);let outstanding:any[]=[];
- try{outstanding=foldCompLedger(ledger).lots.filter(l=>l.available+l.reserved>0).map(l=>({id:l.id,start:l.start,end:l.end,deadline:l.deadline,untakenMinutes:l.available+l.reserved,originalWageBasis:l.originalWageBasis||null}));}catch{issues.push('補休帳本無法核對，未休時數待核');}
+ try{
+  const lots=foldCompLedger(ledger).lots.filter(l=>l.available+l.reserved>0);
+  // Expiry/exit valuation needs the same current source binding as comp use,
+  // even when this month contains no use requests. Reading a locked original
+  // month remains allowed; stale sources must not become settlement amounts.
+  try{await checkLots(db,readTx,empId,lots,true,false);
+   outstanding=lots.map(l=>({id:l.id,start:l.start,end:l.end,deadline:l.deadline,untakenMinutes:l.available+l.reserved,originalWageBasis:l.originalWageBasis||null}));
+  }catch{issues.push('補休未休批次原來源待覆核');}
+ }catch{issues.push('補休帳本無法核對，未休時數待核');}
  if(!requests.length)return {issues,intervals,credits,outstanding};
  try{const fold=foldCompLedger(ledger);for(const r of requests){
   if(['rejected','cancelled','returned','superseded'].includes(r.status)){if(fold.reservations.has(r.id)||ledger.some(e=>e.type==='debit'&&e.requestId===r.id))fail(409,'補休終態與預占釋放／使用帳本不一致');continue;}

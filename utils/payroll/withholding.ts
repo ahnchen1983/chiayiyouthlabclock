@@ -1,4 +1,4 @@
-import {mul,rational,sum,evidence,rounded,type Rational,type FractionEvidence,type RoundingPolicy} from './rational';
+import {mul,rational,sum,evidence,type Rational,type FractionEvidence} from './rational';
 import type {OTLine} from './overtime';
 /** Income tax withholding and part-time supplementary health premium (C3b).
  * Sources checked 2026-10-26:
@@ -22,7 +22,6 @@ import type {OTLine} from './overtime';
 export type WithholdingMethod='table'|'flat-5'|'part-time-5'|'non-resident';
 export interface WithholdingResult {status:'ready'|'needs-review';issues:string[];method:WithholdingMethod|null;exemptOvertime:FractionEvidence;taxableBase:FractionEvidence;incomeTax:number;supplementaryPremium:number;supplementaryBase:FractionEvidence}
 const START_2026=90501,NON_RESIDENT_LOW_2026=44250,MIN_WAGE_2026=29500,EXEMPT_OT_MINUTES=46*60;
-const YUAN:RoundingPolicy={version:'nhi-yuan-half-up',status:'approved',approvedBy:'statute',approvedAt:'2026-10-26T00:00:00Z',stage:'per-item',precision:0,mode:'half-up'};
 const f=(x:FractionEvidence)=>rational(BigInt(x.numerator),BigInt(x.denominator));
 const ge=(a:Rational,n:number)=>a.n>=BigInt(n)*a.d,gt=(a:Rational,n:number)=>a.n>BigInt(n)*a.d;
 const integer=(a:Rational)=>a.d===1n;
@@ -41,17 +40,21 @@ export function withholdingForMonth(input:{month:string;gross:Rational;overtimeL
  const issues:string[]=[],exempt=exemptOvertime(input.overtimeLines);
  const base=sum([input.gross,mul(exempt,rational(-1n)),rational(BigInt(-input.pensionSelf))]),taxable=base.n<0n?rational(0n):base;
  const salaryPaid=sum([input.gross,mul(exempt,rational(-1n))]);
- if(input.month<'2026-01')issues.push('此月份扣繳標準未建立');
+ if(!/^2026-(0[1-9]|1[0-2])$/.test(input.month))issues.push('此月份扣繳標準未建立');
  let incomeTax=0;const pct=(p:bigint)=>mul(taxable,rational(p,100n));
  const take=(t:Rational)=>{if(integer(t))return Number(t.n);issues.push('扣繳稅額有角分，進位方式待確認');return 0;};
  switch(input.method){
   case 'table':if(ge(taxable,START_2026))issues.push('超過扣繳稅額表起扣點，需依115年度扣繳稅額表核定');break;
   case 'flat-5':{const t=pct(5n);if(t.n>2000n*t.d)incomeTax=take(t);break;}
-  case 'part-time-5':if(ge(taxable,START_2026))incomeTax=take(pct(5n));break;
+  case 'part-time-5':if(ge(taxable,START_2026))issues.push('兼職／非每月扣繳需核定單次給付資料，月合計不能代替單次給付');break;
   case 'non-resident':incomeTax=take(pct(gt(taxable,NON_RESIDENT_LOW_2026)?18n:6n));break;
   default:issues.push('所得稅扣繳方式未登錄');
  }
  let supplementaryPremium=0;
- if(!input.healthInsuredHere&&ge(salaryPaid,MIN_WAGE_2026))supplementaryPremium=Number(rounded(mul(salaryPaid,rational(211n,10000n)),YUAN));
+ // A monthly aggregate and enrollment-unit flag cannot establish a payment event
+ // or exemption eligibility (NHIA regulations Arts.2,4,5, checked 2026-10-26:
+ // https://law.moj.gov.tw/LawClass/LawAll.aspx?pcode=L0060027).
+ // Hold the amount until evidence exists; never infer that insured elsewhere means liable.
+ if(!input.healthInsuredHere&&ge(salaryPaid,MIN_WAGE_2026))issues.push('補充保費需核定單次給付及投保類別／免扣證明，月合計與非本單位投保不足以判定');
  return {status:issues.length?'needs-review':'ready',issues,method:input.method||null,exemptOvertime:evidence(exempt),taxableBase:evidence(taxable),incomeTax,supplementaryPremium,supplementaryBase:evidence(salaryPaid)};
 }

@@ -1,8 +1,9 @@
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, writeFile, open } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, appendFile, open } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { emulatorTestsCompleted, browserWorkers } from './verification-evidence.mjs';
 import { execFileSync } from 'node:child_process';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -23,7 +24,7 @@ const steps = [
     ['typecheck', ['run', 'typecheck']],
     ['unit-api', ['test', '--', '--configLoader', 'runner']],
     ['firestore-emulator', ['run', 'test:emulator:start']],
-    ['browser', ['run', 'test:e2e', '--', '--workers=2']],
+    ['browser', ['run', 'test:e2e', '--', '--workers=' + browserWorkers(process.env.PR13_BROWSER_WORKERS)]],
     ['production-build', ['run', 'build']],
 ];
 let interrupted = false;
@@ -32,14 +33,18 @@ for (const [name, args] of steps) {
     const logPath = path.join(evidence, `${name}.log`);
     const log = await open(logPath, 'w');
     process.stdout.write(`開始驗證：${name}\n`);
-    const child = spawn('npm', args, { cwd: root, env: name === 'production-build' ? { ...process.env, VITE_E2E: 'false' } : process.env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn('npm', args, { cwd: root, env: { ...process.env, PR13_VERIFICATION_RUN_ID: runId, ...(name === 'production-build' ? { VITE_E2E: 'false' } : {}) }, stdio: ['ignore', 'pipe', 'pipe'] });
     child.stdout.on('data', chunk => log.write(chunk));
     child.stderr.on('data', chunk => log.write(chunk));
-    const exitCode = await new Promise(resolve => {
+    let exitCode = await new Promise(resolve => {
         child.once('error', error => { log.write(error.message); resolve(1); });
         child.once('close', code => resolve(code ?? 1));
     });
     await log.close();
+    if (name === 'firestore-emulator' && exitCode === 0 && !emulatorTestsCompleted(await readFile(logPath, 'utf8'), runId)) {
+        exitCode = 1;
+        await appendFile(logPath, '\nMissing actual emulator test completion evidence; a zero CLI exit is insufficient.\n');
+    }
     manifest.steps.push({ name, exitCode, seconds: (Date.now() - start) / 1000, log: path.relative(root, logPath) });
     await writeFile(path.join(evidence, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
     process.stdout.write(`${name}: ${exitCode === 0 ? '通過' : '失敗'}\n`);

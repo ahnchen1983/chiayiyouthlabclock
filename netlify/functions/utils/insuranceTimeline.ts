@@ -2,7 +2,7 @@ import {UserRole} from '../../../types';
 import {validDate} from '../../../utils/attendance';
 import {runPayrollMutation,assertTransactionMonths,monthsInRange} from './monthGuard';
 import {evidenceHash} from './attendanceCaseLifecycle';
-import {LABOR_SALARY_GRADES_2026,HEALTH_FIRST_GRADE_2026,type InsurancePeriod} from '../../../utils/payroll/insurance';
+import {LABOR_SALARY_GRADES_2026,HEALTH_SALARY_GRADES_2026,type InsurancePeriod} from '../../../utils/payroll/insurance';
 /** Per-employee insurance enrollment timeline (labor/employment, health, pension
  * self-contribution) with two-person approval: one admin proposes, a different
  * admin who is not the employee approves. Enrollment is a historical fact, so
@@ -19,14 +19,13 @@ export function validateInsurancePeriods(value:any):InsurancePeriod[]{
  for(const p of value){
   if(!validDate(p?.from)||!validDate(p?.to)||p.to<p.from)fail(400,'投保期間日期無效');
   for(const k of ['laborInsured','employmentInsured','healthInsuredHere'])if(typeof p[k]!=='boolean')fail(400,'投保項目需明確選擇');
-  if(p.laborInsured&&!LABOR_SALARY_GRADES_2026.includes(p.laborSalary))fail(400,'勞保投保薪資需為分級表級距');
-  if(p.employmentInsured&&!p.laborInsured)fail(400,'就業保險需與勞保同時投保');
-  if(p.healthInsuredHere&&(!Number.isInteger(p.healthAmount)||p.healthAmount<HEALTH_FIRST_GRADE_2026))fail(400,'健保投保金額需為整數且不低於第一級');
+  if((p.laborInsured||p.employmentInsured)&&!LABOR_SALARY_GRADES_2026.includes(p.laborSalary))fail(400,'勞保／就保投保薪資需為分級表級距');
+  if(p.healthInsuredHere&&!HEALTH_SALARY_GRADES_2026.includes(p.healthAmount))fail(400,'健保投保金額需為115年度分級表級距');
   if(p.healthInsuredHere&&(!Number.isInteger(p.healthDependants)||p.healthDependants<0||p.healthDependants>20))fail(400,'健保眷屬人數無效');
   if(typeof p.pensionSelfPercent!=='number'||!(p.pensionSelfPercent>=0&&p.pensionSelfPercent<=6)||Math.round(p.pensionSelfPercent*100)!==p.pensionSelfPercent*100)fail(400,'勞退自提率需介於0–6%（至多兩位小數）');
   if(p.pensionSelfPercent>0&&(!Number.isInteger(p.pensionWage)||p.pensionWage<=0))fail(400,'自提需有月提繳工資');
   if(!['table','flat-5','part-time-5','non-resident'].includes(p.withholdingMethod))fail(400,'所得稅扣繳方式需明確選擇');
-  out.push({from:p.from,to:p.to,laborInsured:p.laborInsured,laborSalary:p.laborInsured?p.laborSalary:0,employmentInsured:p.employmentInsured,healthInsuredHere:p.healthInsuredHere,healthAmount:p.healthInsuredHere?p.healthAmount:0,healthDependants:p.healthInsuredHere?p.healthDependants:0,pensionWage:p.pensionSelfPercent>0?p.pensionWage:0,pensionSelfPercent:p.pensionSelfPercent,withholdingMethod:p.withholdingMethod});
+  out.push({from:p.from,to:p.to,laborInsured:p.laborInsured,laborSalary:(p.laborInsured||p.employmentInsured)?p.laborSalary:0,employmentInsured:p.employmentInsured,healthInsuredHere:p.healthInsuredHere,healthAmount:p.healthInsuredHere?p.healthAmount:0,healthDependants:p.healthInsuredHere?p.healthDependants:0,pensionWage:p.pensionSelfPercent>0?p.pensionWage:0,pensionSelfPercent:p.pensionSelfPercent,withholdingMethod:p.withholdingMethod});
  }
  out.sort((a,b)=>a.from.localeCompare(b.from));for(let i=1;i<out.length;i++)if(out[i].from<=out[i-1].to)fail(400,'投保期間重疊');
  return out;
@@ -64,6 +63,7 @@ export async function handleInsuranceAction(db:any,uid:string,action:string,data
    if(!id(data.versionId)||!Number.isInteger(data.expectedRevision))fail(400,'需提案識別與版本');const v=await read(tx,col('insuranceTimelineVersions').doc(data.versionId));
    if(v.empId!==empId||v.status!=='proposed'||v.revision!==data.expectedRevision||v.baseHeadRevision!==(head?.revision||0))fail(409,'提案已變更或基準過期');
    if(v.proposedBy===uid||uid===empId)fail(403,'不可核定本人投保資料或自己的提案');if(!['approve','return'].includes(data.mode))fail(400,'核定操作無效');
+   if(data.mode==='approve')validateInsurancePeriods(v.periods);
    const months=changedMonths(current?.periods||[],v.periods);await assertTransactionMonths(db,tx,months);
    result={...v,revision:v.revision+1,status:data.mode==='approve'?'approved':'returned',history:[...v.history,{actor:uid,at,to:data.mode,reason}],...(data.mode==='approve'?{approvedBy:uid,approvedAt:at}:{returnedBy:uid,returnedAt:at})};
    tx.set(col('insuranceTimelineVersions').doc(v.id),result);if(data.mode==='approve')tx.set(col('insuranceTimelineHeads').doc(empId),{currentVersionId:v.id,revision:(head?.revision||0)+1,actor:uid,at});
