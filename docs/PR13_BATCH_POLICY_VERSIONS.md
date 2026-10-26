@@ -20,3 +20,5 @@
 ## 驗證
 
 單元 9 例（伺服器產生的政策通過正常薪資驗證、雙人流程、重播、無效輸入）；真實 Firestore emulator：API 建立並核定政策 → 主檔引用 → 薪資正式金額 3467（最後整數元進位）；E2E 3 例。
+
+`npm run verify:pr13`（commit `4acfb610b85b12e45c72ca1e9cdbd42c594198e6`，sourceHash `6a864ce025f54d5a5a0c6fa56c83e5b3efc57f05ff43307f17c3e90fa8a035a3`，manifest `.verification/pr13/2026-10-26T04-19-36-691Z/`）：audit、typecheck、unit/API 897、emulator 91、E2E 96、build 全部通過。未做獨立 review；未部署。
