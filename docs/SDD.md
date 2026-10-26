@@ -358,6 +358,10 @@ chiayiyouthlabclock/
 
 `utils/payroll/compSettlement.ts` `settleCompLots()`：未休分鐘取每批最後的分鐘（施行細則第22條之2 先後順序），依原日 `originalWageBasis.tiers` 計價；到期併入期限所在月份、離職併入離職月。`normalPayPreview` 將結清加入 `combined`，`SalaryDetail.compSettlementPay` 為獨立明細。
 
+#### 4.5.x 計薪政策版本（2026-10-26）
+
+`payrollPolicyVersion.ts`：`list/propose/review-payroll-policy-version`。提案 `payrollPolicyProposals/{ppp_…}`（proposed → approved／returned），核定建立 `payrollPolicyVersions/{ppv_…}`（`status`、`version`、`approvedBy/At`、`proposedBy`、`employeeIds`、`from/to`、`normalPay`）。`normalPay` 由 `buildNormalPayPolicy()` 依已確認規則產生，只有「其他」假別給薪可選。
+
 ### 4.6 員工管理模組
 
 | 項目 | 說明 |

@@ -636,3 +636,18 @@ describe('overtime/comp policy two-person approval on real Firestore',()=>{
   expect((await db.collection('overtimeCompPolicyVersions').get()).size).toBe(1);
  });
 });
+describe('payroll policy version created through the API drives the official salary',()=>{
+ it('propose → different admin approves → master references it → 9h weekday pays OT, rounded to whole dollars',async()=>{const e=(await db.collection('employees').doc(employee.id).get()).data()!;await db.collection('employees').doc('EMU_ADMIN_2').set({id:'EMU_ADMIN_2',name:'合成管理者二',role:UserRole.Admin,accountKind:'system-account',hireDate:'2020-01-01',hourlyRate:0,monthlySalary:0});
+  const p=await call('propose-payroll-policy-version',{operationId:'emu-ppv-1',employeeIds:[employee.id],from:'2026-04-01',to:'2026-04-30',otherLeave:null,reason:'合成計薪政策提案'});expect(p.statusCode,p.body).toBe(200);const proposal=JSON.parse(p.body);
+  expect((await call('review-payroll-policy-version',{operationId:'emu-ppv-2',proposalId:proposal.id,expectedRevision:1,mode:'approve',reason:'提案人自核測試'})).statusCode).toBe(403);
+  vi.mocked(adminAuth.verifyIdToken).mockResolvedValue({uid:'EMU_ADMIN_2'} as any);const a=await call('review-payroll-policy-version',{operationId:'emu-ppv-3',proposalId:proposal.id,expectedRevision:1,mode:'approve',reason:'第二人核定政策'});expect(a.statusCode,a.body).toBe(200);const versionId=JSON.parse(a.body).versionId;
+  const timeline={accountKind:'employee',from:'2026-04-01',to:'2026-04-30',periods:[{from:'2026-04-01',to:'2026-04-30',employmentState:'active',employmentType:'part-time',payBasis:'hourly',amount:200,policyVersionId:versionId,dayTypeCalendarId:'PPVD'}]};
+  await db.collection('payrollMasterVersions').doc('PPVM').set({empId:employee.id,status:'approved',approvedBy:'EMULATOR_ADMIN',approvedAt:review.reviewedAt,timeline});await db.collection('payrollMasterHeads').doc(employee.id).set({currentVersionId:'PPVM',revision:1});
+  await db.collection('dayTypeCalendars').doc('PPVD').set({status:'approved',version:'synthetic',approvedBy:'EMULATOR_ADMIN',approvedAt:review.reviewedAt,employeeIds:[employee.id],days:Object.fromEntries(normalDays('2026-04').map(d=>[d.date,'normal']))});
+  await db.collection('payrollReviews').doc(employee.id+'_2026-04').set({empId:employee.id,yearMonth:'2026-04',review:{...review,policy:{...review.policy,version:versionId,regularDates:[]}},employeeSourceKey:employeePayrollSourceKey(e),masterVersionId:'PPVM'});
+  await db.collection('clockRecords').doc('PPV-OT').set({...card('2026-04-06','08:00','17:00'),id:'PPV-OT'});
+  vi.mocked(adminAuth.verifyIdToken).mockResolvedValue({uid:'EMULATOR_ADMIN'} as any);const s=JSON.parse((await call('get-employee-salary',{empId:employee.id,yearMonth:'2026-04'})).body);
+  // Seeded 04-01 8h card + 04-06 9h: 1600 + 1600 + 800/3, final whole-dollar rounding → 3467.
+  expect(s.normalPayPreview.combined.status,JSON.stringify(s.normalPayPreview.combined.issues)).toBe('ready');expect(s.normalPayPreview.combined.amount).toBe('3467');expect(s.calculationStatus,JSON.stringify(s.reviewReasons)).toBe('ready');expect(s.grossSalary).toBe(3467);
+ });
+});
