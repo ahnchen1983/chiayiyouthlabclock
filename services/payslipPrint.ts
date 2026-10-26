@@ -86,6 +86,8 @@ export const openPayslipPrintView = (salary: SalaryDetail): void => {
     <tr class="deduct-row"><td>勞保自付</td><td class="right">- ${fmt(salary.laborInsurance)}</td></tr>
     <tr class="deduct-row"><td>健保自付</td><td class="right">- ${fmt(salary.healthInsurance)}</td></tr>
     <tr class="deduct-row"><td>勞退自提</td><td class="right">- ${fmt(salary.laborPensionSelf)}</td></tr>
+    ${(salary.incomeTax ?? 0) > 0 ? `<tr class="deduct-row"><td>所得稅扣繳</td><td class="right">- ${fmt(salary.incomeTax!)}</td></tr>` : ''}
+    ${(salary.supplementaryPremium ?? 0) > 0 ? `<tr class="deduct-row"><td>二代健保補充保費</td><td class="right">- ${fmt(salary.supplementaryPremium!)}</td></tr>` : ''}
     ${salary.leaveDeduction > 0 ? `<tr class="deduct-row"><td>請假扣薪</td><td class="right">- ${fmt(salary.leaveDeduction)}</td></tr>` : ''}
     <tr class="total-row"><td>扣除合計</td><td class="right">- ${fmt(salary.totalDeductions)}</td></tr>
   </table>

@@ -4,7 +4,8 @@ import type { ClockRecord, LeaveRequest, ScheduleEvent, SalaryDetail, SystemConf
 import { LeaveStatus, isOutingLeaveType } from '../../../types';
 import { clockInterval, confirmedWork, shiftIntervals, intervalMinutes, hhmmMinutes, leaveEndMinutes, validDate, clockSourceKey } from '../../../utils/attendance';
 import { roundMoney } from '../../../utils/format';
-import { add, rational, rounded } from '../../../utils/payroll/rational';
+import { add, decimal, rational, rounded } from '../../../utils/payroll/rational';
+import { withholdingForMonth } from '../../../utils/payroll/withholding';
 import { insuranceForMonth } from '../../../utils/payroll/insurance';
 const fraction = (x: { numerator: string; denominator: string }) => rational(BigInt(x.numerator), BigInt(x.denominator));
 
@@ -230,7 +231,6 @@ export const calculateSalaryForEmployee = (
     // list, generic overtime tiers and leave fractions belong to the legacy path only.
     const combined = normalPreview?.combined;
     if(normalPreview){for(const r of [...reasons])if(LEGACY_POLICY_REASON.test(r))reasons.delete(r);reasons.delete('多段雇用／留停／調薪或部分月折算待C2');reasons.delete('部分月到離職／留停折算待C2，不能直接給整月月薪');for(const issue of combined?.issues||normalPreview.issues)reasons.add(issue);}
-    const ready = reasons.size === 0;
     const otLines = normalPreview?.overtimePreview?.lines.filter(l=>OVERTIME_LINE_KINDS.includes(l.kind)) || [];
     const masterGross = combined?.amount != null ? Number(combined.amount) : null;
     const masterBase = combined?.amount != null && normalPreview?.rounding ? Number(rounded(rational(BigInt(combined.normalExact.numerator),BigInt(combined.normalExact.denominator)),normalPreview.rounding)) : null;
@@ -244,7 +244,14 @@ export const calculateSalaryForEmployee = (
     if(normalPreview) otMinutes = otLines.reduce((n,l)=>n+l.minutes,0);
     // Monthly leave deductions are already inside the exact normal-pay total.
     const deduction = normalPreview ? 0 : money(monthlyDeduction);
-    const totalDeductions = money((insurance?.labor || 0) + (insurance?.health || 0) + (insurance?.pensionSelf || 0) + deduction);
+    // Income tax and part-time supplementary premium use the month-end insurance
+    // record (withholding method, health enrolment here) and the paid gross.
+    const monthEnd = Array.isArray(emp.insurancePeriods) ? [...emp.insurancePeriods].reverse().find((p: any) => p.from <= last && p.to >= first) : null;
+    const withholding = insuranceResult && combined?.amount != null ? withholdingForMonth({ month: yearMonth, gross: decimal(String(gross)), overtimeLines: (normalPreview?.overtimePreview?.lines || []).filter(l => l.exact), pensionSelf: insuranceResult.pensionSelf, method: monthEnd?.withholdingMethod, healthInsuredHere: !!monthEnd?.healthInsuredHere }) : null;
+    if (withholding) for (const issue of withholding.issues) reasons.add(issue);
+    const ready = reasons.size === 0;
+    const incomeTax = withholding?.incomeTax || 0, supplementaryPremium = withholding?.supplementaryPremium || 0;
+    const totalDeductions = money((insurance?.labor || 0) + (insurance?.health || 0) + (insurance?.pensionSelf || 0) + deduction + incomeTax + supplementaryPremium);
     return {
         ...(normalPreview?{normalPayPreview:normalPreview}:{}),
         empId: emp.id, name: emp.name, position: emp.position, yearMonth,
@@ -259,6 +266,7 @@ export const calculateSalaryForEmployee = (
         laborPensionSelf: ready ? insurance!.pensionSelf : null, leaveDeduction: ready ? deduction : null,
         totalDeductions: ready ? totalDeductions : null, netSalary: ready ? money(gross - totalDeductions) : null,
         ...(insuranceResult ? { insuranceDetail: insuranceResult } : {}),
+        ...(withholding ? { incomeTax: ready ? incomeTax : null, supplementaryPremium: ready ? supplementaryPremium : null, withholdingDetail: withholding } : {}),
     };
 };
 

@@ -10,3 +10,10 @@ test('salary detail and printed payslip show the comp settlement line',async({pa
  await expect(page.getByText('補休結清',{exact:true})).toBeVisible();await expect(page.getByText('+$333.33')).toBeVisible();
  const popup=page.waitForEvent('popup');await page.getByRole('button',{name:'下載 / 列印薪資條'}).click();const slip=await popup;await expect(slip.getByText('補休結清')).toBeVisible();
 });
+test('income tax and supplementary premium appear as deductions on screen and payslip',async({page})=>{
+ await seedSession(page,employeeUser);await mockApi(page);
+ await page.route('**/.netlify/functions/api',async route=>{if(route.request().postDataJSON().action==='get-employee-salary')return route.fulfill({json:{...salary,compSettlementPay:0,grossSalary:30000,baseSalary:30000,overtimePay:0,incomeTax:1500,supplementaryPremium:633,totalDeductions:2133,netSalary:27867}});await route.fallback();});
+ await page.goto('/');await page.getByRole('button',{name:'薪資明細',exact:true}).click();
+ await expect(page.getByText('所得稅扣繳',{exact:true})).toBeVisible();await expect(page.getByText('二代健保補充保費',{exact:true})).toBeVisible();
+ const popup=page.waitForEvent('popup');await page.getByRole('button',{name:'下載 / 列印薪資條'}).click();const slip=await popup;await expect(slip.getByText('所得稅扣繳')).toBeVisible();await expect(slip.getByText('二代健保補充保費')).toBeVisible();
+});

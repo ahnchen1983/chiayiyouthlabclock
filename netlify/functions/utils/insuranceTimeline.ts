@@ -25,7 +25,8 @@ export function validateInsurancePeriods(value:any):InsurancePeriod[]{
   if(p.healthInsuredHere&&(!Number.isInteger(p.healthDependants)||p.healthDependants<0||p.healthDependants>20))fail(400,'健保眷屬人數無效');
   if(typeof p.pensionSelfPercent!=='number'||!(p.pensionSelfPercent>=0&&p.pensionSelfPercent<=6)||Math.round(p.pensionSelfPercent*100)!==p.pensionSelfPercent*100)fail(400,'勞退自提率需介於0–6%（至多兩位小數）');
   if(p.pensionSelfPercent>0&&(!Number.isInteger(p.pensionWage)||p.pensionWage<=0))fail(400,'自提需有月提繳工資');
-  out.push({from:p.from,to:p.to,laborInsured:p.laborInsured,laborSalary:p.laborInsured?p.laborSalary:0,employmentInsured:p.employmentInsured,healthInsuredHere:p.healthInsuredHere,healthAmount:p.healthInsuredHere?p.healthAmount:0,healthDependants:p.healthInsuredHere?p.healthDependants:0,pensionWage:p.pensionSelfPercent>0?p.pensionWage:0,pensionSelfPercent:p.pensionSelfPercent});
+  if(!['table','flat-5','part-time-5','non-resident'].includes(p.withholdingMethod))fail(400,'所得稅扣繳方式需明確選擇');
+  out.push({from:p.from,to:p.to,laborInsured:p.laborInsured,laborSalary:p.laborInsured?p.laborSalary:0,employmentInsured:p.employmentInsured,healthInsuredHere:p.healthInsuredHere,healthAmount:p.healthInsuredHere?p.healthAmount:0,healthDependants:p.healthInsuredHere?p.healthDependants:0,pensionWage:p.pensionSelfPercent>0?p.pensionWage:0,pensionSelfPercent:p.pensionSelfPercent,withholdingMethod:p.withholdingMethod});
  }
  out.sort((a,b)=>a.from.localeCompare(b.from));for(let i=1;i<out.length;i++)if(out[i].from<=out[i-1].to)fail(400,'投保期間重疊');
  return out;

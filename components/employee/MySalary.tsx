@@ -189,6 +189,21 @@ const MySalary: React.FC = () => {
                                 </div>
                                 <span className="font-semibold text-red-600">-{formatCurrency(salary.laborPensionSelf)}</span>
                             </div>
+                            {(salary.incomeTax ?? 0) > 0 && (
+                                <div className="flex justify-between items-center">
+                                    <p className="text-gray-700">所得稅扣繳</p>
+                                    <span className="font-semibold text-red-600">-{formatCurrency(salary.incomeTax!)}</span>
+                                </div>
+                            )}
+                            {(salary.supplementaryPremium ?? 0) > 0 && (
+                                <div className="flex justify-between items-center">
+                                    <div>
+                                        <p className="text-gray-700">二代健保補充保費</p>
+                                        <p className="text-xs text-gray-400">非本單位投保健保，單次給付達基本工資</p>
+                                    </div>
+                                    <span className="font-semibold text-red-600">-{formatCurrency(salary.supplementaryPremium!)}</span>
+                                </div>
+                            )}
                             {salary.leaveDeduction > 0 && (
                                 <div className="flex justify-between items-center">
                                     <div>

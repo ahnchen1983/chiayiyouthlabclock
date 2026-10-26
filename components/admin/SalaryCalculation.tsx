@@ -109,6 +109,14 @@ const SalaryDetailModal: React.FC<{ salary: SalaryDetail; onClose: () => void }>
                                 <span className="text-gray-600">勞退自提</span>
                                 <span className="font-semibold text-red-600">-{formatCurrency(salary.laborPensionSelf)}</span>
                             </div>
+                            {(salary.incomeTax ?? 0) > 0 && <div className="flex justify-between py-2 border-b border-gray-100">
+                                <span className="text-gray-600">所得稅扣繳</span>
+                                <span className="font-semibold text-red-600">-{formatCurrency(salary.incomeTax!)}</span>
+                            </div>}
+                            {(salary.supplementaryPremium ?? 0) > 0 && <div className="flex justify-between py-2 border-b border-gray-100">
+                                <span className="text-gray-600">二代健保補充保費</span>
+                                <span className="font-semibold text-red-600">-{formatCurrency(salary.supplementaryPremium!)}</span>
+                            </div>}
                             {salary.leaveDeduction > 0 && (
                                 <div className="flex justify-between py-2 border-b border-gray-100">
                                     <span className="text-gray-600">請假扣薪</span>
@@ -154,15 +162,15 @@ const SalaryDetailModal: React.FC<{ salary: SalaryDetail; onClose: () => void }>
 // 匯出 CSV（Phase 7.7：加入 masked 參數、CSV 警語；薪資數字「不」脫敏，因會計月結用）
 const exportSalaryCSV = (salaries: SalaryDetail[], month: string, masked: boolean) => {
     if (salaries.some(s => !['ready', 'locked'].includes(s.calculationStatus || ''))) { alert('仍有待覆核薪資，不能匯出結算檔'); return; }
-    const headers = ['員工編號', '姓名', '職位', '出勤天數', '總工時', '請假時數', '加班時數', '底薪', '加班費', '應發薪資', '勞保', '健保', '勞退', '請假扣薪', '扣除合計', '實發薪資'];
+    const headers = ['員工編號', '姓名', '職位', '出勤天數', '總工時', '請假時數', '加班時數', '底薪', '加班費', '補休結清', '應發薪資', '勞保', '健保', '勞退', '請假扣薪', '所得稅', '二代健保補充保費', '扣除合計', '實發薪資'];
     const csvContent = [
         headers.join(','),
         ...salaries.map(s => [
             masked ? maskEmpId(s.empId) : s.empId,
             masked ? maskName(s.name) : s.name,
             s.position, s.totalWorkDays, s.totalWorkHours, s.totalLeaveHours, s.overtimeHours,
-            s.baseSalary, s.overtimePay, s.grossSalary, s.laborInsurance, s.healthInsurance, s.laborPensionSelf,
-            s.leaveDeduction, s.totalDeductions, s.netSalary
+            s.baseSalary, s.overtimePay, s.compSettlementPay ?? 0, s.grossSalary, s.laborInsurance, s.healthInsurance, s.laborPensionSelf,
+            s.leaveDeduction, s.incomeTax ?? 0, s.supplementaryPremium ?? 0, s.totalDeductions, s.netSalary
         ].map(f => `"${f}"`).join(',')),
         // 警語列（CSV 末尾）
         '',

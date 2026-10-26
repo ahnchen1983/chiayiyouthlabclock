@@ -366,6 +366,10 @@ chiayiyouthlabclock/
 
 `utils/payroll/insurance.ts` `insuranceForMonth(month, periods)` 依法定費率計算員工負擔；`insuranceTimeline.ts` 提供 `get/propose/review-insurance-timeline`，資料存 `insuranceTimelineVersions`、`insuranceTimelineHeads/{empId}`、`insuranceTimelineCommands`。主檔員工於 `payrollReviewStorage` 載入 `insurancePeriods`，`payroll.ts` 以計算結果填 `laborInsurance`（含就保）、`healthInsurance`、`laborPensionSelf` 與 `insuranceDetail`。
 
+#### 4.5.x 所得稅扣繳與補充保費（C3b，2026-10-26）
+
+`utils/payroll/withholding.ts` `withholdingForMonth()`、`exemptOvertime()`；投保期間新增 `withholdingMethod`（`table`／`flat-5`／`part-time-5`／`non-resident`）。`payroll.ts` 以月底所屬投保期間計算，結果寫入 `incomeTax`、`supplementaryPremium`、`withholdingDetail`，並計入 `totalDeductions`。
+
 ### 4.6 員工管理模組
 
 | 項目 | 說明 |

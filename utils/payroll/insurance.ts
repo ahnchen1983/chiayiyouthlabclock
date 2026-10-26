@@ -14,7 +14,7 @@ import {mul,rational,rounded,evidence,type Rational,type FractionEvidence,type R
  *   (BLI Q&A https://www.bli.gov.tw/Files/18089).
  * Disability premium subsidies and part-time supplementary premium are not modelled.
  */
-export interface InsurancePeriod {from:string;to:string;laborInsured:boolean;laborSalary:number;employmentInsured:boolean;healthInsuredHere:boolean;healthAmount:number;healthDependants:number;pensionWage:number;pensionSelfPercent:number}
+export interface InsurancePeriod {from:string;to:string;laborInsured:boolean;laborSalary:number;employmentInsured:boolean;healthInsuredHere:boolean;healthAmount:number;healthDependants:number;pensionWage:number;pensionSelfPercent:number;withholdingMethod?:import('./withholding').WithholdingMethod}
 export interface InsuranceLine {item:'labor'|'employment'|'health'|'pension-self';from:string|null;to:string|null;days:number|null;basis:number;exact:FractionEvidence;amount:number}
 export interface InsuranceResult {status:'ready'|'needs-review';issues:string[];lines:InsuranceLine[];labor:number;health:number;pensionSelf:number}
 // Rates by effective start (YYYY-MM). Months before the first entry are not supported.
