@@ -1,3 +1,18 @@
+import HistoricalPayrollCorrection from '../components/admin/HistoricalPayrollCorrection';
+import PayrollReconciliation from '../components/admin/PayrollReconciliation';
+import PayrollItemExecution from '../components/admin/PayrollItemExecution';
+import PayrollAdjustments from '../components/admin/PayrollAdjustments';
+import PayrollPaymentAllocation from '../components/admin/PayrollPaymentAllocation';
+import PayrollItemTreatment from '../components/admin/PayrollItemTreatment';
+import WorktimeDeclaration from '../components/admin/WorktimeDeclaration';
+import AttendancePolicyDeclaration from '../components/admin/AttendancePolicyDeclaration';
+import PayrollPaymentEvidence from '../components/admin/PayrollPaymentEvidence';
+import PayrollDifference from '../components/admin/PayrollDifference';
+import PayrollMasterTimeline from '../components/PayrollMasterTimeline';
+import DayTypeDesignationPanel from '../components/DayTypeDesignationPanel';
+import PayrollPolicyVersions from '../components/admin/PayrollPolicyVersions';
+import InsuranceTimeline from '../components/admin/InsuranceTimeline';
+import PayrollItems from '../components/admin/PayrollItems';
 import CompWorkflow from '../components/CompWorkflow';
 import OvertimeWorkflow from '../components/OvertimeWorkflow';
 
@@ -61,7 +76,7 @@ const CompareIcon: React.FC<{ className?: string }> = ({ className }) => (
   </svg>
 );
 
-type AdminView = 'comp' | 'overtime' | 'cases' | 'overview' | 'schedule' | 'attendance' | 'leave' | 'employees' | 'monthlyReport' | 'comparison' | 'salary' | 'auditLog' | 'systemSettings' | 'makeupApproval' | 'openShifts' | 'loaApproval' | 'shiftSwapApproval' | 'myClock' | 'myLeave' | 'myRecords' | 'mySalary' | 'myMakeup' | 'myLeaveBalance' | 'myPreferences' | 'myOpenShifts' | 'myLeaveOfAbsence';
+type AdminView = 'historicalPayrollCorrection' | 'payrollReconciliation' | 'payrollItemExecution' | 'payrollAdjustments' | 'master' | 'dayTypes' | 'payrollPolicy' | 'insurance' | 'payrollItems' | 'payrollDifference' | 'historicalDifference' | 'payrollPaymentAllocation' | 'payrollItemTreatment' | 'worktimeDeclaration' | 'attendancePolicy' | 'payrollPayments' | 'comp' | 'overtime' | 'cases' | 'overview' | 'schedule' | 'attendance' | 'leave' | 'employees' | 'monthlyReport' | 'comparison' | 'salary' | 'auditLog' | 'systemSettings' | 'makeupApproval' | 'openShifts' | 'loaApproval' | 'shiftSwapApproval' | 'myClock' | 'myLeave' | 'myRecords' | 'mySalary' | 'myMakeup' | 'myLeaveBalance' | 'myPreferences' | 'myOpenShifts' | 'myLeaveOfAbsence';
 
 const AdminDashboard: React.FC = () => {
   const { user, logout } = useAuth();
@@ -72,6 +87,22 @@ const AdminDashboard: React.FC = () => {
 
   const renderView = () => {
     switch (currentView) {
+      case 'master': return <PayrollMasterTimeline />;
+      case 'payrollPolicy': return <PayrollPolicyVersions />;
+      case 'insurance': return <InsuranceTimeline />;
+      case 'payrollItemExecution': return <PayrollItemExecution />;
+      case 'historicalPayrollCorrection': return <HistoricalPayrollCorrection />;
+      case 'payrollReconciliation': return <PayrollReconciliation />;
+      case 'payrollAdjustments': return <PayrollAdjustments />;
+      case 'payrollItemTreatment': return <PayrollItemTreatment />;
+      case 'payrollItems': return <PayrollItems />;
+      case 'payrollDifference': return <PayrollDifference />;
+      case 'historicalDifference': return <PayrollDifference historical />;
+      case 'worktimeDeclaration': return <WorktimeDeclaration />;
+      case 'attendancePolicy': return <AttendancePolicyDeclaration />;
+      case 'payrollPaymentAllocation': return <PayrollPaymentAllocation />;
+      case 'payrollPayments': return <PayrollPaymentEvidence />;
+      case 'dayTypes': return <div className="p-4 max-w-5xl mx-auto"><DayTypeDesignationPanel mode="admin" /></div>;
       case 'comp': return <CompWorkflow />;
       case 'overtime': return <OvertimeWorkflow />;
       case 'cases': return <AttendanceCaseCenter />;
@@ -142,7 +173,23 @@ const AdminDashboard: React.FC = () => {
             <NavItem view="comparison" icon={<CompareIcon className="w-6 h-6" />} label="排班對照表" />
             <NavItem view="cases" icon={<ListIcon className="w-6 h-6" />} label="異常待辦" />
             <NavItem view="attendance" icon={<ListIcon className="w-6 h-6" />} label="出勤紀錄" />
-            <NavItem view="comp" icon={<SendIcon className="w-6 h-6" />} label="補休帳本" />
+            <NavItem view="master" icon={<SendIcon className="w-6 h-6" />} label="薪資有效期主檔" />
+            <NavItem view="dayTypes" icon={<CalendarIcon className="w-6 h-6" />} label="例假／休息日核定" />
+            <NavItem view="payrollPolicy" icon={<SendIcon className="w-6 h-6" />} label="計薪政策版本" />
+            <NavItem view="insurance" icon={<SendIcon className="w-6 h-6" />} label="投保資料" />
+            {user?.role === UserRole.SuperAdmin && <NavItem view="payrollItemExecution" icon={<DollarIcon className="w-6 h-6" />} label="薪資項目計算" />}
+            {user?.role === UserRole.SuperAdmin && <NavItem view="payrollAdjustments" icon={<DollarIcon className="w-6 h-6" />} label="薪資調整" />}
+            {user?.role === UserRole.SuperAdmin && <NavItem view="payrollReconciliation" icon={<DollarIcon className="w-6 h-6" />} label="月薪資對帳" />}
+            {user?.role === UserRole.SuperAdmin && <NavItem view="historicalPayrollCorrection" icon={<DollarIcon className="w-6 h-6" />} label="歷史薪率修正" />}
+            {user?.role === UserRole.SuperAdmin && <NavItem view="payrollItemTreatment" icon={<DollarIcon className="w-6 h-6" />} label="薪資項目處理" />}
+            {user?.role === UserRole.SuperAdmin && <NavItem view="worktimeDeclaration" icon={<ClockIcon className="w-6 h-6" />} label="工時制度聲明" />}
+            {user?.role === UserRole.SuperAdmin && <NavItem view="attendancePolicy" icon={<ClockIcon className="w-6 h-6" />} label="出勤判定政策" />}
+            {user?.role === UserRole.SuperAdmin && <NavItem view="payrollPaymentAllocation" icon={<DollarIcon className="w-6 h-6" />} label="給付金額分配" />}
+            {user?.role === UserRole.SuperAdmin && <NavItem view="payrollPayments" icon={<DollarIcon className="w-6 h-6" />} label="給付證據核對" />}
+            {user?.role === UserRole.SuperAdmin && <NavItem view="historicalDifference" icon={<DollarIcon className="w-6 h-6" />} label="歷史薪資差額" />}
+            {user?.role === UserRole.SuperAdmin && <NavItem view="payrollDifference" icon={<DollarIcon className="w-6 h-6" />} label="薪資差額核對" />}
+            {user?.role === UserRole.SuperAdmin && <NavItem view="payrollItems" icon={<DollarIcon className="w-6 h-6" />} label="其他薪資項目" />}
+        <NavItem view="comp" icon={<SendIcon className="w-6 h-6" />} label="補休帳本" />
         <NavItem view="overtime" icon={<SendIcon className="w-6 h-6" />} label="加班申請" />
         <NavItem view="leave" icon={<CheckSquareIcon className="w-6 h-6" />} label="請假/外勤審核" />
             <NavItem view="shiftSwapApproval" icon={<CalendarIcon className="w-6 h-6" />} label="換班審核" />

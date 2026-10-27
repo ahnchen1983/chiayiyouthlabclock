@@ -1,4 +1,5 @@
 import {assessLeavePolicy} from './leavePolicy';
+import {assessAttendanceExplanationInventory} from './attendanceExplanationInventory';
 import {prepareAttachmentSubmission,assertRequestAttachmentEvidence} from './makeupAttachments';
 import {validLeaveAllocations} from './payroll';
 import {LeaveStatus,LeaveType,UserRole} from '../../../types';
@@ -21,6 +22,14 @@ const range=(r:any)=>({start:legacyMinute(r.startDate),end:legacyMinute(r.endDat
 const overlap=(a:any,b:any)=>a.start<b.end&&b.start<a.end;
 const months=(w:any)=>{if(!Number.isFinite(w?.start)||!Number.isFinite(w?.end)||w.end<=w.start)fail(409,'來源期間未知，不能略過鎖月');return monthsInRange(taipeiDate(new Date(w.start*60000)),taipeiDate(new Date((w.end-1)*60000)));};
 const caseWindow=(c:any)=>c.observation.window;
+const rootedInStaleAcceptance=(ex:any,explanations:any[],c:any)=>{
+ const byId=new Map(explanations.map(e=>[e.id,e])),visited=new Set<string>();let ancestor=ex;
+ while(ancestor?.supersedesId&&!visited.has(ancestor.id)){
+  visited.add(ancestor.id);ancestor=byId.get(ancestor.supersedesId);
+  if(ancestor?.status==='superseded'&&ancestor.acceptedSource&&ancestor.acceptedSource.evidenceVersion!==c.observation.evidenceVersion)return true;
+ }
+ return false;
+};
 const rows=async(db:any,tx:any,col:string,field:string,value:string,limit=500)=>{const snap=await tx.get(db.collection(col).where(field,'==',value).limit(limit+1));if(snap.size>limit)fail(409,'來源超出技術容量，未部分寫入');return snap.docs.map((d:any)=>({...d.data(),id:d.id}));};
 export async function assertNoDuplicateLeave(db:any,tx:any,r:any,excludeId?:string){
  if(!Object.values(LeaveType).includes(r.leaveType))fail(400,'假別不存在');const w=range(r);months(w);
@@ -48,9 +57,19 @@ export async function handleExplanationAction(db:any,uid:string,action:string,da
  if(['empId','actor','at','status','policy','paidFraction','payrollAllocations','sourceRefs','proof','applicationEvidence'].some(k=>k in data))fail(400,'不得提交伺服器證據或計薪設定');
  if(action==='get-case-explanation-workflow'){
   const a=await actor(db,null,uid),c=await read(db,null,'attendanceCases',data.caseId);scope(a,c.empId);
-  const readTx={get:(r:any)=>r.get()},exLinks=await rows(db,readTx,'caseExplanationLinks','caseId',c.id,100),leaveLinks=await rows(db,readTx,'caseLeaveLinks','caseId',c.id,100);
-  const explanations=[],leaves=[];for(const l of exLinks){const e=await read(db,null,'anomalyExplanations',l.sourceId);if(e.empId!==c.empId||e.caseId!==c.id)fail(409,'說明來源不一致');explanations.push(e);}for(const l of leaveLinks){const r=await read(db,null,'leaveRequests',l.sourceId);if(r.empId!==c.empId)fail(409,'假單來源不一致');leaves.push(r);}
-  return {caseId:c.id,empId:c.empId,caseRevision:c.revision,evidenceVersion:c.observation.evidenceVersion,window:caseWindow(c),explanations,leaves,policyStatus:'needs-review',settlementEligibility:'BLOCKED'};
+  const readTx={get:(r:any)=>r.get()},exLinks=await rows(db,readTx,'caseExplanationLinks','caseId',c.id),leaveLinks=await rows(db,readTx,'caseLeaveLinks','caseId',c.id,100);
+  const explanations=await rows(db,readTx,'anomalyExplanations','caseId',c.id),events=await rows(db,readTx,'anomalyExplanationEvents','caseId',c.id),leaves=[];
+  for(const l of leaveLinks){const r=await read(db,null,'leaveRequests',l.sourceId);if(r.empId!==c.empId)fail(409,'假單來源不一致');leaves.push(r);}
+  const inventory=assessAttendanceExplanationInventory({empId:c.empId,cases:[c],explanations,links:exLinks,events});
+  let sourceFreshness:'verified'|'unknown'='unknown';
+  if(inventory.status==='complete'){try{await assertCurrentCaseSource(db,readTx,c,new Date().toISOString());sourceFreshness='verified';}catch{/* Explicit unknown; a GET never repairs or grants stale-source authority. */}}
+  const valid=sourceFreshness==='verified'&&inventory.status==='complete';
+  return {caseId:c.id,empId:c.empId,caseStatus:c.status,caseRevision:c.revision,evidenceVersion:c.observation.evidenceVersion,window:caseWindow(c),explanations:explanations.filter((ex:any)=>ex.empId===c.empId),leaves,
+   sourceFreshness,explanationInventoryStatus:inventory.status,
+   resubmittableAcceptedIds:valid&&a.id===c.empId?inventory.staleAcceptedIds:[],
+   resubmittableReplacementIds:valid&&a.id===c.empId?explanations.filter((ex:any)=>['needs-info','rejected','cancelled'].includes(ex.status)&&rootedInStaleAcceptance(ex,explanations,c)).map((ex:any)=>ex.id):[],
+   reviewableReplacementIds:valid&&a.manager&&a.id!==c.empId?explanations.filter((ex:any)=>ex.status==='submitted'&&rootedInStaleAcceptance(ex,explanations,c)).map((ex:any)=>ex.id):[],
+   policyStatus:'needs-review',settlementEligibility:'BLOCKED'};
  }
  if(!validId(data.operationId)||!validId(data.caseId))fail(400,'操作與案件識別必填');const why=reason(data.reason),at=new Date().toISOString(),hash=evidenceHash([action,data]);
  return runPayrollMutation(db,[],async tx=>{
@@ -59,19 +78,36 @@ export async function handleExplanationAction(db:any,uid:string,action:string,da
   const manage=action==='review-case-leave'||action==='act-anomaly-explanation'&&['request-info','accept','reject'].includes(data.mode);
   if(manage)scope(a,c.empId,true);else if(action!=='link-case-leave')own(a,c.empId);
   if(receipt.exists){if(receipt.data().hash!==hash)fail(409,'操作識別內容不符');return receipt.data().result;}
-  assertCase(c,data,action==='act-anomaly-explanation'&&data.mode==='cancel');await assertTransactionMonths(db,tx,months(caseWindow(c)));let result:any;
+  assertCase(c,data,action==='act-anomaly-explanation');await assertTransactionMonths(db,tx,months(caseWindow(c)));let result:any;
   if(action==='submit-anomaly-explanation'||action==='act-anomaly-explanation'){
    let r:any,old:any=null;if(action==='act-anomaly-explanation'){
     old=await read(db,tx,'anomalyExplanations',data.explanationId);if(old.caseId!==c.id||old.empId!==c.empId)fail(403,'說明不屬此案件');if(old.revision!==data.expectedRevision)fail(409,'說明版本已變更');await assertTransactionMonths(db,tx,months(range(old)));
     if(!['request-info','accept','reject','cancel','resubmit'].includes(data.mode))fail(400,'說明操作無效');
-    if(data.mode==='resubmit'?!['needs-info','rejected','cancelled'].includes(old.status):data.mode==='cancel'?!['submitted','needs-info'].includes(old.status):old.status!=='submitted')fail(409,'此說明狀態不能操作；採納後不可直接取消');
+    if(data.mode==='resubmit'?!['needs-info','rejected','cancelled','accepted'].includes(old.status):data.mode==='cancel'?!['submitted','needs-info'].includes(old.status):old.status!=='submitted')fail(409,'此說明狀態不能操作；採納後不可直接取消');
+    if(['resolved','cancelled'].includes(c.status)&&!(data.mode==='resubmit'&&old.status==='accepted')&&data.mode!=='cancel'){
+     // A closed case may finish independent review of a replacement rooted in
+     // stale historical acceptance. Ordinary narratives cannot gain this path.
+     await assertCurrentCaseSource(db,tx,c,at);
+     const explanations=await rows(db,tx,'anomalyExplanations','caseId',c.id),links=await rows(db,tx,'caseExplanationLinks','caseId',c.id),events=await rows(db,tx,'anomalyExplanationEvents','caseId',c.id);
+     const inventory=assessAttendanceExplanationInventory({empId:c.empId,cases:[c],explanations,links,events});
+     if(inventory.status!=='complete'||!rootedInStaleAcceptance(old,explanations,c))fail(409,'已結案案件僅可覆核已失效採納說明的完整替換鏈');
+    }
+    if(data.mode==='resubmit'&&old.status==='accepted'){
+     // Only an explicit employee replacement of intact but stale acceptance is
+     // permitted. The case must already reflect a fresh server scan; a client
+     // revision or narrative cannot manufacture a new clearance basis.
+     await assertCurrentCaseSource(db,tx,c,at);
+     const explanations=await rows(db,tx,'anomalyExplanations','caseId',c.id),links=await rows(db,tx,'caseExplanationLinks','caseId',c.id),events=await rows(db,tx,'anomalyExplanationEvents','caseId',c.id);
+     const inventory=assessAttendanceExplanationInventory({empId:c.empId,cases:[c],explanations,links,events});
+     if(inventory.status!=='complete'||!inventory.staleAcceptedIds.includes(old.id))fail(409,'只有來源已重新掃描且採納依據過期的完整說明可重送；有效採納不可改寫');
+    }
    }
    const creating=!old||data.mode==='resubmit';
    if(creating){
     const text=reason(data.text),id='explanation_'+evidenceHash([uid,data.operationId]),l=link(c.id,id);
     await assertWorkflowCapacity(db,tx,'caseExplanationLinks',[l]);
     r={id,schemaVersion:'anomaly-explanation-v1',empId:c.empId,caseId:c.id,revision:1,status:'submitted',text,startDate:new Date(caseWindow(c).start*60000).toISOString(),endDate:new Date(caseWindow(c).end*60000).toISOString(),caseEvidenceVersion:c.observation.evidenceVersion,sourceRefs:c.observation.refs||[],supersedesId:old?.id||null,createdBy:uid,createdAt:at,updatedAt:at,history:[]};
-    const nextCase=appendCaseWorkflowEvent(c,{operationId:data.operationId,reason:why},uid,at,'awaiting-review');
+    const nextCase=appendCaseWorkflowEvent(c,{operationId:data.operationId,reason:why},uid,at,['resolved','cancelled'].includes(c.status)?c.status:'awaiting-review');
     if(old){const previous={...old,status:'superseded',revision:old.revision+1,supersededBy:id,updatedAt:at};saveExplanation(db,tx,previous,event(previous,uid,at,old.status,why));}
     result=saveExplanation(db,tx,r,event(r,uid,at,null,why));tx.create(db.collection('caseExplanationLinks').doc(l.id),{...l,revision:1,actor:uid,at});persistCaseWorkflow(db,tx,c,nextCase);
    }else{

@@ -63,7 +63,8 @@ const EmployeeReviewForm: React.FC<{ employee: PayrollReviewEmployee; month: str
     const [divisor, setDivisor] = useState(existing?.policy?.monthlyHourlyDivisor?.toString() || '');
     const [dates, setDates] = useState<string[]>(existing?.policy?.regularDates || []);
     const [tiers, setTiers] = useState((existing?.policy?.overtimeTiers || []).map(t => ({ minutes: String(t.minutes), numerator: String(t.numerator), denominator: String(t.denominator) })));
-    const monthly = employee.position === '專責人員';
+    const [payBasis,setPayBasis]=useState(employee.effectiveMasterVersion?employee.payBasis||'':existing?.payBasis||'');
+    const monthly = payBasis==='monthly';
     const fractions = monthly ? existing?.policy?.monthlyLeaveDeductionFraction : existing?.policy?.hourlyLeavePaidFraction;
     const [percentages, setPercentages] = useState<Partial<Record<LeaveType, string>>>(() => Object.fromEntries(Object.entries<number>(fractions || {}).map(([type, value]) => [type, String(value * 100)])));
     const [insurance, setInsurance] = useState({ labor: existing?.insurance?.labor?.toString() ?? '', health: existing?.insurance?.health?.toString() ?? '', pensionSelf: existing?.insurance?.pensionSelf?.toString() ?? '' });
@@ -103,7 +104,8 @@ const EmployeeReviewForm: React.FC<{ employee: PayrollReviewEmployee; month: str
                         return { date: g.date, reason, sourceKey: g.sourceKey };
                     }),
                 ];
-                review = { yearMonth: month, scheduleExceptions,
+                if(!['hourly','monthly','daily'].includes(payBasis))throw new Error('須明示核定薪制');
+                review = { payBasis:payBasis as 'hourly'|'monthly'|'daily',yearMonth: month, scheduleExceptions,
                     policy: { version: version.trim(), hoursBasis: 'actual', dailyRegularMinutes: 480, workDateRule: 'clock-in-date', moneyDecimals: Number(precision) as 0 | 2,
                         regularDates: [...dates].sort(), overtimeTiers,
                         hourlyLeavePaidFraction: monthly ? existing?.policy?.hourlyLeavePaidFraction || {} : values,
@@ -113,14 +115,14 @@ const EmployeeReviewForm: React.FC<{ employee: PayrollReviewEmployee; month: str
                     insurance: { labor: numberValue(insurance.labor, '勞保自付額'), health: numberValue(insurance.health, '健保自付額'), pensionSelf: numberValue(insurance.pensionSelf, '勞退自提額') },
                 };
             }
-            await apiReviewPayrollInputs(employee.id, review, employee.employeeSourceKey);
+            await apiReviewPayrollInputs(employee.id, review, employee.employeeSourceKey,employee.effectiveMasterVersion);
             await onSaved(); setSaved(true); setConfirmed(false);
         } catch (e: any) { setError(e.message || '計薪覆核儲存失敗'); }
         finally { setBusy(false); onBusyChange(false); }
     };
     return <form onSubmit={save} className="space-y-4" aria-label="月度計薪覆核">
-        <p className="text-sm text-gray-600">{employee.name}（{employee.id}）｜{employee.position}｜{monthly ? '月薪' : '時薪'} {formatMoney(monthly ? employee.monthlySalary : employee.hourlyRate)}</p>
-        {existing && <p className="text-sm text-gray-600">上次覆核：{existing.reviewedBy}，{existing.reviewedAt}</p>}
+        <p className="text-sm text-gray-600">{employee.name}（{employee.id}）｜{employee.position}｜{payBasis==='monthly'?'月薪':payBasis==='hourly'?'時薪':payBasis==='daily'?'日薪待核':'薪制待核'} {payBasis?formatMoney(monthly ? employee.monthlySalary : employee.hourlyRate):'—'}</p>
+        <label>明示核定薪制<select aria-label="明示核定薪制" value={payBasis} disabled={locked||busy||!!employee.effectiveMasterVersion} onChange={e=>{setPayBasis(e.target.value);changed();}}><option value="">待明確核定</option><option value="hourly">時薪</option><option value="monthly">月薪</option><option value="daily">日薪（算法待核）</option></select></label>{existing && <p className="text-sm text-gray-600">上次覆核：{existing.reviewedBy}，{existing.reviewedAt}</p>}
         {employee.accountKind === 'system-account' && <p className="rounded bg-gray-100 p-2 text-sm">此帳號已被明確分類為系統帳號，不列入計薪。</p>}
         <fieldset disabled={locked || busy} className="space-y-4">
             <label className="block text-sm"><input type="checkbox" checked={excluded} onChange={e => { setExcluded(e.target.checked); changed(); }} /> 本月為非受薪系統帳號，排除計薪</label>
@@ -194,7 +196,7 @@ const PayrollReviewPanel: React.FC<{ month: string; locked: boolean; settling: b
         {settling && <p role="status" className="rounded bg-amber-100 p-3">本月正在結算，暫停修改覆核資料。</p>}
         {inputs && <label className="block text-sm">覆核員工<select aria-label="覆核員工" disabled={mutating} className={fieldClass} value={selected} onChange={e => setSelected(e.target.value)}>{inputs.employees.map(e => <option key={e.id} value={e.id}>{e.name}（{e.id}）</option>)}</select></label>}
         {notice && <p role="status" className="text-green-700">{notice}</p>}
-        {employee && <EmployeeReviewForm key={`${month}:${employee.id}:${employee.employeeSourceKey}:${JSON.stringify(employee.payrollReview || null)}:${JSON.stringify(inputs.scheduleGaps || [])}`} employee={employee} month={month} gaps={(inputs.scheduleGaps || []).filter(g => g.empId === employee.id)} locked={readOnly || mutating} onSaved={() => refreshed('計薪覆核已儲存，薪資已重新檢查；其餘待覆核項目仍需處理。')} onBusyChange={mutationBusy} />}
+        {employee && <EmployeeReviewForm key={`${month}:${employee.id}:${employee.employeeSourceKey}:${employee.effectiveMasterVersion||'legacy'}:${JSON.stringify(employee.payrollReview || null)}:${JSON.stringify(inputs.scheduleGaps || [])}`} employee={employee} month={month} gaps={(inputs.scheduleGaps || []).filter(g => g.empId === employee.id)} locked={readOnly || mutating} onSaved={() => refreshed('計薪覆核已儲存，薪資已重新檢查；其餘待覆核項目仍需處理。')} onBusyChange={mutationBusy} />}
         {employee && <div className="space-y-3"><h3 className="font-semibold">已核准假單／外勤的逐日時段</h3>{inputs.leaves.filter(l => l.empId === employee.id).map(l => <LeaveAllocationEditor key={`${month}:${l.id}`} leave={l} locked={readOnly || mutating} onSaved={() => refreshed('請假時段已儲存，薪資已重新檢查。')} onBusyChange={mutationBusy} />)}{!inputs.leaves.some(l => l.empId === employee.id) && <p className="text-sm text-gray-600">本月沒有需要分配的已核准假單。</p>}</div>}
     </section>;
 };

@@ -25,10 +25,10 @@ async function setup(page:Page,admin=false,handler?:(body:any)=>any){
 // Case suffix shown in UI is the final eight characters, not an invented URL.
 const detail=async(page:Page)=>{await page.getByRole('button',{name:/查看案件/}).first().click();await expect(page.getByRole('heading',{name:'處理歷程'})).toBeVisible();};
 
-async function workflow(page:Page,status='submitted',abortFirst=false){
+async function workflow(page:Page,status='submitted',abortFirst=false,metadata:any={}){
  const calls:any[]=[];let rows:any[]=[{id:'ex1',revision:1,status,text:'合成原始說明內容',history:[]}];
  await page.route('**/.netlify/functions/api',async route=>{const b=route.request().postDataJSON();
- if(b.action==='get-case-explanation-workflow')return route.fulfill({json:{caseId:base.id,empId:employeeUser.id,caseRevision:1,evidenceVersion:'e1',window:base.window,explanations:rows,leaves:[],policyStatus:'needs-review',settlementEligibility:'BLOCKED'}});
+ if(b.action==='get-case-explanation-workflow')return route.fulfill({json:{caseId:base.id,empId:employeeUser.id,caseRevision:1,evidenceVersion:'e1',window:base.window,explanations:rows,leaves:[],policyStatus:'needs-review',settlementEligibility:'BLOCKED',...metadata}});
  if(['submit-anomaly-explanation','act-anomaly-explanation'].includes(b.action)){calls.push(b);if(abortFirst&&calls.length===1)return route.abort();rows=b.mode==='resubmit'?[{...rows[0],status:'superseded'},{...rows[0],id:'ex2',status:'submitted',text:b.text}]:[{...rows[0],status:b.mode==='accept'?'accepted':b.mode==='request-info'?'needs-info':'submitted',text:b.text||rows[0].text}];return route.fulfill({json:{id:'ex2'}});}return route.fallback();});return calls;
 }
 test('B4c owner supplements with a new version and cannot adopt their own explanation',async({page})=>{
@@ -56,4 +56,23 @@ test('B4c existing approval queue uses versioned review with reason and no legac
  await setup(page,true);await workflow(page);const writes:any[]=[];let approved=false;
  await page.route('**/.netlify/functions/api',async route=>{const b=route.request().postDataJSON();if(b.action==='get-all-leave-requests')return route.fulfill({json:approved?[]:[{id:'LCASE',schemaVersion:'case-leave-v1',empId:employeeUser.id,name:'合成員工',caseId:base.id,revision:1,leaveType:'事假',startDate:'2026-08-01T09:00:00+08:00',endDate:'2026-08-01T10:00:00+08:00',hours:1,reason:'合成追補來源',requestDate:'2026-08-02',status:'待審核',history:[],reviewIssues:['pay-policy-unverified']} ]});if(b.action==='review-case-leave'){writes.push(b);approved=true;return route.fulfill({json:{id:'LCASE'}});}if(b.action==='approve-leave-request'){writes.push(b);return route.fulfill({status:409,json:{error:'legacy forbidden'}});}return route.fallback();});
  await detail(page);await page.getByRole('button',{name:'前往請假／外勤審核'}).click();const button=page.getByRole('button',{name:'核准追補假（仍須計薪覆核）'});await expect(button).toBeDisabled();await page.getByLabel('追補假審核原因').fill('合成主管核實假單事實');await button.click();await expect.poll(()=>writes.length).toBe(1);expect(writes[0]).toMatchObject({action:'review-case-leave',expectedRevision:1,mode:'approve',leaveRequestId:'LCASE'});
+});
+
+test('owner explicitly replaces verified stale acceptance without reopening a closed case',async({page})=>{
+ await setup(page);const calls=await workflow(page,'accepted',false,{caseStatus:'resolved',sourceFreshness:'verified',explanationInventoryStatus:'complete',resubmittableAcceptedIds:['ex1'],reviewableReplacementIds:[]});await detail(page);
+ await expect(page.getByRole('button',{name:'送出獨立異常說明',exact:true})).toHaveCount(0);await expect(page.getByRole('button',{name:'撤回未採納說明'})).toHaveCount(0);await expect(page.getByRole('button',{name:'依採納說明補送假單'})).toHaveCount(0);
+ await page.getByRole('button',{name:'依新來源重送已失效說明'}).click();await expect(page.getByLabel('異常說明內容')).toHaveValue('');await page.getByLabel('異常說明內容').fill('合成重新核對來源的新說明');await page.getByRole('button',{name:'重送獨立說明新版本'}).click();await expect.poll(()=>calls.length).toBe(1);expect(calls[0]).toMatchObject({action:'act-anomaly-explanation',mode:'resubmit',explanationId:'ex1',expectedRevision:1,expectedCaseRevision:1,expectedEvidenceVersion:'e1',text:'合成重新核對來源的新說明'});expect(calls[0].status).toBeUndefined();await expect(page.getByText('ex1 · v1 · superseded')).toBeVisible();await expect(page.getByText('案件仍維持結案狀態；替換說明不會重開案件。')).toBeVisible();
+});
+for(const freshness of ['verified','unknown'])test(freshness+' accepted evidence without replacement permission cannot be resubmitted',async({page})=>{
+ await setup(page);await workflow(page,'accepted',false,{caseStatus:'resolved',sourceFreshness:freshness,explanationInventoryStatus:freshness==='verified'?'complete':'unknown',resubmittableAcceptedIds:[],reviewableReplacementIds:[]});await detail(page);await expect(page.getByRole('button',{name:'依新來源重送已失效說明'})).toHaveCount(0);await expect(page.getByRole('button',{name:'重送獨立說明新版本'})).toHaveCount(0);await expect(page.getByRole('button',{name:'送出獨立異常說明',exact:true})).toHaveCount(0);
+});
+test('manager may review only explicitly authorized replacement on a closed case',async({page})=>{
+ await setup(page,true);const calls=await workflow(page,'submitted',false,{caseStatus:'resolved',sourceFreshness:'verified',explanationInventoryStatus:'complete',resubmittableAcceptedIds:[],reviewableReplacementIds:['ex1']});await detail(page);await page.getByLabel('異常說明與假單操作理由').fill('合成獨立核對替換說明');await page.getByRole('button',{name:'採納說明（不核准假單）'}).click();await expect.poll(()=>calls.length).toBe(1);expect(calls[0]).toMatchObject({mode:'accept',expectedEvidenceVersion:'e1'});
+});
+test('closed case submitted narrative without authoritative replacement permission cannot be reviewed',async({page})=>{
+ await setup(page,true);await workflow(page,'submitted',false,{caseStatus:'resolved',sourceFreshness:'verified',explanationInventoryStatus:'complete',resubmittableAcceptedIds:[],reviewableReplacementIds:[]});await detail(page);await expect(page.getByRole('button',{name:'採納說明（不核准假單）'})).toHaveCount(0);await expect(page.getByRole('button',{name:'要求說明補件'})).toHaveCount(0);
+});
+
+test('owner may resubmit a terminal replacement descendant only with explicit server permission',async({page})=>{
+ await setup(page);const calls=await workflow(page,'needs-info',false,{caseStatus:'resolved',sourceFreshness:'verified',explanationInventoryStatus:'complete',resubmittableAcceptedIds:[],resubmittableReplacementIds:['ex1'],reviewableReplacementIds:[]});await detail(page);await page.getByRole('button',{name:'補件重送說明'}).click();await page.getByLabel('異常說明內容').fill('合成核實後補齊來源說明');await page.getByRole('button',{name:'重送獨立說明新版本'}).click();await expect.poll(()=>calls.length).toBe(1);expect(calls[0]).toMatchObject({mode:'resubmit',explanationId:'ex1',expectedEvidenceVersion:'e1'});
 });

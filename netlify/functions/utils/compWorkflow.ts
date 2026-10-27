@@ -1,3 +1,5 @@
+import {withEmploymentAuthority} from './employmentAuthority';
+import {employmentStateOn} from '../../../utils/employmentAuthority';
 import {compEmploymentEvidence} from './compEmployment';
 import {selectedCreditSegments} from './compCreditSource';
 import {UserRole} from '../../../types';
@@ -7,6 +9,8 @@ import {runPayrollMutation,assertTransactionMonths,monthsInRange} from './monthG
 import {overtimeActualSource} from './overtimeWorkflow';
 import {foldCompLedger,fifoComp,type CompEntry} from './compLedger';
 import {planCompCaseRefresh} from './attendanceCaseService';
+import {deriveCompEligibility} from './compEligibility';
+import {COMP_DEADLINE_RULE} from './overtimeCompPolicy';
 const fail=(code:number,message:string):never=>{throw Object.assign(new Error(message),{statusCode:code});};
 const id=(s:any)=>typeof s==='string'&&s.length>0&&s.length<=150&&!s.includes('/')&&!['.','..'].includes(s);
 const get=async(db:any,tx:any,c:string,key:string,optional=false)=>{if(!id(key))fail(400,'識別無效');const s=await tx.get(db.collection(c).doc(key));if(!s.exists){if(optional)return null;fail(404,'來源不存在');}return {...s.data(),id:s.id};};
@@ -17,14 +21,20 @@ const date=(m:number)=>taipeiDate(new Date(m*60000));
 const months=(r:any)=>{const w=range(r);return monthsInRange(date(w.start),date(w.end-1));};
 const overlap=(a:any,b:any)=>a.start<b.end&&b.start<a.end;
 const approved=(p:any)=>p?.status==='approved'&&p.version&&p.approvedBy&&Number.isFinite(Date.parse(p.approvedAt));
-const policyValid=(p:any,empId:string)=>approved(p)&&p.approvedBy!==empId&&p.empId===empId&&p.employeeAgreedBy===empId&&Number.isFinite(Date.parse(p.employeeAgreedAt))&&Array.isArray(p.reviewerIds)&&p.reviewerIds.length&&p.reviewerIds.every(id)&&validDate(p.effectiveFrom)&&validDate(p.effectiveTo)&&validDate(p.deadline)&&validDate(p.annualEnd)&&p.deadline<=p.annualEnd&&p.reservePending===true&&p.minuteBasis==='explicit-request-interval'&&p.conversion==='one-to-one';
+const policyValid=(p:any,empId:string)=>approved(p)&&p.approvedBy!==empId&&p.empId===empId&&p.employeeAgreedBy===empId&&Number.isFinite(Date.parse(p.employeeAgreedAt))&&Array.isArray(p.reviewerIds)&&p.reviewerIds.length&&p.reviewerIds.every(id)&&validDate(p.effectiveFrom)&&validDate(p.effectiveTo)&&(p.deadlineRule===COMP_DEADLINE_RULE&&p.annualLeaveYear==='calendar'||validDate(p.deadline)&&validDate(p.annualEnd)&&p.deadline<=p.annualEnd)&&p.reservePending===true&&p.minuteBasis==='explicit-request-interval'&&p.conversion==='one-to-one';
+// Enforcement Rules Art.22-2: comp time may not outlast the agreed annual-leave
+// year (calendar year here), so the statutory rule ends each lot on 12/31 of the
+// year its overtime was worked. Older fixed-date policies keep their own date.
+const deadlineFor=(p:any,workDate:string)=>p.deadlineRule===COMP_DEADLINE_RULE?workDate.slice(0,4)+'-12-31':p.deadline;
 const scope=(a:any,empId:string,p:any,review=false)=>{if(!review&&a.id===empId)return;if(a.id===empId||![UserRole.Admin,UserRole.SuperAdmin].includes(a.role)||!policyValid(p,empId)||!p.reviewerIds.includes(a.id))fail(403,'未指定補休覆核權限／不可自核');};
 const period=(p:any,r:any)=>{const w=range(r);if(date(w.start)<p.effectiveFrom||date(w.end-1)>p.effectiveTo)fail(409,'補休政策有效期間不符');};
 async function source(db:any,tx:any,empId:string,otId:string){
  const ot=await get(db,tx,'overtimeRequests',otId);if(ot.empId!==empId||!['approved','partial-approved'].includes(ot.status)||!Number.isSafeInteger(ot.approvedMinutes)||ot.approvedMinutes<=0)fail(409,'加班來源尚未核實');
  const actual=await overtimeActualSource(db,tx,empId,range(ot));if(actual.unknown||actual.version!==ot.actualSource?.version||actual.version!==ot.approvalSourceVersion)fail(409,'原加班工作來源已變更／未核實');
  let root=ot,seen=new Set<string>();while(root.supersedesId){if(seen.has(root.id)||seen.size>=20)fail(409,'加班來源鏈無效／容量超限');seen.add(root.id);root=await get(db,tx,'overtimeRequests',root.supersedesId);if(root.empId!==empId)fail(409,'加班來源鏈員工不符');}
- const eligibility=await get(db,tx,'compSourceReviews',otId,true),version=evidenceHash(ot);
+ // An explicit reviewed source document keeps governing lots credited from it;
+ // otherwise eligibility is derived from the payroll sources.
+ const version=evidenceHash(ot),eligibility=await get(db,tx,'compSourceReviews',otId,true)??await deriveCompEligibility(db,tx,empId,ot,version);
  const valid=approved(eligibility)&&eligibility.empId===empId&&eligibility.overtimeVersion===version&&(['normal','rest'].includes(eligibility.dayType)||eligibility.dayEvidence)&&Number.isSafeInteger(eligibility.eligibleMinutes)&&eligibility.eligibleMinutes>0&&eligibility.eligibleMinutes<=ot.approvedMinutes&&intervalMinutes(ot.approvedIntervals||[])>=eligibility.eligibleMinutes;
  return {ot,actual,root:root.id,version,eligibility,eligible:!!valid};
 }
@@ -39,8 +49,8 @@ export async function handleCompAction(db:any,uid:string,action:string,data:any)
  if(action==='get-comp-workflow'){
   const a=await get(db,readTx,'employees',uid),empId=data.empId||uid,p=await get(db,readTx,'compPolicies',empId,true);scope(a,empId,p);
   const requests=await rows(db,readTx,'compRequests',empId),ledger=await rows(db,readTx,'compLedger',empId),tasks=await rows(db,readTx,'compSettlementTasks',empId);let balance:any;const issues:string[]=[];
-  try{const f=foldCompLedger(ledger);await checkLots(db,readTx,empId,f.lots,true,false);const employee=await get(db,readTx,'employees',empId);const unavailable=!policyValid(p,empId)||!!employee.resignDate&&employee.resignDate<=date(Date.now()/60000);balance={available:unavailable?null:f.lots.filter(l=>l.deadline>=date(Date.now()/60000)).reduce((n,l)=>n+l.available,0),reserved:f.reserved,used:f.used,pendingPolicy:requests.filter(r=>r.status==='pending-policy').reduce((n,r)=>n+r.minutes,0),pendingPayroll:f.lots.filter(l=>l.originalWageBasis?.status!=='confirmed').map(l=>l.id),lots:f.lots};}catch{issues.push('ledger-or-source-unverified');balance={available:null,reserved:null,used:null,pendingPolicy:null,lots:[]};}
-  return {empId,requests:requests.map(r=>({...r,sourceVersion:evidenceHash(r)})),ledger,tasks,balance,issues,policy:policyValid(p,empId)?{version:p.version,reviewerIds:p.reviewerIds,deadline:p.deadline}:null,settlementEligibility:'BLOCKED',deliveryEnabled:false};
+  try{const f=foldCompLedger(ledger);await checkLots(db,readTx,empId,f.lots,true,false);const employee=await withEmploymentAuthority(db,readTx,await get(db,readTx,'employees',empId));const state=employmentStateOn(employee,date(Date.now()/60000));if(state==='unknown')issues.push('employment-source-unverified');const unavailable=!policyValid(p,empId)||state!=='active';balance={available:unavailable?null:f.lots.filter(l=>l.deadline>=date(Date.now()/60000)).reduce((n,l)=>n+l.available,0),reserved:f.reserved,used:f.used,pendingPolicy:requests.filter(r=>r.status==='pending-policy').reduce((n,r)=>n+r.minutes,0),pendingPayroll:f.lots.filter(l=>l.originalWageBasis?.status!=='confirmed').map(l=>l.id),lots:f.lots};}catch{issues.push('ledger-or-source-unverified');balance={available:null,reserved:null,used:null,pendingPolicy:null,lots:[]};}
+  return {empId,requests:requests.map(r=>({...r,sourceVersion:evidenceHash(r)})),ledger,tasks,balance,issues,policy:policyValid(p,empId)?{version:p.version,reviewerIds:p.reviewerIds,deadline:p.deadline||null,deadlineRule:p.deadlineRule||null}:null,settlementEligibility:'BLOCKED',deliveryEnabled:false};
  }
  if(!id(data.operationId)||typeof data.reason!=='string'||data.reason.trim().length<5||data.reason.length>2000)fail(400,'需操作識別及完整原因');const at=new Date().toISOString(),hash=evidenceHash([action,data]);
  return runPayrollMutation(db,[],async tx=>{
@@ -48,11 +58,11 @@ export async function handleCompAction(db:any,uid:string,action:string,data:any)
   const old=action==='act-comp-request'?await get(db,tx,'compRequests',data.requestId):null,empId=old?.empId||(action==='scan-comp-settlement'||data.kind==='adjustment'?data.empId:uid),p=await get(db,tx,'compPolicies',empId,true);
   const review=action==='scan-comp-settlement'||data.kind==='adjustment'||!!old&&!['cancel','resubmit'].includes(data.mode);scope(a,empId,p,review);if(!review&&uid!==empId)fail(403,'只能本人選擇／撤回');
   const ref=db.collection('compCommands').doc(evidenceHash([uid,data.operationId])),prior=await tx.get(ref);if(prior.exists){if(prior.data().hash!==hash)fail(409,'操作識別內容不符');return prior.data().result;}
-  const requests=await rows(db,tx,'compRequests',empId),ledger=await rows(db,tx,'compLedger',empId),fold=foldCompLedger(ledger),employee=await get(db,tx,'employees',empId);
+  const requests=await rows(db,tx,'compRequests',empId),ledger=await rows(db,tx,'compLedger',empId),fold=foldCompLedger(ledger),employee=await withEmploymentAuthority(db,tx,await get(db,tx,'employees',empId));
   const entries:CompEntry[]=[];const append=(type:any,r:any,allocations:any[],extra:any={})=>entries.push({id:evidenceHash([uid,data.operationId,type,...allocations.map((a:any)=>a.lotId)]),empId,sequence:fold.sequence+entries.length+1,type,requestId:r.id,actor:uid,at,reason:data.reason.trim(),allocations,...extra});
   if(action==='scan-comp-settlement'){
-   const tasks=await rows(db,tx,'compSettlementTasks',empId),planned:any[]=[];await checkLots(db,tx,empId,fold.lots,true);
-   for(const l of fold.lots)if((l.deadline<date(Date.now()/60000)||employee.resignDate&&employee.resignDate<=date(Date.now()/60000))&&l.available+l.reserved>0){const task={id:evidenceHash(['comp-settlement',l.id]),empId,lotId:l.id,startDate:l.startDate,endDate:l.endDate,status:'pending-payroll',remainingMinutes:l.available+l.reserved,reservedMinutes:l.reserved,originalWageBasis:l.originalWageBasis,sourceVersion:evidenceHash(l),reason:employee.resignDate?'contract-ended':'expired',actor:uid,at};const oldTask=tasks.find(t=>t.id===task.id);if(!oldTask||oldTask.sourceVersion!==task.sourceVersion||oldTask.reason!==task.reason){const history=oldTask?[...(oldTask.history||[]),{revision:oldTask.revision,sourceVersion:oldTask.sourceVersion,remainingMinutes:oldTask.remainingMinutes,reservedMinutes:oldTask.reservedMinutes,reason:oldTask.reason,actor:oldTask.actor,at:oldTask.at}]:[];if(history.length>100)fail(409,'待結清任務歷程容量超限');planned.push({...task,revision:(oldTask?.revision||0)+1,history});}}
+   const state=employmentStateOn(employee,date(Date.now()/60000));if(state==='unknown')fail(409,'任職主檔未涵蓋結清檢查日期，需覆核');const terminated=state==='not-employed';const tasks=await rows(db,tx,'compSettlementTasks',empId),planned:any[]=[];await checkLots(db,tx,empId,fold.lots,true);
+   for(const l of fold.lots)if((l.deadline<date(Date.now()/60000)||terminated)&&l.available+l.reserved>0){const task={id:evidenceHash(['comp-settlement',l.id]),empId,lotId:l.id,startDate:l.startDate,endDate:l.endDate,status:'pending-payroll',remainingMinutes:l.available+l.reserved,reservedMinutes:l.reserved,originalWageBasis:l.originalWageBasis,sourceVersion:evidenceHash(l),reason:terminated?'contract-ended':'expired',actor:uid,at};const oldTask=tasks.find(t=>t.id===task.id);if(!oldTask||oldTask.sourceVersion!==task.sourceVersion||oldTask.reason!==task.reason){const history=oldTask?[...(oldTask.history||[]),{revision:oldTask.revision,sourceVersion:oldTask.sourceVersion,remainingMinutes:oldTask.remainingMinutes,reservedMinutes:oldTask.reservedMinutes,reason:oldTask.reason,actor:oldTask.actor,at:oldTask.at}]:[];if(history.length>100)fail(409,'待結清任務歷程容量超限');planned.push({...task,revision:(oldTask?.revision||0)+1,history});}}
    if(tasks.length+planned.filter(t=>!tasks.some(old=>old.id===t.id)).length>500)fail(409,'待結清任務容量超限');const refresh=planned.length?await planCompCaseRefresh(db,tx,empId,[...new Set(planned.flatMap(t=>months(t)))],planned[0],uid,at,planned.slice(1)):()=>{};for(const t of planned){const ref=db.collection('compSettlementTasks').doc(t.id);if(tasks.some(old=>old.id===t.id))tx.update(ref,t);else tx.create(ref,t);}refresh();const result={created:planned.map(t=>t.id),settlementEligibility:'BLOCKED'};tx.create(ref,{hash,result,actor:uid,at});return result;
   }
   if(old){if(old.revision!==data.expectedRevision||evidenceHash(old)!==data.sourceVersion)fail(409,'補休申請版本已變更');await assertTransactionMonths(db,tx,months(old));}
@@ -64,10 +74,10 @@ export async function handleCompAction(db:any,uid:string,action:string,data:any)
    if(kind==='credit'){
     if(data.employeeChoice!==true)fail(400,'必須本人明確選擇補休');const s=await source(db,tx,empId,data.overtimeId||old?.overtimeId);if(!Number.isSafeInteger(data.minutes)||data.minutes<=0||data.minutes>s.ot.approvedMinutes)fail(400,'補休取得分鐘超出已核工作');
     if(fold.lots.some(l=>l.sourceRoot===s.root||(l.approvedIntervals||[]).some((a:any)=>(s.ot.approvedIntervals||[]).some((b:any)=>overlap(a,b))))||requests.some(q=>q.id!==old?.id&&q.kind==='credit'&&(q.sourceRoot===s.root||(q.approvedIntervals||[]).some((a:any)=>(s.ot.approvedIntervals||[]).some((b:any)=>overlap(a,b))))&&!['cancelled','rejected','superseded'].includes(q.status)))fail(409,'原加班來源已選擇或入帳，不可重複取得');
-    const segments=selectedCreditSegments(s,data.minutes);Object.assign(r,snapshotSource(s),{overtimeId:s.ot.id,minutes:data.minutes,employeeChoice:{actor:uid,at},creditSegments:segments,approvedIntervals:segments.flatMap(x=>x.approvedIntervals),startDate:segments[0].startDate,endDate:segments[segments.length-1].endDate});await assertTransactionMonths(db,tx,months(s.ot));if(!policyValid(p,empId)||!s.eligible||segments.some(x=>!x.eligible))r.status='pending-policy';else{period(p,r);if(data.minutes>s.eligibility.eligibleMinutes||p.deadline<date(range(r).end-1))fail(409,'補休取得超出已核適用時數／期限');r.deadline=p.deadline;}
+    const segments=selectedCreditSegments(s,data.minutes);Object.assign(r,snapshotSource(s),{overtimeId:s.ot.id,minutes:data.minutes,employeeChoice:{actor:uid,at},creditSegments:segments,approvedIntervals:segments.flatMap(x=>x.approvedIntervals),startDate:segments[0].startDate,endDate:segments[segments.length-1].endDate});await assertTransactionMonths(db,tx,months(s.ot));if(!policyValid(p,empId)||!s.eligible||segments.some(x=>!x.eligible))r.status='pending-policy';else{period(p,r);const deadline=deadlineFor(p,date(range(r).end-1));if(data.minutes>s.eligibility.eligibleMinutes||deadline<date(range(r).end-1)||deadline<date(Date.now()/60000))fail(409,'補休取得超出已核適用時數／已逾補休期限');r.deadline=deadline;}
    }else if(kind==='use'){
     const w=range(data);const employmentEvidence=await compEmploymentEvidence(db,tx,empId,w);Object.assign(r,{employmentEvidence,startDate:data.startDate,endDate:data.endDate,minutes:w.end-w.start,allocations:[]});
-    if(date(w.start)<date(Date.now()/60000)||employee.resignDate&&date(w.end-1)>employee.resignDate)fail(409,'過去／離職後使用需獨立更正流程');
+    if(date(w.start)<date(Date.now()/60000))fail(409,'過去／離職後使用需獨立更正流程');
     for(const q of requests)if(q.id!==old?.id&&q.kind==='use'&&!['cancelled','rejected','superseded'].includes(q.status)&&overlap(range(q),w))fail(409,'已有重疊補休使用申請');
     const leaves=await rows(db,tx,'leaveRequests',empId);for(const q of leaves)if(!['駁回','已取消','已取代'].includes(q.status)&&overlap(range(q),w))fail(409,'補休與既有假單重疊／待核');
     const actual=await overtimeActualSource(db,tx,empId,w);if(actual.intervals.length)fail(409,'補休與已確認工作重疊，需調查');
@@ -84,7 +94,7 @@ export async function handleCompAction(db:any,uid:string,action:string,data:any)
    }else if(data.mode==='agree'){
     if(!policyValid(p,empId)||old.status==='pending-policy'||old.policyVersion!==p.version||old.policyEvidence!==evidenceHash(p))fail(409,'需本人以已核政策重送新版本');period(p,r);
     if(r.kind==='credit'){
-     const s=await source(db,tx,empId,r.overtimeId);if(!s.eligible||s.version!==r.overtimeVersion||evidenceHash(s.eligibility)!==r.eligibilityVersion||r.minutes>s.eligibility.eligibleMinutes||fold.lots.some(l=>l.sourceRoot===s.root)||r.deadline!==p.deadline||r.deadline<date(Date.now()/60000))fail(409,'原來源／期限變更或已取得，須重新選擇');
+     const s=await source(db,tx,empId,r.overtimeId);if(!s.eligible||s.version!==r.overtimeVersion||evidenceHash(s.eligibility)!==r.eligibilityVersion||r.minutes>s.eligibility.eligibleMinutes||fold.lots.some(l=>l.sourceRoot===s.root)||r.deadline!==deadlineFor(p,date(range(r).end-1))||r.deadline<date(Date.now()/60000))fail(409,'原來源／期限變更或已取得，須重新選擇');
      const segments=selectedCreditSegments(s,r.minutes);if(evidenceHash(segments)!==evidenceHash(r.creditSegments)||segments.some(x=>!x.eligible))fail(409,'核准取得區間或逐日來源待重新覆核');await assertTransactionMonths(db,tx,months(s.ot));for(const segment of segments){const lot={...snapshotSource(s),...segment,deadline:r.deadline,policyVersion:p.version,policyEvidence:evidenceHash(p),employeeChoice:r.employeeChoice,employerConsent:{actor:uid,at}};append('credit',r,[{lotId:segments.length===1?r.id:r.id+'_'+segment.sourceClaimId.slice(0,16),minutes:segment.minutes}],{lot});}
     }else if(r.kind==='use'){
      const employment=await compEmploymentEvidence(db,tx,empId,range(r));if(!r.employmentEvidence||evidenceHash(employment)!==evidenceHash(r.employmentEvidence))fail(409,'使用時段任職來源變更，保留預占待覆核');const alloc=fold.reservations.get(r.id);if(!alloc)fail(409,'使用無有效預占');await checkLots(db,tx,empId,fold.lots.filter(l=>alloc.some(x=>x.lotId===l.id)));const actual=await overtimeActualSource(db,tx,empId,range(r));if(actual.intervals.length)fail(409,'使用期間新增已核工作，需調查');const leaves=await rows(db,tx,'leaveRequests',empId);if(leaves.some(q=>!['駁回','已取消','已取代'].includes(q.status)&&overlap(range(q),range(r))))fail(409,'使用期間新增假單，需調查');append('debit',r,alloc);
@@ -100,3 +110,36 @@ export async function handleCompAction(db:any,uid:string,action:string,data:any)
 }
 // Explicit testable handler; no scheduler, sender, monetary settlement, or production trigger.
 export const compEventHandler=handleCompAction;
+
+/** Read-only payroll source projection. A debit is not enough: current source and employment must still bind. */
+export async function compNormalPayEvidence(db:any,tx:any,empId:string,month:string){
+ const readTx=tx||{get:(r:any)=>r.get()},issues:string[]=[],intervals:any[]=[];
+ const first=Date.parse(month+'-01T00:00:00+08:00')/60000,last=first+new Date(Date.UTC(Number(month.slice(0,4)),Number(month.slice(5)),0)).getUTCDate()*1440;
+ const all=await rows(db,readTx,'compRequests',empId),uses=all.filter(r=>r.kind==='use');
+ // Overtime converted to comp time must not also be paid in cash. Credits whose
+ // source work touches any week of this month (month ±6 days) go to the OT engine.
+ const wFirst=first-6*1440,wLast=last+6*1440,credits:any[]=[];
+ for(const r of all.filter(r=>r.kind==='credit'&&!['rejected','cancelled','returned','superseded'].includes(r.status)))for(const g of Array.isArray(r.creditSegments)?r.creditSegments:[{start:NaN,end:NaN}]){if(!Number.isSafeInteger(g?.start)||!Number.isSafeInteger(g?.end)){issues.push('補休取得來源區間無效 '+r.id);continue;}if(g.start<wLast&&g.end>wFirst)credits.push({id:r.id,start:g.start,end:g.end,status:r.status});}if(uses.some(r=>!Number.isFinite(Date.parse(r.startDate))||!Number.isFinite(Date.parse(r.endDate))))issues.push('補休使用日期無法判斷月份');const requests=uses.filter(r=>Date.parse(r.startDate)/60000<last&&Date.parse(r.endDate)/60000>first);
+ // Untaken comp time is a payroll source too: payroll settles it on expiry or
+ // exit from the ledger itself, so a missed settlement scan cannot drop it.
+ const ledger=await rows(db,readTx,'compLedger',empId);let outstanding:any[]=[];
+ try{
+  const lots=foldCompLedger(ledger).lots.filter(l=>l.available+l.reserved>0);
+  // Expiry/exit valuation needs the same current source binding as comp use,
+  // even when this month contains no use requests. Reading a locked original
+  // month remains allowed; stale sources must not become settlement amounts.
+  try{await checkLots(db,readTx,empId,lots,true,false);
+   outstanding=lots.map(l=>({id:l.id,start:l.start,end:l.end,deadline:l.deadline,untakenMinutes:l.available+l.reserved,originalWageBasis:l.originalWageBasis||null}));
+  }catch{issues.push('補休未休批次原來源待覆核');}
+ }catch{issues.push('補休帳本無法核對，未休時數待核');}
+ if(!requests.length)return {issues,intervals,credits,outstanding};
+ try{const fold=foldCompLedger(ledger);for(const r of requests){
+  if(['rejected','cancelled','returned','superseded'].includes(r.status)){if(fold.reservations.has(r.id)||ledger.some(e=>e.type==='debit'&&e.requestId===r.id))fail(409,'補休終態與預占釋放／使用帳本不一致');continue;}
+  if(r.status!=='approved'||!r.approvedBy||!r.approvedAt){issues.push('補休使用申請尚未核定');continue;}
+  const w=range(r),debits=ledger.filter(e=>e.type==='debit'&&e.requestId===r.id);
+  if(debits.length!==1||evidenceHash(debits[0].allocations)!==evidenceHash(r.allocations)||debits[0].allocations.reduce((n:any,a:any)=>n+a.minutes,0)!==w.end-w.start||evidenceHash(await compEmploymentEvidence(db,readTx,empId,w))!==evidenceHash(r.employmentEvidence))fail(409,'補休使用投影來源失效');
+  await checkLots(db,readTx,empId,fold.lots.filter(l=>debits[0].allocations.some((a:any)=>a.lotId===l.id)),true,false);
+  intervals.push({start:w.start,end:w.end,kind:'comp',sourceId:r.id,sourceVersion:evidenceHash([r,debits[0]]),approvalId:r.approvedBy+'@'+r.approvedAt});
+ }}catch{issues.push('補休帳本／核准使用來源待覆核');}
+ return {issues,intervals,credits,outstanding};
+}

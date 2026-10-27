@@ -71,10 +71,3 @@ B4a容量修復獨立在474013f；本工作樹接入等價6815462，本批diff�
 | `git diff --cached --check` | 通過 |
 
 47項E2E在最終UI上跑過，後續僅後端政策／cache response／員工ID與冪等key補強；最後再次完整跑556 unit/API、43 metadata emulator、typecheck/build通過。沒有重複累加前輪數字。沒有正式資料／真檔案／真正病毒掃描／正式Storage或下載憑證驗收，仍NO GO。
-
-
-## 獨立複驗與 PR 發布範圍
-
-隔離副本對來源 `0d6d7d0` 獨立驗證：564 unit/API（556來源＋8獨立邊界）、43 真實 Firestore metadata/rules、47 Chromium E2E、typecheck、production build 全通過。不同作者與 reviewer runs 重疊，不加總。8個新案例僅留在獨立 review 證據，未混入本批19檔發布增量。正式 runtime 真實 handler 核對新舊提交均503、零寫入；跨員工／錯日期綁定、改重播內容、無效base64／超限及撤除後使用既有grant均拒絕。
-
-只有必要 schema/API/UI 契約發布到既有 Draft PR 審查，未部署，原正式站未改。正式附件 runtime 的 policy/storage/scanner 均未配置；不能稱附件已可正式上傳。儲存／掃描為 fake adapter，瀏覽器為 synthetic API；公司政策、保存期限、真掃描、IAM與正式資料驗收仍待核。正式薪資維持 BLOCKED／NO GO。未包含 B4c。

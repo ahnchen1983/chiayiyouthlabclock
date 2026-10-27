@@ -71,7 +71,3 @@ coverage是未來可信server adapter對完整讀取的斷言，**不是client�
 固定回歸：班09–17／target480，實08–16為480（clear），實08–17為540（finding）；另有班前07–08獨立核准工作不得消失；歸屬政策缺失unknown。3/31 22–4/1 06由兩張核准假完整覆蓋，四月及擴大窗口的未出勤／遲到／早退皆clear。對照測試為獨立review原3案例加2項邊界。
 
 此patch只改detector、tests/attendanceBoundaryFix.test.ts與本文件；不混入未提交的B2 service，不改任何正式資料或薪資。定向回歸 `npm test -- --configLoader runner tests/attendanceCases.test.ts tests/attendanceBoundaryFix.test.ts`：2 files、69 passed、0 failed（原64＋新增5，包含review的3個失敗案例）。此獨立patch尚未宣稱全套／build或正式驗收。
-
-## 獨立複驗與發布範圍
-
-B1兩項finding已以原始3個失敗案例重跑確認修正，與作者69項定向測試合計72項通過（重疊的不同runs不加總）。僅本批6個新增檔案；不含B2後端、API或持久化。正式發薪仍NO GO。遠端CI結果另記PR；本輪獨立複驗未跑emulator/E2E。

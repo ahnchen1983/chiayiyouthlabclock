@@ -1,3 +1,5 @@
+import {employmentWindowStates} from '../../../utils/employmentAuthority';
+import {attendanceDayHasClassification} from './attendanceOvertimeClassification';
 import { isOutingLeaveType, LeaveStatus } from '../../../types';
 import { clockInterval, confirmedWork, hhmmMinutes, intervalMinutes, shiftIntervals, taipeiDate, validDate } from '../../../utils/attendance';
 import { validLeaveAllocations } from './payroll';
@@ -21,7 +23,7 @@ export const detectAttendanceCases = (input: DetectorInput): DetectionResult => 
     const empId = input.employee.id, observations: CaseObservation[] = [];
     if (input.records.some(r=>!r.id) || [...input.leaves,...input.makeups,...input.absences,...input.swaps].some(r=>!r.id)) throw new Error('Source identity missing; scan cannot establish completeness');
     const policy = input.policy?.version && input.policy.reviewedBy && Number.isFinite(Date.parse(input.policy.reviewedAt || '')) ? input.policy : null;
-    const complete = (...names: (keyof DetectorInput['coverage'])[]) => names.every(n => input.coverage[n] === 'complete' && (n !== 'employment' || (validDate(input.employee.hireDate) && (!input.employee.resignDate || (validDate(input.employee.resignDate) && input.employee.resignDate >= input.employee.hireDate)))));
+    const complete = (...names: (keyof DetectorInput['coverage'])[]) => names.every(n => input.coverage[n] === 'complete' && (n !== 'employment' || employmentWindowStates(input.employee,input.window.start,input.window.end).every(s=>s!=='unknown')));
     const emit = (type: CaseType, anchor: string, window: Window, outcome: Outcome, reason: string, refs: SourceRef[]) => {
         const sorted = sortRefs(refs);
         const o: CaseObservation = { schemaVersion: 'attendance-case-v1', detectorVersion: 'detector-v1', id: caseKey(empId, type, anchor), empId, type, anchor,
@@ -29,8 +31,7 @@ export const detectAttendanceCases = (input: DetectorInput): DetectionResult => 
         o.evidenceVersion = evidenceHash([o.detectorVersion, type, anchor, window, outcome, reason, sorted, policy, input.coverage]);
         observations.push(o);
     };
-    const employmentKnown = complete('employment') && validDate(input.employee.hireDate) && (!input.employee.resignDate || validDate(input.employee.resignDate));
-    const employment = { start: midnight(input.employee.hireDate), end: input.employee.resignDate ? midnight(input.employee.resignDate) + 1440 : Infinity };
+    const employmentKnown = complete('employment');
     // Expand to complete selected shifts before filtering source evidence. A
     // narrow month window must not erase the preceding part of an overnight.
     const selectedShifts = input.schedules.filter(d=>d.shifts.some(s=>s.empId===empId)).map(d=>({date:d.date,ranges:(shiftIntervals(d.shifts.filter(s=>s.empId===empId))||[]).map(r=>({start:midnight(d.date)+r.start,end:midnight(d.date)+r.end}))})).filter(d=>d.ranges.some(r=>overlap(r,input.window)));
@@ -70,8 +71,8 @@ export const detectAttendanceCases = (input: DetectorInput): DetectionResult => 
         const dayExplanation = explanations.filter(e=>overlap(e,dayWindow));
         const refs=[...entries.map(d=>({collection:'dailySchedule',id:d.date,version:scheduleDayVersion(d,empId)})),...cards.filter(c=>dayCards.includes(c)||attributedCards.includes(c)).map(c=>c.ref),...dayExplanation.map(e=>e.ref),ref('employment',empId,input.employee)];
         const scheduleOK = complete('schedules') && entries.length===1 && entries[0].status==='營運' && !!spans && validDate(date);
-        const inEmployment = employmentKnown && ranges.every(r=>r.start>=employment.start && r.end<=employment.end);
-        if (employmentKnown && ranges.length && ranges.every(r=>!overlap(r,employment))) {
+        const inEmployment = employmentKnown && ranges.every(r=>employmentWindowStates(input.employee,r.start,r.end).every(s=>s==='active'));
+        if (employmentKnown && ranges.length && ranges.every(r=>employmentWindowStates(input.employee,r.start,r.end).every(s=>s==='not-employed'))) {
             for (const type of ['unexplained-absence','late','early','hours-difference'] as const) emit(type,'schedule-day:'+date,dayWindow,'clear','班段不在已知雇用有效期間，不推定出勤義務',refs);
             continue;
         }
@@ -134,7 +135,13 @@ export const detectAttendanceCases = (input: DetectorInput): DetectionResult => 
       for(const r of input.records.filter(r=>r.empId===empId&&validDate(r.date))){const work=confirmedWork(r),base=midnight(r.date),span=clockInterval(r);const boundaries=work?.length?work:span?[span]:[{start:0,end:1440}];
         for(const part of boundaries){let pos=base+part.start;while(pos<base+part.end){const date=taipeiDate(new Date(pos*60000)),end=Math.min(midnight(date)+1440,base+part.end),day=days.get(date)||{ranges:[],refs:[],unknown:false};day.unknown ||= work===null;day.refs.push(ref('clockRecords',r.id,r));if(work?.length)day.ranges.push({start:pos,end});days.set(date,day);pos=end;}}
       }
-      for(const [date,day] of days){const w={start:midnight(date),end:midnight(date)+1440};if(overlap(w,input.window))emit('hours-difference','overtime-candidate:'+date,w,day.unknown||intervalMinutes(day.ranges)>480?'unknown':'clear','已核區間超過8小時或來源不完整須調查；日別、法遵上限與依法應付待獨立核定，不以無申請歸零',day.refs);}
+      for(const [date,day] of days){
+       const w={start:midnight(date),end:midnight(date)+1440};if(!overlap(w,input.window))continue;
+       const classified=!day.unknown&&intervalMinutes(day.ranges)>480&&attendanceDayHasClassification(input.overtimeClassification,empId,taipeiDate(new Date(input.window.start*60000)).slice(0,7),date,input.records,day.ranges);
+       emit('hours-difference','overtime-candidate:'+date,w,day.unknown||intervalMinutes(day.ranges)>480&&!classified?'unknown':'clear',
+        classified?'已核實既有模型工作／加班逐段分類；不代表法定加班授權、完整法遵核定或付款':'已核區間超過8小時或來源不完整須調查；日別、法遵上限與依法應付待獨立核定，不以無申請歸零',
+        classified?[...day.refs,{collection:'attendanceOvertimeClassification',id:empId+':'+input.overtimeClassification!.month,version:input.overtimeClassification!.evidenceVersion}]:day.refs);
+      }
     }
     const groups=[['compRequests',input.comps||[]],['overtimeRequests',input.overtimes||[]],['makeupRequests',input.makeups],['leaveRequests',input.leaves],['leaveOfAbsenceRequests',input.absences],['shiftSwapRequests',input.swaps]] as const;
     for(const [collection,requests] of groups)for(const r of requests){
@@ -154,7 +161,7 @@ export const detectAttendanceCases = (input: DetectorInput): DetectionResult => 
         let applied: boolean|null=null;
         if(approved&&collection==='makeupRequests'&&complete('records','revisions')) applied=hasAppliedMakeup(q,input.records,input.revisions);
         if(approved&&collection==='leaveRequests')applied=!!q.approver&&Number.isFinite(Date.parse(q.approvalDate || ''))&&validLeaveAllocations(q);
-        if(approved&&collection==='leaveOfAbsenceRequests'&&complete('employment'))applied=validDate(q.startDate)&&(!q.endDate||(validDate(q.endDate)&&q.endDate>=q.startDate))&&!!q.approver&&Number.isFinite(Date.parse(q.approvalDate || ''))&&q.startDate===input.employee.leaveOfAbsenceStart&&(q.endDate||'')===(input.employee.leaveOfAbsenceEnd||'');
+        if(approved&&collection==='leaveOfAbsenceRequests'&&complete('employment')&&!input.employee.employmentAuthority)applied=validDate(q.startDate)&&(!q.endDate||(validDate(q.endDate)&&q.endDate>=q.startDate))&&!!q.approver&&Number.isFinite(Date.parse(q.approvalDate || ''))&&q.startDate===input.employee.leaveOfAbsenceStart&&(q.endDate||'')===(input.employee.leaveOfAbsenceEnd||'');
         // Legacy swaps have no stable before/after application linkage. A status
         // alone cannot attest their effect; B2 must supply a verified adapter.
         emit('approved-unapplied',anchor,input.window,!complete('requests')||(!pending&&!approved&&!rejected)?'unknown':!approved?'clear':applied===true?'clear':applied===false?'finding':'unknown','核准來源與有效投影證據檢查；缺鏈不宣稱已反映',refs);

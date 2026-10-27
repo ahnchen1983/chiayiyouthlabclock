@@ -346,6 +346,30 @@ chiayiyouthlabclock/
 - 月時數上限：80 小時
 - 預警門檻：剩餘 ≤ 10 小時時顯示「接近上限」
 
+#### 4.5.x 主檔員工的正式應發（C2b3，2026-10-25）
+
+有效期主檔員工：應發＝正常工資（C2a，`utils/payroll/normalPay.ts`）＋加班費（C2b，`utils/payroll/overtime.ts`），由 `netlify/functions/utils/normalPayPreview.ts` 合併為 `combined`，只在最後合計依政策進位。加班來源 adapter（`overtimePreview.ts`）：工日＝已核打卡日期；日別＝日別日曆；工資＝主檔；週界＝政策 `normalPay.overtimeRules`（`schemaVersion:'overtime-rules-v1'`、`weekStartDay` 0–6、`wageComponents:'single-contract-amount'`、`monthlyHourlyDivisor:240`）。`effectiveMaster` 輸出 `normalPayContextDays`（月前後各 6 日）供跨月週檢查。倍率依勞基法第24、39、40條與勞動部試算。
+
+#### 4.5.x 加班改補休（C2b4，2026-10-25）
+
+`overtimeCompPolicy.ts`：`get/propose/agree/review-overtime-comp-policy`。提案 `overtimeCompPolicyProposals/{empId}`（awaiting-employee → awaiting-approval → approved／returned）；核定寫 `overtimeWorkflowPolicies/{empId}`、`compPolicies/{empId}`（`deadlineRule:'annual-leave-year-end'`、`annualLeaveYear:'calendar'`）與 `overtimeCompPolicyVersions/{version}`。`compEligibility.ts` 以 C2b 引擎推導可轉分鐘與原日工資基礎；`compWorkflow.ts` 每批補休期限＝加班當年 12/31。計薪 adapter 將已核定補休區間拆成 `comp-converted` 分段不給付。
+
+#### 4.5.x 補休結清（C2b5，2026-10-25）
+
+`utils/payroll/compSettlement.ts` `settleCompLots()`：未休分鐘取每批最後的分鐘（施行細則第22條之2 先後順序），依原日 `originalWageBasis.tiers` 計價；到期併入期限所在月份、離職併入離職月。`normalPayPreview` 將結清加入 `combined`，`SalaryDetail.compSettlementPay` 為獨立明細。
+
+#### 4.5.x 計薪政策版本（2026-10-26）
+
+`payrollPolicyVersion.ts`：`list/propose/review-payroll-policy-version`。提案 `payrollPolicyProposals/{ppp_…}`（proposed → approved／returned），核定建立 `payrollPolicyVersions/{ppv_…}`（`status`、`version`、`approvedBy/At`、`proposedBy`、`employeeIds`、`from/to`、`normalPay`）。`normalPay` 由 `buildNormalPayPolicy()` 依已確認規則產生，只有「其他」假別給薪可選。
+
+#### 4.5.x 社會保險（C3a，2026-10-26）
+
+`utils/payroll/insurance.ts` `insuranceForMonth(month, periods)` 依法定費率計算員工負擔；`insuranceTimeline.ts` 提供 `get/propose/review-insurance-timeline`，資料存 `insuranceTimelineVersions`、`insuranceTimelineHeads/{empId}`、`insuranceTimelineCommands`。主檔員工於 `payrollReviewStorage` 載入 `insurancePeriods`，`payroll.ts` 以計算結果填 `laborInsurance`（含就保）、`healthInsurance`、`laborPensionSelf` 與 `insuranceDetail`。
+
+#### 4.5.x 所得稅扣繳與補充保費（C3b，2026-10-26）
+
+`utils/payroll/withholding.ts` `withholdingForMonth()`、`exemptOvertime()`；投保期間新增 `withholdingMethod`（`table`／`flat-5`／`part-time-5`／`non-resident`）。`payroll.ts` 以月底所屬投保期間計算，結果寫入 `incomeTax`、`supplementaryPremium`、`withholdingDetail`，並計入 `totalDeductions`。
+
 ### 4.6 員工管理模組
 
 | 項目 | 說明 |
@@ -513,6 +537,19 @@ chiayiyouthlabclock/
 
 文件 ID 為 empId。失敗達 5 次後 15 分鐘內拒絕登入；登入成功自動刪除此文件。
 
+#### `dayTypeDesignations` / `dayTypeCalendars` / `dayTypeCalendarHeads` — 個人例假／休息日（PR13，2026-10-25）
+
+公司確認例假與休息日由每人在「偏好設定」逐月指定。
+
+| Collection | 文件 ID | 內容 |
+|---|---|---|
+| `dayTypeDesignations` | `{empId}_{YYYY-MM}` | 員工送出（或管理者附原因代為補錄）的 `regularHolidays[]`、`restDays[]`、`warnings[]`、`status`（submitted／approved／returned）、`revision`、`history[]` |
+| `dayTypeCalendars` | `dtc_{hash}` | 核定後不可覆寫的日曆版本：`days{date: normal/rest/regular-holiday/national-holiday}`、`nationalHolidays[]`、`approvedBy/At`、`source`（指定版本與送出人）、`previousCalendarId` |
+| `dayTypeCalendarHeads` | `{empId}_{YYYY-MM}` | 該員該月目前生效的 `currentCalendarId` 與 `revision` |
+| `dayTypeDesignationCommands` | hash(uid, operationId) | 重播保護收據 |
+
+規則：同日不可兼為例假與休息日；國定假日與例假／休息日重疊時拒絕（需另行核定補假）；核定者不得是本人或送出者；核定須明確確認「其餘日期為一般工作日」，有法遵提醒（第36條每7日1例1休、連續工作超過6日）時須另確認已核對；鎖月拒絕（423）。薪資主檔期間的 `dayTypeCalendarId` 填 `personal-monthly` 時，`effectiveMaster` 逐月改讀 `dayTypeCalendarHeads/{empId}_{月}`，日曆 `yearMonth` 不符即視為未核定。未核定前日別為 `unknown`，不推定為一般日。
+
 #### `systemConfig` — 系統設定（v1.5 新增 / Phase 3.1）
 文件 ID `salary` 內含薪資相關費率與規則：
 | 欄位 | 型別 | 預設值 | 說明 |
@@ -669,6 +706,11 @@ chiayiyouthlabclock/
 | `claim-open-shift` | `shiftId` | `boolean` | 員工認領班次（Transaction） |
 | `release-open-shift` | `shiftId` | `boolean` | 員工釋出班次 |
 | `delete-open-shift` | `shiftId` | `boolean` | 刪除開放排班（限 Admin） |
+| **個人例假／休息日（PR13）** | | | |
+| `get-daytype-designation` | `yearMonth`, `empId?` | `{designation, calendar, headRevision, canReview}` | 本人或管理者讀取 |
+| `list-daytype-designations` | `yearMonth` | `{designations[]}` | 限 Admin／SuperAdmin |
+| `submit-daytype-designation` | `yearMonth`, `empId?`, `regularHolidays[]`, `restDays[]`, `expectedRevision`, `operationId`, `reason?` | 指定文件 | 本人送出；管理者代為補錄需原因 ≥5 字 |
+| `review-daytype-designation` | `yearMonth`, `empId`, `mode`(approve/return), `expectedRevision`, `operationId`, `reason`, `nationalHolidays?`, `confirmRemainingNormal`, `acknowledgeWarnings?` | 指定文件 | 另一位 Admin／SuperAdmin 核定，產生日曆版本 |
 
 ---
 

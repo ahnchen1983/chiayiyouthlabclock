@@ -42,6 +42,8 @@ export const mockApi = async (page: Page, options: ApiMockOptions = {}) => {
     const body = route.request().postDataJSON() as { action?: string; [key: string]: unknown };
 
     switch (body.action) {
+      case 'get-termination-settlement':
+        return route.fulfill({json:{empId:body.empId,month:body.month,records:[],source:null,canManage:false,locked:false,formalEligibility:'BLOCKED'}});
       case 'initialize-database':
         return route.fulfill({ json: true });
       case 'login':

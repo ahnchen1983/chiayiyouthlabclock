@@ -90,7 +90,7 @@ export const clockSourceKey = (r: Pick<ClockRecord, 'date' | 'clockInTime' | 'cl
 export const confirmedWork = (r: ClockRecord): Interval[] | null => {
     const span = clockInterval(r);
     if (!span || !r.workReview?.reviewedBy || !r.workReview.reviewedAt || r.workReview.sourceKey !== clockSourceKey(r) || !Array.isArray(r.workIntervals)) return null;
-    if (r.workIntervals.some(i => !Number.isInteger(i.start) || !Number.isInteger(i.end) || i.end <= i.start || i.start < span.start || i.end > span.end)) return null;
+    if (r.workIntervals.some(i => !i || typeof i !== 'object' || Array.isArray(i) || !Number.isInteger(i.start) || !Number.isInteger(i.end) || i.end <= i.start || i.start < span.start || i.end > span.end)) return null;
     return unionIntervals(r.workIntervals);
 };
 export const resolveClockRecord = (record: ClockRecord, _events: ScheduleEvent[] = []): ClockRecord => {

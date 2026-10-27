@@ -1,3 +1,5 @@
+import TerminationSettlementReview from '../TerminationSettlementReview';
+import NormalPayPreview from '../NormalPayPreview';
 import { taipeiDate } from '../../utils/attendance';
 import { formatMoney, formatHours } from '../../utils/format';
 import { PayrollReviewNotice } from '../PayrollReviewNotice';
@@ -42,7 +44,7 @@ const SalaryDetailModal: React.FC<{ salary: SalaryDetail; onClose: () => void }>
                         <div className="grid grid-cols-2 gap-3">
                             <div className="bg-blue-50 rounded-lg p-3">
                                 <p className="text-xs text-gray-500">出勤天數</p>
-                                <p className="text-lg font-bold text-blue-700">{salary.totalWorkDays} 天</p>
+                                <p className="text-lg font-bold text-blue-700">{salary.totalWorkDays ?? "待覆核"} 天</p>
                             </div>
                             <div className="bg-blue-50 rounded-lg p-3">
                                 <p className="text-xs text-gray-500">總工時</p>
@@ -50,14 +52,33 @@ const SalaryDetailModal: React.FC<{ salary: SalaryDetail; onClose: () => void }>
                             </div>
                             <div className="bg-orange-50 rounded-lg p-3">
                                 <p className="text-xs text-gray-500">請假時數</p>
-                                <p className="text-lg font-bold text-orange-600">{salary.totalLeaveHours} 小時</p>
+                                <p className="text-lg font-bold text-orange-600">{salary.totalLeaveHours ?? "待覆核"} 小時</p>
                             </div>
                             <div className="bg-purple-50 rounded-lg p-3">
                                 <p className="text-xs text-gray-500">加班時數</p>
                                 <p className="text-lg font-bold text-purple-600">{formatHours(salary.overtimeHours)} 小時</p>
                             </div>
                         </div>
-                        {salary.leaveDetails.length > 0 && (
+                        <NormalPayPreview result={salary.normalPayPreview}/>{salary.itemApplication && <section className="mt-4 rounded border p-3 text-sm" aria-label="額外薪資項目計算">
+                            <h4 className="font-semibold">額外薪資項目計算</h4>
+                            <p>{salary.itemApplication.status === 'ready' ? '計算已核對' : '待覆核'}；僅為計算結果，未過帳、未付款。</p>
+                            <p className="break-all">執行來源：{salary.itemApplication.source ? `${salary.itemApplication.source.id} / 第 ${salary.itemApplication.source.revision} 版 / ${salary.itemApplication.source.evidenceVersion}` : '未核定'}</p>
+                            <p>列示金額依完整薪資累積進位分配；不會將每項名目金額分別進位。</p>
+                            {salary.itemApplication.issues.map((issue,i)=><p key={i} className="text-red-700">{issue}</p>)}
+                            {salary.itemApplication.lines.map(line=><div key={line.code} className="mt-2 border-t pt-2">
+                                <p>{line.kind === 'earning' ? '加項' : '稅後扣項'}：{line.itemCode}（{line.from}～{line.to}）</p>
+                                <p>名目金額 {line.amount}；精確值 {line.exact.numerator}/{line.exact.denominator}；本次列示 {line.appliedAmount ?? '待覆核'}</p>
+                                <p className="break-all">依據：{line.sourceRefs.join('、')}</p>
+                            </div>)}
+                        </section>}{salary.adjustmentEvidence && <section className="mt-4 rounded border p-3 text-sm" aria-label="已入帳調整摘要">
+                            <h4 className="font-semibold">已入帳調整摘要</h4><p>僅列帳務調整，未付款；原薪資與已記錄實付不改寫。目標為最後入帳快照，未重新驗證目前來源。</p>
+                            {salary.adjustmentEvidence.issues.map((issue,i)=><p key={i} className="text-red-700">{issue}</p>)}
+                            {salary.adjustmentEvidence.status === 'verified' ? Object.entries(salary.adjustmentEvidence.scopes).map(([scope,raw])=>{
+                                const value = raw as {projection?:{recordedActualNet?:string;cumulativeAdjustments?:{net?:string};accountedTarget?:{net?:string};outstanding?:{net?:string}}}|null;
+                                const p=value?.projection;
+                                return <p key={scope}>{scope === 'historical' ? '歷史' : '當期'}：{p ? `原記錄實付 ${p.recordedActualNet ?? '未知'}；累計調整 ${p.cumulativeAdjustments?.net ?? '未知'}；帳務累計 ${p.accountedTarget?.net ?? '未知'}；對最後快照尚差 ${p.outstanding?.net ?? '未知'}` : '尚無已入帳調整'}</p>;
+                            }) : <p>調整證據待覆核，不能視為已核對金額。</p>}
+                        </section>}<TerminationSettlementReview empId={salary.empId} month={salary.yearMonth}/>{salary.leaveDetails.length > 0 && (
                             <div className="mt-2 text-xs text-gray-500">
                                 請假明細：{salary.leaveDetails.map((ld, i) => (
                                     <span key={i} className="inline-block bg-gray-100 rounded px-2 py-0.5 mr-1 mt-1">
@@ -73,13 +94,17 @@ const SalaryDetailModal: React.FC<{ salary: SalaryDetail; onClose: () => void }>
                         <h4 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">💰 薪資項目</h4>
                         <div className="space-y-2">
                             <div className="flex justify-between py-2 border-b border-gray-100">
-                                <span className="text-gray-600">{salary.position === '專責人員' ? '月薪' : `時薪計算 (${formatHours(salary.totalWorkHours == null || salary.overtimeHours == null ? null : salary.totalWorkHours - salary.overtimeHours)}h)`}</span>
+                                <span className="text-gray-600">{salary.payBasis===null?'薪制待核':salary.payBasis==='daily'?'日薪待核':(salary.payBasis==='monthly'||(!salary.payBasis&&salary.position==='專責人員')) ? '月薪' : `時薪計算 (${formatHours(salary.totalWorkHours == null || salary.overtimeHours == null ? null : salary.totalWorkHours - salary.overtimeHours)}h)`}</span>
                                 <span className="font-semibold text-gray-800">{formatCurrency(salary.baseSalary)}</span>
                             </div>
                             <div className="flex justify-between py-2 border-b border-gray-100">
                                 <span className="text-gray-600">加班費 ({formatHours(salary.overtimeHours)}h（依已覆核級距）)</span>
                                 <span className="font-semibold text-gray-800">{formatCurrency(salary.overtimePay)}</span>
                             </div>
+                            {(salary.compSettlementPay ?? 0) > 0 && <div className="flex justify-between py-2 border-b border-gray-100">
+                                <span className="text-gray-600">補休結清（未休補休依原加班日倍率）</span>
+                                <span className="font-semibold text-gray-800">{formatCurrency(salary.compSettlementPay!)}</span>
+                            </div>}
                             <div className="flex justify-between py-2 bg-green-50 rounded px-2">
                                 <span className="font-bold text-green-700">應發薪資</span>
                                 <span className="font-bold text-green-700">{formatCurrency(salary.grossSalary)}</span>
@@ -103,6 +128,14 @@ const SalaryDetailModal: React.FC<{ salary: SalaryDetail; onClose: () => void }>
                                 <span className="text-gray-600">勞退自提</span>
                                 <span className="font-semibold text-red-600">-{formatCurrency(salary.laborPensionSelf)}</span>
                             </div>
+                            {(salary.incomeTax ?? 0) > 0 && <div className="flex justify-between py-2 border-b border-gray-100">
+                                <span className="text-gray-600">所得稅扣繳</span>
+                                <span className="font-semibold text-red-600">-{formatCurrency(salary.incomeTax!)}</span>
+                            </div>}
+                            {(salary.supplementaryPremium ?? 0) > 0 && <div className="flex justify-between py-2 border-b border-gray-100">
+                                <span className="text-gray-600">二代健保補充保費</span>
+                                <span className="font-semibold text-red-600">-{formatCurrency(salary.supplementaryPremium!)}</span>
+                            </div>}
                             {salary.leaveDeduction > 0 && (
                                 <div className="flex justify-between py-2 border-b border-gray-100">
                                     <span className="text-gray-600">請假扣薪</span>
@@ -148,15 +181,15 @@ const SalaryDetailModal: React.FC<{ salary: SalaryDetail; onClose: () => void }>
 // 匯出 CSV（Phase 7.7：加入 masked 參數、CSV 警語；薪資數字「不」脫敏，因會計月結用）
 const exportSalaryCSV = (salaries: SalaryDetail[], month: string, masked: boolean) => {
     if (salaries.some(s => !['ready', 'locked'].includes(s.calculationStatus || ''))) { alert('仍有待覆核薪資，不能匯出結算檔'); return; }
-    const headers = ['員工編號', '姓名', '職位', '出勤天數', '總工時', '請假時數', '加班時數', '底薪', '加班費', '應發薪資', '勞保', '健保', '勞退', '請假扣薪', '扣除合計', '實發薪資'];
+    const headers = ['員工編號', '姓名', '職位', '出勤天數', '總工時', '請假時數', '加班時數', '底薪', '加班費', '補休結清', '應發薪資', '勞保', '健保', '勞退', '請假扣薪', '所得稅', '二代健保補充保費', '扣除合計', '實發薪資'];
     const csvContent = [
         headers.join(','),
         ...salaries.map(s => [
             masked ? maskEmpId(s.empId) : s.empId,
             masked ? maskName(s.name) : s.name,
             s.position, s.totalWorkDays, s.totalWorkHours, s.totalLeaveHours, s.overtimeHours,
-            s.baseSalary, s.overtimePay, s.grossSalary, s.laborInsurance, s.healthInsurance, s.laborPensionSelf,
-            s.leaveDeduction, s.totalDeductions, s.netSalary
+            s.baseSalary, s.overtimePay, s.compSettlementPay ?? 0, s.grossSalary, s.laborInsurance, s.healthInsurance, s.laborPensionSelf,
+            s.leaveDeduction, s.incomeTax ?? 0, s.supplementaryPremium ?? 0, s.totalDeductions, s.netSalary
         ].map(f => `"${f}"`).join(',')),
         // 警語列（CSV 末尾）
         '',
@@ -373,11 +406,11 @@ const SalaryCalculation: React.FC = () => {
                                             {salary.position}
                                         </span>
                                     </td>
-                                    <td className="py-3 px-4 border-b text-center text-sm text-gray-600">{salary.totalWorkDays}</td>
+                                    <td className="py-3 px-4 border-b text-center text-sm text-gray-600">{salary.totalWorkDays ?? "待覆核"}</td>
                                     <td className="py-3 px-4 border-b text-center text-sm text-gray-600">{formatHours(salary.totalWorkHours)}h</td>
                                     <td className="py-3 px-4 border-b text-center">
-                                        <span className={`text-sm ${salary.totalLeaveHours > 0 ? 'text-orange-600 font-medium' : 'text-gray-400'}`}>
-                                            {salary.totalLeaveHours}h
+                                        <span className={`text-sm ${(salary.totalLeaveHours ?? 0) > 0 ? 'text-orange-600 font-medium' : 'text-gray-400'}`}>
+                                            {salary.totalLeaveHours ?? "待覆核"}h
                                         </span>
                                     </td>
                                     <td className="py-3 px-4 border-b text-right text-sm font-medium text-gray-800">{formatCurrency(salary.grossSalary)}</td>

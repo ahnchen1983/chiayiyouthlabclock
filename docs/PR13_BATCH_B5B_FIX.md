@@ -12,9 +12,3 @@
 正式 gate 仍 BLOCKED / NO GO。沒有付款、正式資料或通知；政策與C2薪資引擎未完成。
 
 實跑：622/622 unit/API、69/69真Firestore emulator/rules、4/4受影響Chromium UI、typecheck/build/diff check通過。其他63個UI案例本修復未重跑；不可與前版67全套混稱同輪。獨立review兩個handler與一個真emulator失敗案例已轉為通過，另加跨日真持久化案例。
-
-## 獨立發布前最終驗證
-
-已審核來源40dd9f1：完整622 unit/API通過，另4個定向handler案例通過（重疊runs不可加總）。發布前重跑最終完整69 Firestore emulator/rules、67 Chromium E2E與production build全部通過；typecheck與diff check亦已通過。全套未以focused替代。E2E使用synthetic API、附件fake adapter；正式policy與原日工資待核、待結清非付款，正式BLOCKED／NO GO。
-
-僅本批23檔增量送Draft PR13審查，保留既有公開文件整理，不含C1未提交實作，不merge或deploy。

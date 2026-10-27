@@ -27,7 +27,9 @@ export type MakeupEvidenceRequest = ClockMakeupRequest & {
     appliedEvidence?: { version: 'makeup-application-v1'; recordId: string; revisionId: string; requestSourceKey: string };
 };
 export interface DetectorInput {
-    employee: Pick<Employee, 'id' | 'hireDate' | 'resignDate' | 'leaveOfAbsenceStart' | 'leaveOfAbsenceEnd'>;
+    overtimeClassification?:import('./attendanceOvertimeClassification').AttendanceOvertimeClassification;
+    explanationInventory?:import('./attendanceExplanationInventory').AttendanceExplanationInventory;
+    employee: Pick<Employee, 'id' | 'hireDate' | 'resignDate' | 'leaveOfAbsenceStart' | 'leaveOfAbsenceEnd'> & {employmentAuthority?:any};
     window: Window; asOf: number; // no implicit clock or implicit local timezone
     records: ClockRecord[]; schedules: ScheduleEvent[];
     comps?:any[]; overtimes?:any[]; leaves: LeaveRequest[]; makeups: MakeupEvidenceRequest[];

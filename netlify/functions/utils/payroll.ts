@@ -1,7 +1,13 @@
-import type { ClockRecord, LeaveRequest, ScheduleEvent, SalaryDetail, SystemConfig, PayrollReview } from '../../../types';
+import {employmentWindowStates} from '../../../utils/employmentAuthority';
+import {normalPayPreview} from './normalPayPreview';
+import type { ClockRecord, LeaveRequest, ScheduleEvent, SalaryDetail, PayrollItemApplicationDetail, SystemConfig, PayrollReview } from '../../../types';
 import { LeaveStatus, isOutingLeaveType } from '../../../types';
 import { clockInterval, confirmedWork, shiftIntervals, intervalMinutes, hhmmMinutes, leaveEndMinutes, validDate, clockSourceKey } from '../../../utils/attendance';
 import { roundMoney } from '../../../utils/format';
+import { add, decimal, rational, rounded, mul, evidence } from '../../../utils/payroll/rational';
+import { withholdingForMonth,type WithholdingResult } from '../../../utils/payroll/withholding';
+import { insuranceForMonth } from '../../../utils/payroll/insurance';
+const fraction = (x: { numerator: string; denominator: string }) => rational(BigInt(x.numerator), BigInt(x.denominator));
 
 const leaveInstant = (value: string): number => Date.parse(/(Z|[+-]\d\d:\d\d)$/.test(value || '') ? value : value + '+08:00');
 const overlaps = (a: { start: number; end: number }, b: { start: number; end: number }): boolean => Math.min(a.end, b.end) > Math.max(a.start, b.start);
@@ -67,11 +73,15 @@ export const getScheduleReviewGaps = (emp: any, yearMonth: string, events: Sched
     });
 };
 export const PAYROLL_VERSION = 'payroll-v2-review';
+const LEGACY_POLICY_REASON=/^(工時政策格式無效|工時政策無效|結算金額精度待確認|月薪換算時薪基準待確認|加班級距無效|\d{4}-\d{2}-\d{2} 日別\/跨週工時制度待覆核|\d{4}-\d{2}-\d{2} 超過已覆核加班級距|.+ 給薪規則待確認)$/;
+const OVERTIME_LINE_KINDS=['weekday-overtime','rest-day-additional','holiday-work'];
 export const calculateSalaryForEmployee = (
     emp: any, yearMonth: string, scheduleEvents: ScheduleEvent[], clockRecords: ClockRecord[],
     leaveRequests: LeaveRequest[], _legacyConfig?: SystemConfig,
+    resolvedPaymentWithholding?:WithholdingResult,
 ): SalaryDetail => {
-    const reasons = new Set<string>();
+    const reasons = new Set<string>(emp.masterAssessment?.issues||[]);
+    if(emp.employmentAuthority){const start=Date.parse(yearMonth+'-01T00:00:00+08:00')/60000,end=start+new Date(Date.UTC(Number(yearMonth.slice(0,4)),Number(yearMonth.slice(5)),0)).getUTCDate()*1440;if(employmentWindowStates(emp,start,end).includes('unknown'))reasons.add('有效任職主檔未涵蓋本月，需覆核');}
     const review = emp.payrollReview as PayrollReview | undefined;
     const rawPolicy = review?.policy;
     const policy = rawPolicy && Array.isArray(rawPolicy.regularDates) && Array.isArray(rawPolicy.overtimeTiers) ? rawPolicy : undefined;
@@ -81,7 +91,12 @@ export const calculateSalaryForEmployee = (
     if (policy && policy.moneyDecimals !== 0 && policy.moneyDecimals !== 2) reasons.add('結算金額精度待確認');
     const money = (value: number) => roundMoney(value, policy?.moneyDecimals ?? 2);
     const scheduled = employeeSchedule(emp, yearMonth, scheduleEvents);
-    const allEmployeeRecords = clockRecords.filter(r => r.empId === emp.id);
+    const employeeRecords = clockRecords.filter(r => r.empId === emp.id);
+    const invalidCardDates = employeeRecords.filter(r => typeof r.date !== 'string' || !validDate(r.date));
+    for (const r of invalidCardDates) reasons.add(`打卡日期無效或缺失，無法核定月份 ${r.id}`);
+    // Unknown dates cannot be treated as unrelated to this payroll month. Keep
+    // the issue visible, while only valid dates enter absolute-time arithmetic.
+    const allEmployeeRecords = employeeRecords.filter(r => typeof r.date === 'string' && validDate(r.date));
     const absolute = (r: Pick<ClockRecord, 'date'>, range: {start:number;end:number}) => { const base = Date.parse(r.date + 'T00:00:00+08:00') / 60000; return {start: base + range.start, end: base + range.end}; };
     let crossDateConflict = false;
     for (let i = 0; i < allEmployeeRecords.length; i++) for (let j = i + 1; j < allEmployeeRecords.length; j++) {
@@ -90,7 +105,7 @@ export const calculateSalaryForEmployee = (
         const x = absolute(a, ar), y = absolute(b, br);
         if (Math.min(x.end, y.end) > Math.max(x.start, y.start)) { crossDateConflict = true; reasons.add('跨日/跨月打卡重疊，須先核實日歸屬'); }
     }
-    const records = clockRecords.filter(r => r.empId === emp.id && r.date.startsWith(yearMonth));
+    const records = allEmployeeRecords.filter(r => r.date.startsWith(yearMonth));
     const currentCardRanges = records.flatMap(r => { const span = clockInterval(r); return span ? [absolute(r, span)] : []; });
     const currentScheduleRanges = [...scheduled].flatMap(([date, shifts]) => (shiftIntervals(shifts) || []).map(r => absolute({ date }, r)));
     const workEvidence = allEmployeeRecords.map(r => ({ record: r, span: clockInterval(r), work: confirmedWork(r) }));
@@ -99,6 +114,12 @@ export const calculateSalaryForEmployee = (
     const leaveByDate = new Map<string, DayLeave[]>();
     const leaves = leaveRequests.filter(l => {
         if (l.empId !== emp.id || l.status !== LeaveStatus.Approved) return false;
+        if (typeof l.startDate !== 'string' || typeof l.endDate !== 'string' ||
+            !validDate(l.startDate.slice(0, 10)) || !validDate(l.endDate.slice(0, 10)) ||
+            !Number.isFinite(leaveInstant(l.startDate)) || !Number.isFinite(leaveInstant(l.endDate)) || leaveInstant(l.endDate) <= leaveInstant(l.startDate)) {
+            reasons.add(`請假日期無效或倒置，無法核定月份 ${l.id}`);
+            return true;
+        }
         if ((l.startDate || '').slice(0, 7) <= yearMonth && (l.endDate || l.startDate || '').slice(0, 7) >= yearMonth) return true;
         if (Array.isArray(l.payrollAllocations) && l.payrollAllocations.some(a => typeof a?.date === 'string' && a.date.startsWith(yearMonth))) return true;
         // Last-day overnight work belongs to this month but can conflict with next month's leave.
@@ -140,8 +161,16 @@ export const calculateSalaryForEmployee = (
         if (!isOutingLeaveType(l.leaveType)) leaveDetails.push({ type: l.leaveType, hours: minutes / 60 });
     }
     let knownMinutes = 0, otMinutes = 0, otMoney = 0, hourlyLeavePay = 0, monthlyDeduction = 0, attendedDays = 0;
-    let incompleteAttendance = crossDateConflict || boundaryAttendanceUnknown;
-    const monthly = emp.position === '專責人員';
+    let incompleteAttendance = invalidCardDates.length > 0 || crossDateConflict || boundaryAttendanceUnknown;
+    const legacyReviewed=review?.yearMonth===yearMonth&&review.reviewedBy&&review.reviewedAt&&policy?.version;
+    const basisCandidate=emp.effectiveMasterVersion?emp.payBasis:(legacyReviewed?review?.payBasis:null);
+    const confirmedBasis=['monthly','hourly','daily'].includes(basisCandidate)?basisCandidate:null;
+    if(!['monthly','hourly','daily'].includes(confirmedBasis))reasons.add('薪制未明示核定，不依職稱或人員類別推定');
+    const monthly = confirmedBasis==='monthly';
+    if(confirmedBasis&&!['monthly','hourly','daily'].includes(confirmedBasis))reasons.add('薪制值無效');
+    if(confirmedBasis==='daily')reasons.add('日薪計算待核');
+    const first=yearMonth+'-01',last=new Date(Date.UTC(Number(yearMonth.slice(0,4)),Number(yearMonth.slice(5)),0)).toISOString().slice(0,10);
+    if(monthly&&!emp.effectiveMasterVersion&&((emp.hireDate&&emp.hireDate>first&&emp.hireDate<=last)||(emp.resignDate&&emp.resignDate>=first&&emp.resignDate<last)||(emp.leaveOfAbsenceStart&&emp.leaveOfAbsenceStart<=last&&(!emp.leaveOfAbsenceEnd||emp.leaveOfAbsenceEnd>=first))))reasons.add('部分月到離職／留停折算待C2，不能直接給整月月薪');
     const baseRate = monthly ? Number(emp.monthlySalary) : Number(emp.hourlyRate);
     if (!Number.isFinite(baseRate) || baseRate <= 0) reasons.add('薪資設定缺漏或無效');
     const divisor = policy?.monthlyHourlyDivisor;
@@ -190,25 +219,91 @@ export const calculateSalaryForEmployee = (
         if (remaining > 0) reasons.add(`${date} 超過已覆核加班級距`);
     }
     knownMinutes = intervalMinutes(records.flatMap(r => (confirmedWork(r) || []).map(range => absolute(r, range))));
-    const insurance = review?.insurance;
-    if (!insurance || [insurance.labor, insurance.health, insurance.pensionSelf].some(n => !Number.isFinite(n) || n < 0)) reasons.add('本月投保級距/身分及自付金額待覆核');
+    // Master-based pay computes premiums from the approved insurance timeline; the
+    // monthly review's hand-entered amounts remain only for the legacy path.
+    const insuranceResult = emp.normalPayDays ? (Array.isArray(emp.insurancePeriods) ? insuranceForMonth(yearMonth, emp.insurancePeriods) : null) : undefined;
+    const insurance = insuranceResult === undefined ? review?.insurance : insuranceResult ? { labor: insuranceResult.labor, health: insuranceResult.health, pensionSelf: insuranceResult.pensionSelf } : undefined;
+    if (insuranceResult === null) reasons.add('投保資料（勞健保、勞退自提）尚未核定');
+    else if (insuranceResult) for (const issue of insuranceResult.issues) reasons.add(issue);
+    else if (!insurance || [insurance.labor, insurance.health, insurance.pensionSelf].some(n => !Number.isFinite(n) || n < 0)) reasons.add('本月投保級距/身分及自付金額待覆核');
+    const normalPreview = emp.normalPayDays ? normalPayPreview(emp,yearMonth,clockRecords,leaveRequests,validLeaveAllocations,[...reasons].filter(r=>/卡|重疊|排班|實際工作|請假|外勤/.test(r))) : undefined;
+    // Master-based pay: normal pay (C2a) + overtime (C2b) from the effective master,
+    // day-type calendars and reviewed work. The monthly review's per-date regular
+    // list, generic overtime tiers and leave fractions belong to the legacy path only.
+    const combined = normalPreview?.combined;
+    if(normalPreview){for(const r of [...reasons])if(LEGACY_POLICY_REASON.test(r))reasons.delete(r);reasons.delete('多段雇用／留停／調薪或部分月折算待C2');reasons.delete('部分月到離職／留停折算待C2，不能直接給整月月薪');for(const issue of combined?.issues||normalPreview.issues)reasons.add(issue);}
+    const otLines = normalPreview?.overtimePreview?.lines.filter(l=>OVERTIME_LINE_KINDS.includes(l.kind)) || [];
+    const masterGross = combined?.amount != null ? Number(combined.amount) : null;
+    const execution=emp.payrollItemExecution;
+    let itemApplication:PayrollItemApplicationDetail|undefined;
+    let finalGrossExact=combined?.exactTotal?fraction(combined.exactTotal):null;
+    if(execution){
+      const assessment=execution.approved&&!execution.stale?execution.assessment:null;
+      const supported=assessment?.status==='ready'&&combined?.status==='ready'&&!!finalGrossExact&&!!normalPreview?.rounding&&policy?.moneyDecimals===normalPreview.rounding.precision;
+      itemApplication={status:supported?'ready':'needs-review',issues:supported?[]:[...(execution.issues||[]),...(assessment?.issues||[]),'額外項目計算政策、完整來源或精度尚未核實'],source:execution.source||null,lines:[],earningsExact:assessment?.earningsExact||null,deductionsExact:assessment?.deductionsExact||null,earningsAmount:null,deductionsAmount:null,grossExact:null,applicationStatus:'calculated-not-posted',paymentStatus:'not-paid'};
+      if(supported){
+        let cursor=finalGrossExact!,previous=rounded(cursor,normalPreview!.rounding!);
+        itemApplication.lines=assessment.lines.map((line:any)=>{
+          if(line.kind!=='earning')return {...line,appliedAmount:null};
+          cursor=add(cursor,fraction(line.exact));const next=rounded(cursor,normalPreview!.rounding!);
+          const appliedAmount=rounded(add(decimal(next),mul(decimal(previous),rational(-1n))),normalPreview!.rounding!);previous=next;
+          return {...line,appliedAmount};
+        });
+        finalGrossExact=cursor;itemApplication.grossExact=evidence(cursor);
+        itemApplication.earningsAmount=rounded(add(decimal(previous),mul(decimal(combined!.amount!),rational(-1n))),normalPreview!.rounding!);
+      }else for(const issue of itemApplication.issues)reasons.add(issue);
+    }
+    const masterBase = combined?.amount != null && normalPreview?.rounding ? Number(rounded(rational(BigInt(combined.normalExact.numerator),BigInt(combined.normalExact.denominator)),normalPreview.rounding)) : null;
+    const base = normalPreview ? (masterBase ?? 0) : money(monthly ? baseRate : (knownMinutes - otMinutes) / 60 * hourly + hourlyLeavePay);
+    const gross = normalPreview ? (itemApplication?.status==='ready'&&finalGrossExact?Number(rounded(finalGrossExact,normalPreview.rounding!)):(masterGross ?? 0)) : money(base + money(otMoney));
+    // Line items sum to gross under one final rounding: base, then overtime up to
+    // normal+overtime, then untaken comp time settled this month as the remainder.
+    const beforeSettlement = combined?.amount != null && combined.compSettlementExact && normalPreview?.rounding ? Number(rounded(add(fraction(combined.normalExact),fraction(combined.overtimeExact!)),normalPreview.rounding)) : null;
+    const compSettlementPay = beforeSettlement != null ? money((masterGross ?? 0) - beforeSettlement) : 0;
+    const overtimePay = normalPreview ? money((beforeSettlement ?? masterGross ?? gross) - base) : money(otMoney);
+    if(normalPreview) otMinutes = otLines.reduce((n,l)=>n+l.minutes,0);
+    // Monthly leave deductions are already inside the exact normal-pay total.
+    const deduction = normalPreview ? 0 : money(monthlyDeduction);
+    // Income tax and part-time supplementary premium use the month-end insurance
+    // record (withholding method, health enrolment here) and the paid gross.
+    const monthEnd = Array.isArray(emp.insurancePeriods) ? [...emp.insurancePeriods].reverse().find((p: any) => p.from <= last && p.to >= first) : null;
+    const withholding = resolvedPaymentWithholding ?? (insuranceResult && combined?.amount != null ? withholdingForMonth({ month: yearMonth, gross: decimal(String(gross)), overtimeLines: (normalPreview?.overtimePreview?.lines || []).filter(l => l.exact), pensionSelf: insuranceResult.pensionSelf, method: monthEnd?.withholdingMethod, healthInsuredHere: !!monthEnd?.healthInsuredHere, spouseAndDependantsCount:monthEnd?.withholdingSpouseAndDependants, countSourceRef:monthEnd?.withholdingCountSourceRef, countConfirmed:!!(emp.insuranceSource?.versionId&&emp.insuranceSource?.evidenceVersion) }) : null);
+    if (withholding) for (const issue of withholding.issues) reasons.add(issue);
+    const incomeTax = withholding?.incomeTax || 0, supplementaryPremium = withholding?.supplementaryPremium || 0;
+    const statutoryDeductions=money((insurance?.labor || 0) + (insurance?.health || 0) + (insurance?.pensionSelf || 0) + deduction + incomeTax + supplementaryPremium);
+    let totalDeductions=statutoryDeductions,netSalary=money(gross-statutoryDeductions);
+    if(itemApplication?.status==='ready'&&finalGrossExact&&normalPreview?.rounding){
+      // Allocate display residuals from exact cumulative NET, not independently
+      // rounded deductions. E.g. 1000 - 1.50 at final yuan half-up is 999.
+      let cursor=add(finalGrossExact,mul(decimal(String(statutoryDeductions)),rational(-1n))),previous=rounded(cursor,normalPreview.rounding);
+      const beforeItems=previous;
+      itemApplication.lines=itemApplication.lines.map(line=>{
+        if(line.kind!=='deduction')return line;
+        cursor=add(cursor,mul(fraction(line.exact),rational(-1n)));const next=rounded(cursor,normalPreview.rounding!);
+        const appliedAmount=rounded(add(decimal(previous),mul(decimal(next),rational(-1n))),normalPreview.rounding!);previous=next;
+        return {...line,appliedAmount};
+      });
+      if(cursor.n<0n){itemApplication.status='needs-review';itemApplication.issues.push('額外扣項超過完整可支付金額，不能產生負數薪資或自動追扣');reasons.add(itemApplication.issues.at(-1)!);}
+      itemApplication.deductionsAmount=rounded(add(decimal(beforeItems),mul(decimal(previous),rational(-1n))),normalPreview.rounding);
+      netSalary=Number(previous);totalDeductions=money(gross-netSalary);
+    }
     const ready = reasons.size === 0;
-    const base = money(monthly ? baseRate : (knownMinutes - otMinutes) / 60 * hourly + hourlyLeavePay);
-    const overtimePay = money(otMoney);
-    const gross = money(base + overtimePay);
-    const deduction = money(monthlyDeduction);
-    const totalDeductions = money((insurance?.labor || 0) + (insurance?.health || 0) + (insurance?.pensionSelf || 0) + deduction);
     return {
+        ...(normalPreview?{normalPayPreview:normalPreview}:{}),
+        ...(itemApplication?{itemApplication}:{}),
         empId: emp.id, name: emp.name, position: emp.position, yearMonth,
+        payBasis:confirmedBasis||null,employmentType:emp.employmentType||null,effectiveMasterVersion:emp.effectiveMasterVersion||null,
         calculationVersion: PAYROLL_VERSION, calculationStatus: ready ? 'ready' : 'needs-review', reviewReasons: [...reasons],
         policyVersion: policy?.version || '', knownWorkMinutes: knownMinutes,
         totalWorkDays: attendedDays, totalWorkHours: incompleteAttendance ? null : knownMinutes / 60,
         totalLeaveHours: leaveDetails.reduce((n, l) => n + l.hours, 0), leaveDetails,
         overtimeHours: ready ? otMinutes / 60 : null,
-        baseSalary: ready ? base : null, overtimePay: ready ? overtimePay : null, grossSalary: ready ? gross : null,
+        baseSalary: ready ? base : null, overtimePay: ready ? overtimePay : null, compSettlementPay: ready ? compSettlementPay : null, grossSalary: ready ? gross : null,
         laborInsurance: ready ? insurance!.labor : null, healthInsurance: ready ? insurance!.health : null,
         laborPensionSelf: ready ? insurance!.pensionSelf : null, leaveDeduction: ready ? deduction : null,
-        totalDeductions: ready ? totalDeductions : null, netSalary: ready ? money(gross - totalDeductions) : null,
+        totalDeductions: ready ? totalDeductions : null, netSalary: ready ? netSalary : null,
+        ...(insuranceResult ? { insuranceDetail: insuranceResult } : {}),
+        ...(withholding ? { incomeTax: ready ? incomeTax : null, supplementaryPremium: ready ? supplementaryPremium : null, withholdingDetail: withholding } : {}),
     };
 };
 

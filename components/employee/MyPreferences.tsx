@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import DayTypeDesignationPanel from '../DayTypeDesignationPanel';
 import {
     apiGetMyStaffPreference,
     apiUpdateMyStaffPreference,
@@ -221,6 +222,10 @@ const MyPreferences: React.FC = () => {
                 >
                     {saving ? '儲存中...' : '儲存偏好'}
                 </button>
+            </div>
+
+            <div className="mt-6">
+                <DayTypeDesignationPanel mode="self" />
             </div>
         </div>
     );

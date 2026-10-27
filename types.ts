@@ -399,7 +399,23 @@ export interface PayrollPreflight {
     issues: PayrollPreflightIssue[];
     gaps: string[];
 }
+export interface PayrollItemApplicationDetail {
+ status:'ready'|'needs-review';issues:string[];
+ source:{id:string;revision:number;evidenceVersion:string}|null;
+ lines:Array<import('./utils/payroll/itemApplication').ItemExecutionLine & {appliedAmount:string|null}>;
+ earningsExact:import('./utils/payroll/rational').FractionEvidence|null;
+ deductionsExact:import('./utils/payroll/rational').FractionEvidence|null;
+ earningsAmount:string|null;deductionsAmount:string|null;
+ grossExact:import('./utils/payroll/rational').FractionEvidence|null;
+ applicationStatus:'calculated-not-posted';paymentStatus:'not-paid';
+}
 export interface SalaryDetail {
+    itemApplication?:PayrollItemApplicationDetail;
+    adjustmentEvidence?:{status:'verified'|'unknown';issues:string[];scopes:Record<string,unknown>};
+    normalPayPreview?: import('./utils/payroll/normalPay').NormalPayResult;
+    payBasis?: 'monthly'|'hourly'|'daily'|null;
+    employmentType?: string|null;
+    effectiveMasterVersion?: string|null;
     preflight?: PayrollPreflight;
     calculationVersion?: string;
     calculationStatus?: "ready" | "needs-review" | "locked" | "legacy-review";
@@ -411,14 +427,19 @@ export interface SalaryDetail {
     position: '專責人員' | '兼職人員';
     yearMonth: string;
     // 出勤統計
-    totalWorkDays: number;
+    totalWorkDays: number | null;
     totalWorkHours: number | null;
-    totalLeaveHours: number;
+    totalLeaveHours: number | null;
     leaveDetails: { type: string; hours: number }[];
     overtimeHours: number | null;
     // 薪資項目
     baseSalary: number | null;
     overtimePay: number | null;
+    compSettlementPay?: number | null; // 未休補休依原加班日倍率結清（勞基法第32條之1）
+    insuranceDetail?: import('./utils/payroll/insurance').InsuranceResult; // 主檔員工依投保資料計算的保費明細
+    incomeTax?: number | null;            // 所得稅扣繳
+    supplementaryPremium?: number | null; // 二代健保補充保費（非本單位投保之兼職）
+    withholdingDetail?: import('./utils/payroll/withholding').WithholdingResult;
     grossSalary: number | null;
     // 扣除項目（勞基法）
     laborInsurance: number | null;
@@ -518,6 +539,7 @@ export interface MonthlyReportData {
 
 // No production defaults: the payroll reviewer must explicitly confirm a month.
 export interface PayrollReview {
+    payBasis?: 'hourly'|'monthly'|'daily';
     participation?: 'system-account';
     participationReason?: string;
     scheduleExceptions?: { date: string; reason: string; sourceKey: string }[];
@@ -550,7 +572,7 @@ export interface PayrollRun {
     inputs: { employees: unknown[]; schedules: ScheduleEvent[]; records: ClockRecord[]; leaves: LeaveRequest[] };
 }
 
-export type PayrollReviewEmployee = Pick<Employee, 'id' | 'name' | 'role' | 'position' | 'status' | 'hourlyRate' | 'monthlySalary' | 'hireDate' | 'resignDate' | 'accountKind' | 'payrollReview'> & { employeeSourceKey?: string };
+export type PayrollReviewEmployee = Pick<Employee, 'id' | 'name' | 'role' | 'position' | 'status' | 'hourlyRate' | 'monthlySalary' | 'hireDate' | 'resignDate' | 'accountKind' | 'payrollReview'> & { employeeSourceKey?: string; effectiveMasterVersion?: string|null; payBasis?: string|null; employmentType?: string|null; masterAssessment?: any };
 export interface PayrollReviewInputs {
     employees: PayrollReviewEmployee[];
     leaves: LeaveRequest[];

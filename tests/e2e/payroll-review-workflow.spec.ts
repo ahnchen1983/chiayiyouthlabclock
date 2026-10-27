@@ -57,6 +57,7 @@ test('explicit policy submission preserves cents and blocks month locking during
     await page.getByRole('button', { name: '覆核計薪資料', exact: true }).click();
     await expect(page.getByLabel('政策版本／依據')).toHaveValue('');
     await expect(page.getByRole('button', { name: '儲存計薪覆核', exact: true })).toBeDisabled();
+    await page.getByLabel('明示核定薪制').selectOption('hourly');
     await page.getByLabel('政策版本／依據').fill('synthetic-reviewed-policy');
     await page.getByLabel('結算金額精度', { exact: true }).selectOption('2');
     await page.getByLabel(`一般工作日 ${month}-01`, { exact: true }).check();
@@ -184,3 +185,5 @@ test('pending resolution restores trial completeness but formal settlement stays
     await expect(page.getByRole('button', { name: /結算並鎖定/ })).toBeDisabled();
     await expect(page.getByText(/READY 不代表已核准正式發薪/)).toBeVisible();
 });
+
+test('C1 fix new review must explicitly choose a pay basis, never infer from title',async({page})=>{await setup(page);await page.getByRole('button',{name:'覆核計薪資料',exact:true}).click();await expect(page.getByLabel('明示核定薪制')).toHaveValue('');await expect(page.getByText(/薪制待核/).first()).toBeVisible();await page.getByLabel('明示核定薪制').selectOption('monthly');await expect(page.getByLabel('月薪換算時薪除數')).toBeVisible();await page.getByLabel('明示核定薪制').selectOption('hourly');await expect(page.getByLabel('月薪換算時薪除數')).toHaveCount(0);});

@@ -13,7 +13,7 @@ const pick = (value: any, keys: string[]) => Object.fromEntries(keys.filter(key 
 // employee fields and unrecognized review properties cannot carry contact data.
 export const payrollReviewFields = (raw: any): any => {
     if (!object(raw)) return null;
-    const review = pick(raw, ['yearMonth', 'participation', 'participationReason', 'reviewedBy', 'reviewedAt']);
+    const review = pick(raw, ['payBasis', 'yearMonth', 'participation', 'participationReason', 'reviewedBy', 'reviewedAt']);
     if (object(raw.policy)) review.policy = pick(raw.policy, ['version', 'hoursBasis', 'moneyDecimals', 'workDateRule', 'dailyRegularMinutes', 'regularDates', 'overtimeTiers', 'hourlyLeavePaidFraction', 'monthlyLeaveDeductionFraction', 'monthlyHourlyDivisor']);
     if (review.policy) {
         if (Array.isArray(raw.policy.overtimeTiers)) review.policy.overtimeTiers = raw.policy.overtimeTiers.map((tier: any) => pick(tier, ['minutes', 'numerator', 'denominator']));
@@ -31,6 +31,8 @@ export const validatePayrollReview = (raw: any, employee: any, reviewer: string,
         if (!nonempty(raw.participationReason)) reviewError('排除計薪須明示非員工系統帳號原因');
         return { yearMonth: raw.yearMonth, participation: 'system-account', participationReason: raw.participationReason.trim(), reviewedBy: reviewer, reviewedAt: at } as PayrollReview;
     }
+    if(!['hourly','monthly','daily'].includes(raw.payBasis)) reviewError('須明示核定薪制，不依職稱推定');
+    if(employee.effectiveMasterVersion&&employee.payBasis&&raw.payBasis!==employee.payBasis) reviewError('覆核薪制與有效主檔不符');
     const policy = raw.policy;
     if (!object(policy) || !nonempty(policy.version)) reviewError('須明示計薪政策版本');
     if (policy.hoursBasis !== 'actual' || policy.workDateRule !== 'clock-in-date' || policy.dailyRegularMinutes !== 480) reviewError('僅支援實際工時、上班日歸屬及每日 480 分鐘正常工時政策');
@@ -42,7 +44,7 @@ export const validatePayrollReview = (raw: any, employee: any, reviewer: string,
         const fractions = policy[field];
         if (!object(fractions) || Object.entries(fractions).some(([type, fraction]) => !Object.values(LeaveType).includes(type as LeaveType) || typeof fraction !== 'number' || !Number.isFinite(fraction) || fraction < 0 || fraction > 1)) reviewError('各假別給薪／扣薪比例須明示為 0 至 1');
     }
-    if ((employee.position === '專責人員' || policy.monthlyHourlyDivisor !== undefined) && !positive(policy.monthlyHourlyDivisor)) reviewError('月薪換算時薪基準須為正數');
+    if ((raw.payBasis==='monthly' || policy.monthlyHourlyDivisor !== undefined) && !positive(policy.monthlyHourlyDivisor)) reviewError('月薪換算時薪基準須為正數');
     const insurance = raw.insurance;
     if (!object(insurance) || ['labor', 'health', 'pensionSelf'].some(field => typeof insurance[field] !== 'number' || !Number.isFinite(insurance[field]) || insurance[field] < 0)) reviewError('須明示非負的勞保、健保及自提金額');
     if (raw.scheduleExceptions !== undefined && (!Array.isArray(raw.scheduleExceptions) || raw.scheduleExceptions.some((entry: any) => !object(entry) || !inMonth(entry.date) || !nonempty(entry.reason) || !nonempty(entry.sourceKey)))) reviewError('排班例外須明示本月有效日期、原因及證據識別');

@@ -45,6 +45,22 @@ vi.mock('../netlify/functions/utils/firebaseAdmin',()=>({db:fake.db,adminAuth:{v
 import {handler} from '../netlify/functions/api';
 const call=async(action:string,body:any={})=>await handler({httpMethod:'POST',headers:{authorization:'Bearer synthetic'},body:JSON.stringify({action,...body})} as any,{} as any) as any;
 const lock=(m=month)=>fake.data.set(`monthLocks/${m}`,{yearMonth:m,lockedAt:review.reviewedAt,lockedBy:'ADMIN',lockedByName:'synthetic',employeeCount:1,totalAmount:1600});
+// Explicit synthetic schedule/policy/scan setup, called only by happy-path tests.
+async function readyAttendance(selectedMonth=month, targets:Record<string,number>={[selectedMonth+'-01']:480}) {
+ const {seedAttendanceReady}=await import('./fixtures/attendanceReady');
+ fake.data.set('employees/ATTENDANCE_REVIEWER',{id:'ATTENDANCE_REVIEWER',name:'Synthetic independent reviewer',role:UserRole.SuperAdmin,accountKind:'system-account',hireDate:'2020-01-01'});
+ for(const [date,minutes] of Object.entries(targets)) {
+  if(!fake.data.has('dailySchedule/'+date)) {
+   if(minutes!==480&&minutes!==540)throw Error('Provide the explicit short-session schedule before readiness setup');
+   fake.data.set('dailySchedule/'+date,schedule(date,minutes===540?'08:00':'09:00','17:00'));
+  }
+ }
+ return seedAttendanceReady(fake.db,{syntheticOnly:true,empId:employee.id,month:selectedMonth,proposer:'ADMIN',reviewer:'ATTENDANCE_REVIEWER',at:'2026-06-01T00:00:00Z',expectedMinutesByDate:targets,operationPrefix:'api-ready-'+selectedMonth});
+}
+async function rescanAttendance(selectedMonth=month) {
+ const {handleAttendanceCaseAction}=await import('../netlify/functions/utils/attendanceCaseService');
+ return handleAttendanceCaseAction(fake.db,'ATTENDANCE_REVIEWER','scan-attendance-cases',{empId:employee.id,yearMonth:selectedMonth},()=>new Date('2026-06-01T00:00:00Z'));
+}
 beforeEach(()=>{vi.mocked(assertPayrollReady).mockImplementation(trialTransactionGate);fake.data.clear();fake.data.set('employees/ADMIN',{id:'ADMIN',name:'reviewer',role:UserRole.SuperAdmin,hireDate:'2020-01-01',accountKind:'system-account',hourlyRate:0,monthlySalary:0});fake.data.set(`employees/${employee.id}`,{...employee,status:'在職',hireDate:'2026-01-01'});fake.data.set('clockRecords/C1',card());});
 afterEach(()=>vi.useRealTimers());
 describe('handler integration with in-memory Firestore only; no credentials',()=>{
@@ -66,18 +82,18 @@ describe('handler integration with in-memory Firestore only; no credentials',()=
  it('makeup transaction failure leaves request pending and card unchanged',async()=>{fake.data.set('makeupRequests/M',{empId:'SYNTH',date:'2026-04-01',requestedClockOut:'25:99',status:'待審核'});expect((await call('approve-makeup-request',{requestId:'M',status:'核准'})).statusCode).toBe(409);expect(fake.data.get('makeupRequests/M').status).toBe('待審核');expect(fake.data.get('clockRecords/C1').clockOutTime).toBe('17:00');});
  it('makeup crossing into a locked month is rejected',async()=>{lock('2026-05');fake.data.set('makeupRequests/M',{empId:'SYNTH',date:'2026-04-30',requestedClockInAt:'2026-04-30T22:00:00+08:00',requestedClockOutAt:'2026-05-01T06:00:00+08:00',status:'待審核'});expect((await call('approve-makeup-request',{requestId:'M',status:'核准'})).statusCode).toBe(423);});
  it('duplicate same-day makeup requires an explicit card identity',async()=>{fake.data.set('clockRecords/C2',card());fake.data.set('makeupRequests/M',{empId:'SYNTH',date:'2026-04-01',requestedClockOut:'18:00',status:'待審核'});expect((await call('approve-makeup-request',{requestId:'M',status:'核准'})).statusCode).toBe(409);});
- it('new month snapshot is atomic and stays fixed after rate changes',async()=>{const response=await call('lock-month',{yearMonth:month});expect(response.statusCode).toBe(200);const saved=JSON.parse(response.body);expect(saved.payrollRunId).toBeTruthy();fake.data.get('employees/SYNTH').hourlyRate=999;const salaries=JSON.parse((await call('get-all-salary-details',{yearMonth:month})).body);expect(salaries[0].grossSalary).toBe(1600);expect(salaries[0].calculationStatus).toBe('locked');});
+ it('new month snapshot is atomic and stays fixed after rate changes',async()=>{await readyAttendance();const response=await call('lock-month',{yearMonth:month});expect(response.statusCode).toBe(200);const saved=JSON.parse(response.body);expect(saved.payrollRunId).toBeTruthy();fake.data.get('employees/SYNTH').hourlyRate=999;const salaries=JSON.parse((await call('get-all-salary-details',{yearMonth:month})).body);expect(salaries[0].grossSalary).toBe(1600);expect(salaries[0].calculationStatus).toBe('locked');});
  it('incomplete payroll cannot produce any lock or run',async()=>{fake.data.set('clockRecords/C1',card(undefined,'09:00',null,false));expect((await call('lock-month',{yearMonth:month})).statusCode).toBe(409);expect([...fake.data.keys()].some(k=>k.startsWith('monthLocks/')||k.startsWith('payrollRuns/'))).toBe(false);});
- it('legacy lock exposes pending instead of recalculated money',async()=>{lock();const result=JSON.parse((await call('get-employee-salary',{empId:'SYNTH',yearMonth:month})).body);expect(result.calculationStatus).toBe('legacy-review');expect(result.netSalary).toBeNull();});
+ it('legacy lock exposes pending instead of recalculated money',async()=>{lock();const result=JSON.parse((await call('get-employee-salary',{empId:'SYNTH',yearMonth:month})).body);expect(result.calculationStatus).toBe('legacy-review');expect(result.netSalary).toBeNull();expect(result.totalWorkDays).toBeNull();expect(result.totalLeaveHours).toBeNull();expect(result.incomeTax).toBeNull();expect(result.normalPayPreview).toBeUndefined();});
  it('historical lock cannot be unlocked by this repair',async()=>{lock();expect((await call('unlock-month',{yearMonth:month,reason:'synthetic'})).statusCode).toBe(409);expect(fake.data.get(`monthLocks/${month}`).unlockedAt).toBeUndefined();});
 });
 
 describe('independent review API regressions',()=>{
  it('cannot lock missing second session',async()=>{const d=schedule(undefined,'09:00','12:00');d.shifts.push({...d.shifts[0],from:'14:00',to:'18:00'});fake.data.set('dailySchedule/'+d.date,d);fake.data.set('clockRecords/C1',card(undefined,'09:00','12:00'));expect((await call('lock-month',{yearMonth:month})).statusCode).toBe(409);expect(fake.data.has('monthLocks/'+month)).toBe(false);});
  it('rejects allocation outside approved window without updating leave',async()=>{const l=leave();fake.data.set('leaveRequests/L',l);expect((await call('review-leave-allocation',{requestId:'L',allocations:[{date:'2026-04-01',from:'09:00',to:'17:00',minutes:480}]})).statusCode).toBe(409);expect(fake.data.get('leaveRequests/L').payrollAllocations).toEqual(l.payrollAllocations);});
- it('explicit system account is excluded without fake future hire date',async()=>{expect((await call('lock-month',{yearMonth:month})).statusCode).toBe(200);expect(fake.data.get('monthLocks/'+month).employeeCount).toBe(1);});
+ it('explicit system account is excluded without fake future hire date',async()=>{await readyAttendance();expect((await call('lock-month',{yearMonth:month})).statusCode).toBe(200);expect(fake.data.get('monthLocks/'+month).employeeCount).toBe(1);});
  it('zero salary real employee still blocks settlement',async()=>{fake.data.get('employees/SYNTH').hourlyRate=0;expect((await call('lock-month',{yearMonth:month})).statusCode).toBe(409);});
- it('legacy unclassified admin requires explicit monthly nonemployee review',async()=>{const admin=fake.data.get('employees/ADMIN');delete admin.accountKind;expect((await call('lock-month',{yearMonth:month})).statusCode).toBe(409);expect((await call('review-payroll-inputs',{empId:'ADMIN',review:{yearMonth:month,participation:'system-account',participationReason:'僅系統登入，非受薪員工'}})).statusCode).toBe(200);expect((await call('lock-month',{yearMonth:month})).statusCode).toBe(200);});
+ it('legacy unclassified admin requires explicit monthly nonemployee review',async()=>{await readyAttendance();const admin=fake.data.get('employees/ADMIN');delete admin.accountKind;expect((await call('lock-month',{yearMonth:month})).statusCode).toBe(409);expect((await call('review-payroll-inputs',{empId:'ADMIN',review:{yearMonth:month,participation:'system-account',participationReason:'僅系統登入，非受薪員工'}})).statusCode).toBe(200);expect((await call('lock-month',{yearMonth:month})).statusCode).toBe(200);});
 });
 
 describe('absolute time conflicts at settlement boundary',()=>{
@@ -85,9 +101,9 @@ describe('absolute time conflicts at settlement boundary',()=>{
 });
 
 describe('bounded payroll snapshot evidence',()=>{
- it('unrelated historical cards do not exhaust monthly snapshot capacity or get deleted',async()=>{for(let i=0;i<1000;i++)fake.data.set('clockRecords/OLD'+i,{...card('2025-01-01'),id:'OLD'+i,empId:i%2?'OTHER':'SYNTH',notes:'x'.repeat(800)});const response=await call('lock-month',{yearMonth:month});expect(response.statusCode).toBe(200);const run=fake.data.get('payrollRuns/'+JSON.parse(response.body).payrollRunId);expect(run.salaries[0].grossSalary).toBe(1600);expect(run.inputs.records.map(r=>r.id)).toEqual(['C1']);expect(fake.data.has('clockRecords/OLD999')).toBe(true);});
- it('retains complete adjacent-month evidence for included employees only',async()=>{fake.data.set('clockRecords/PREV',{...card('2026-03-31'),notes:'boundary evidence'});fake.data.set('clockRecords/NEXT',card('2026-05-01'));fake.data.set('clockRecords/OTHER',{...card('2026-03-31'),empId:'OTHER'});const response=await call('lock-month',{yearMonth:month});expect(response.statusCode).toBe(200);const run=fake.data.get('payrollRuns/'+JSON.parse(response.body).payrollRunId);expect(run.inputs.records.map(r=>r.date).sort()).toEqual(['2026-03-31','2026-04-01','2026-05-01']);expect(run.inputs.records.find(r=>r.date==='2026-03-31').notes).toBe('boundary evidence');expect(run.salaries[0].grossSalary).toBe(1600);});
- it('genuinely oversized relevant evidence fails atomically',async()=>{fake.data.get('clockRecords/C1').notes='x'.repeat(810000);const response=await call('lock-month',{yearMonth:month});expect(response.statusCode).toBe(409);expect(response.body).toContain('快照過大');expect([...fake.data.keys()].some(k=>k.startsWith('monthLocks/')||k.startsWith('payrollRuns/')||k.startsWith('payrollControl/'))).toBe(false);expect(fake.data.get('clockRecords/C1').notes.length).toBe(810000);});
+ it('unrelated historical cards do not exhaust monthly snapshot capacity or get deleted',async()=>{for(let i=0;i<1000;i++)fake.data.set('clockRecords/OLD'+i,{...card('2025-01-01'),id:'OLD'+i,empId:i%2?'OTHER':'SYNTH',notes:'x'.repeat(800)});await readyAttendance();const response=await call('lock-month',{yearMonth:month});expect(response.statusCode).toBe(200);const run=fake.data.get('payrollRuns/'+JSON.parse(response.body).payrollRunId);expect(run.salaries[0].grossSalary).toBe(1600);expect(run.inputs.records.map(r=>r.id)).toEqual(['C1']);expect(fake.data.has('clockRecords/OLD999')).toBe(true);});
+ it('retains complete adjacent-month evidence for included employees only',async()=>{fake.data.set('clockRecords/PREV',{...card('2026-03-31'),notes:'boundary evidence'});fake.data.set('clockRecords/NEXT',card('2026-05-01'));fake.data.set('clockRecords/OTHER',{...card('2026-03-31'),empId:'OTHER'});await readyAttendance();const response=await call('lock-month',{yearMonth:month});expect(response.statusCode).toBe(200);const run=fake.data.get('payrollRuns/'+JSON.parse(response.body).payrollRunId);expect(run.inputs.records.map(r=>r.date).sort()).toEqual(['2026-03-31','2026-04-01','2026-05-01']);expect(run.inputs.records.find(r=>r.date==='2026-03-31').notes).toBe('boundary evidence');expect(run.salaries[0].grossSalary).toBe(1600);});
+ it('genuinely oversized relevant evidence fails atomically',async()=>{fake.data.get('clockRecords/C1').notes='x'.repeat(810000);await readyAttendance();const before=JSON.stringify([...fake.data]);const response=await call('lock-month',{yearMonth:month});expect(response.statusCode).toBe(409);expect(response.body).toContain('快照過大');expect(JSON.stringify([...fake.data])).toBe(before);expect(fake.data.get('clockRecords/C1').notes.length).toBe(810000);});
 });
 
 describe('public bootstrap fails closed, existing login preserved',()=>{
@@ -170,7 +186,7 @@ describe('payroll review access and explicit input contract', () => {
  });
  it('requires an explicit positive monthly hourly divisor for monthly employees', async () => {
   fake.data.get('employees/SYNTH').position = '專責人員';
-  const payload = structuredClone(review); delete payload.policy.monthlyHourlyDivisor;
+  const payload = structuredClone(review); payload.payBasis='monthly'; delete payload.policy.monthlyHourlyDivisor;
   expect((await call('review-payroll-inputs', { empId: employee.id, review: payload })).statusCode).toBe(400);
   payload.policy.monthlyHourlyDivisor = 240;
   expect((await call('review-payroll-inputs', { empId: employee.id, review: payload })).statusCode).toBe(200);
@@ -230,6 +246,8 @@ describe('month-scoped payroll reviews preserve prior decisions and basis', () =
  it('retains two months when reviewed before either month locks', async () => {
   fake.data.set('clockRecords/MAY', card('2026-05-01'));
   for (const selectedMonth of [month, '2026-05']) expect((await call('review-payroll-inputs', { empId: employee.id, review: reviewFor(selectedMonth) })).statusCode).toBe(200);
+  for (const selectedMonth of [month, '2026-05']) fake.data.set('dailySchedule/'+selectedMonth+'-01',schedule(selectedMonth+'-01'));
+  for (const selectedMonth of [month, '2026-05']) await readyAttendance(selectedMonth);
   for (const selectedMonth of [month, '2026-05']) {
    const details = JSON.parse((await call('get-employee-salary', { empId: employee.id, yearMonth: selectedMonth })).body);
    expect(details).toMatchObject({ calculationStatus: 'ready', grossSalary: 1600, policyVersion: 'review-' + selectedMonth });
@@ -241,9 +259,13 @@ describe('month-scoped payroll reviews preserve prior decisions and basis', () =
   expect(fake.data.get('payrollReviews/SYNTH_2026-05').review.policy.version).toBe('review-2026-05');
  });
  it('invalidates a scoped review after rate changes and never falls back to the legacy review', async () => {
+  await readyAttendance();
   await call('review-payroll-inputs', { empId: employee.id, review });
   const priorKey = fake.data.get('payrollReviews/SYNTH_' + month).employeeSourceKey;
-  expect((await call('update-employee', { empId: employee.id, updates: { hourlyRate: 250 } })).statusCode).toBe(200);
+  // C1 makes legacy salary writes read-only; simulate an out-of-band source change
+  // to retain the original stale-source protection regression.
+  expect((await call('update-employee', { empId: employee.id, updates: { hourlyRate: 250 } })).statusCode).toBe(409);
+  fake.data.get('employees/SYNTH').hourlyRate = 250;
   // Even a legacy value matching this month cannot rescue the stale scoped document.
   fake.data.get('employees/SYNTH').payrollReview = structuredClone(review);
   const inputs = JSON.parse((await call('get-payroll-review-inputs', { yearMonth: month })).body);
@@ -253,6 +275,7 @@ describe('month-scoped payroll reviews preserve prior decisions and basis', () =
   expect(fake.data.has('monthLocks/' + month)).toBe(false);
   expect((await call('review-payroll-inputs', { empId: employee.id, review })).statusCode).toBe(200);
   expect(fake.data.get('payrollReviews/SYNTH_' + month).employeeSourceKey).not.toBe(priorKey);
+  await rescanAttendance();
   expect(JSON.parse((await call('get-employee-salary', { empId: employee.id, yearMonth: month })).body)).toMatchObject({ calculationStatus: 'ready', grossSalary: 2000 });
  });
  it.each([
@@ -271,6 +294,7 @@ describe('month-scoped payroll reviews preserve prior decisions and basis', () =
  });
  it('preserves frozen scoped-review salary after later source changes', async () => {
   await call('review-payroll-inputs', { empId: employee.id, review });
+  await readyAttendance();
   expect((await call('lock-month', { yearMonth: month })).statusCode).toBe(200);
   fake.data.get('employees/SYNTH').hourlyRate = 999;
   expect(JSON.parse((await call('get-employee-salary', { empId: employee.id, yearMonth: month })).body)).toMatchObject({ calculationStatus: 'locked', grossSalary: 1600 });
@@ -293,6 +317,12 @@ describe('review form evidence read/save contract', () => {
   expect(target.employeeSourceKey).toMatch(/^[a-f0-9]{64}$/);
   const candidate = structuredClone(review); candidate.scheduleExceptions = [{ date: event.date, reason: '當日班次取消，已核實', sourceKey: result.scheduleGaps[0].sourceKey }];
   expect((await call('review-payroll-inputs', { empId: employee.id, review: candidate, expectedEmployeeSourceKey: target.employeeSourceKey })).statusCode).toBe(200);
+  const pending=JSON.parse((await call('get-employee-salary', {empId:employee.id,yearMonth:month})).body);
+  expect(pending.preflight.trialStatus).not.toBe('READY');
+  expect((await call('lock-month',{yearMonth:month})).statusCode).toBe(409);
+  expect((await call('update-schedule',{event:{...event,shifts:[]}})).statusCode).toBe(200);
+  expect((await call('review-payroll-inputs',{empId:employee.id,review})).statusCode).toBe(200);
+  await readyAttendance();
   expect(JSON.parse((await call('get-employee-salary', { empId: employee.id, yearMonth: month })).body)).toMatchObject({ calculationStatus: 'ready', grossSalary: 1600 });
  });
  it('rejects a stale form basis without persisting a new monthly review', async () => {
@@ -314,6 +344,11 @@ describe('schedule gap record identity stays consistent from preview through set
   expect(result.scheduleGaps).toEqual([expect.objectContaining({ empId: employee.id, date: event.date, scheduledMinutes: 480, coveredMinutes: 180 })]);
   const candidate = structuredClone(review); candidate.scheduleExceptions = [{ date: event.date, reason: '核實提早離場，剩餘班次取消', sourceKey: result.scheduleGaps[0].sourceKey }];
   expect((await call('review-payroll-inputs', { empId: employee.id, review: candidate })).statusCode).toBe(200);
+  expect(JSON.parse((await call('get-employee-salary',{empId:employee.id,yearMonth:month})).body).preflight.trialStatus).not.toBe('READY');
+  expect((await call('lock-month',{yearMonth:month})).statusCode).toBe(409);
+  expect((await call('update-schedule',{event:schedule(event.date,'09:00','12:00')})).statusCode).toBe(200);
+  expect((await call('review-payroll-inputs',{empId:employee.id,review})).statusCode).toBe(200);
+  await readyAttendance(month,{[event.date]:180});
   expect(JSON.parse((await call('get-employee-salary', { empId: employee.id, yearMonth: month })).body)).toMatchObject({ calculationStatus: 'ready', grossSalary: 600 });
   const response = await call('lock-month', { yearMonth: month }); expect(response.statusCode).toBe(200);
   const run = fake.data.get('payrollRuns/' + JSON.parse(response.body).payrollRunId);
@@ -330,21 +365,23 @@ describe('preflight locks use the same result as salary reads',()=>{
   expect([...fake.data.keys()].some(k=>k.startsWith('payrollRuns/')||k.startsWith('monthLocks/')||k.startsWith('payrollControl/'))).toBe(false);
  });
  it('pending swap for the receiving employee blocks settlement',async()=>{fake.data.set('shiftSwapRequests/S',{id:'S',fromEmpId:'OTHER',toEmpId:'SYNTH',fromDate:'2026-04-01',toDate:'2026-04-02',status:'awaiting-peer'});expect((await call('lock-month',{yearMonth:month})).statusCode).toBe(409);});
- it('after explicit rejection, re-read and lock agree on READY',async()=>{fake.data.set('makeupRequests/P',{empId:'SYNTH',date:'2026-04-01',status:'待審核'});expect((await call('lock-month',{yearMonth:month})).statusCode).toBe(409);expect((await call('approve-makeup-request',{requestId:'P',status:'駁回',rejectReason:'synthetic resolved'})).statusCode).toBe(200);const salaries=JSON.parse((await call('get-all-salary-details',{yearMonth:month})).body);expect(salaries[0].preflight.trialStatus).toBe('READY');expect((await call('lock-month',{yearMonth:month})).statusCode).toBe(200);});
+ it('after explicit rejection, re-read and lock agree on READY',async()=>{fake.data.set('makeupRequests/P',{empId:'SYNTH',date:'2026-04-01',status:'待審核'});expect((await call('lock-month',{yearMonth:month})).statusCode).toBe(409);expect((await call('approve-makeup-request',{requestId:'P',status:'駁回',rejectReason:'synthetic resolved'})).statusCode).toBe(200);await readyAttendance();const salaries=JSON.parse((await call('get-all-salary-details',{yearMonth:month})).body);expect(salaries[0].preflight.trialStatus).toBe('READY');expect((await call('lock-month',{yearMonth:month})).statusCode).toBe(200);});
  it('new pending makeup after a lock cannot be inserted',async()=>{lock();const r=await call('submit-makeup-request',{date:'2026-04-01',type:'下班',requestedClockOut:'18:00',reason:'synthetic correction'});expect(r.statusCode).toBe(423);expect([...fake.data.keys()].some(k=>k.startsWith('makeupRequests/'))).toBe(false);});
- it('legacy locked snapshot reads are not rewritten by live pending requests',async()=>{expect((await call('lock-month',{yearMonth:month})).statusCode).toBe(200);fake.data.set('makeupRequests/LATE',{empId:'SYNTH',date:'2026-04-01',status:'待審核'});const salary=JSON.parse((await call('get-employee-salary',{empId:'SYNTH',yearMonth:month})).body);expect(salary.calculationStatus).toBe('locked');expect(salary.netSalary).toBe(1600);});
+ it('legacy locked snapshot reads are not rewritten by live pending requests',async()=>{await readyAttendance();expect((await call('lock-month',{yearMonth:month})).statusCode).toBe(200);fake.data.set('makeupRequests/LATE',{empId:'SYNTH',date:'2026-04-01',status:'待審核'});const salary=JSON.parse((await call('get-employee-salary',{empId:'SYNTH',yearMonth:month})).body);expect(salary.calculationStatus).toBe('locked');expect(salary.netSalary).toBe(1600);});
 });
 
 describe('unmocked formal eligibility and applied correction evidence',()=>{
  beforeEach(async()=>{const actual=await vi.importActual<typeof import('../netlify/functions/utils/payrollPreflight')>('../netlify/functions/utils/payrollPreflight');vi.mocked(assertPayrollReady).mockImplementation(actual.assertPayrollReady);});
  it('required missing capabilities block every new formal lock without any writes while retaining1600 trial',async()=>{
+  await readyAttendance();
   const result=JSON.parse((await call('get-employee-salary',{empId:'SYNTH',yearMonth:month})).body);
   expect(result.preflight).toMatchObject({status:'BLOCKED',trialStatus:'READY'});expect(result.netSalary).toBe(1600);
   const before=JSON.stringify([...fake.data]);expect((await call('lock-month',{yearMonth:month,skipGaps:true,confirmation:'all verified'})).statusCode).toBe(409);expect(JSON.stringify([...fake.data])).toBe(before);
  });
  it('approved18:00 without application evidence cannot pass trial with current17:00',async()=>{
+  await readyAttendance();
   fake.data.set('makeupRequests/P',{empId:'SYNTH',date:'2026-04-01',recordId:'C1',status:'核准',requestedClockOut:'18:00',approver:'ADMIN',approvalDate:review.reviewedAt});
-  const salary=JSON.parse((await call('get-employee-salary',{empId:'SYNTH',yearMonth:month})).body);expect(salary.preflight.trialStatus).toBe('NEEDS_REVIEW');expect(salary.preflight.issues.some(i=>i.code==='APPLICATION_UNVERIFIED')).toBe(true);expect(salary.netSalary).toBeNull();expect((await call('lock-month',{yearMonth:month})).statusCode).toBe(409);
+  const salary=JSON.parse((await call('get-employee-salary',{empId:'SYNTH',yearMonth:month})).body);expect(salary.preflight.trialStatus).toBe('BLOCKED');expect(salary.preflight.issues.some(i=>i.code==='APPLICATION_UNVERIFIED')).toBe(true);expect(salary.netSalary).toBeNull();expect((await call('lock-month',{yearMonth:month})).statusCode).toBe(409);
  });
  it('application is atomic, idempotent, preserves raw before evidence and follows later legitimate correction',async()=>{
   const raw=structuredClone(fake.data.get('clockRecords/C1'));
@@ -356,10 +393,14 @@ describe('unmocked formal eligibility and applied correction evidence',()=>{
   expect([...fake.data.keys()].filter(k=>k.startsWith('attendanceRevisions/'))).toHaveLength(1);
   expect(fake.data.get('makeupRequests/P').appliedEvidence).toEqual(applied);
   expect((await call('update-clock-record',{recordId:'C1',clockInTime:'09:00',clockOutTime:'17:00',workIntervals:[{start:540,end:1020}]})).statusCode).toBe(200);
+  await readyAttendance();
   const salary=JSON.parse((await call('get-employee-salary',{empId:'SYNTH',yearMonth:month})).body);expect(salary.preflight.trialStatus).toBe('READY');expect(salary.netSalary).toBe(1600);expect(salary.preflight.status).toBe('BLOCKED');
   expect(fake.data.get('attendanceRevisions/'+applied.revisionId)).toEqual(originalRevision);
   fake.data.get('clockRecords/C1').attendanceRevisionId='MISSING';
-  expect(JSON.parse((await call('get-employee-salary',{empId:'SYNTH',yearMonth:month})).body).preflight.trialStatus).toBe('NEEDS_REVIEW');
+  const invalidated=JSON.parse((await call('get-employee-salary',{empId:'SYNTH',yearMonth:month})).body);
+  expect(invalidated.preflight.trialStatus).toBe('BLOCKED');
+  expect(invalidated.preflight.issues.some(i=>i.code==='APPLICATION_UNVERIFIED')).toBe(true);
+  expect(invalidated.netSalary).toBeNull();
  });
  it('locked correction approval leaves request, card and revision collections unchanged',async()=>{
   lock();fake.data.set('makeupRequests/P',{empId:'SYNTH',date:'2026-04-01',recordId:'C1',status:'待審核',requestedClockOut:'18:00'});const before=JSON.stringify([...fake.data]);expect((await call('approve-makeup-request',{requestId:'P',status:'核准'})).statusCode).toBe(423);expect(JSON.stringify([...fake.data])).toBe(before);
@@ -419,6 +460,7 @@ it('B2 incomplete source scan aborts atomically at the bounded read limit',async
  expect([...fake.data.keys()].some(k=>k.startsWith('attendanceCases/')||k.startsWith('attendanceCaseOutbox/')||k.startsWith('payrollControl/'))).toBe(false);
 });
 it('B2 unknown scope cases keep distinct month identities instead of overwriting prior-month evidence',async()=>{
+ delete fake.data.get('employees/SYNTH').hireDate; // Explicitly unknown employment authority for both monthly scopes.
  for(const yearMonth of [month,'2026-05'])expect((await call('scan-attendance-cases',{empId:'SYNTH',yearMonth})).statusCode).toBe(200);
  const all=[...fake.data.entries()].filter(([k])=>k.startsWith('attendanceCases/')).map(([,v])=>v);
  const a=all.find(c=>c.anchor==='scope:2026-04'&&c.type==='pending-request'),b=all.find(c=>c.anchor==='scope:2026-05'&&c.type==='pending-request');
@@ -621,3 +663,70 @@ describe('B5a overtime workflow separates work, request, approval and statutory 
  it('approved source drift is visible and 8h candidate trigger is idempotent, never classifies day/pay',async()=>{p();fake.data.set('clockRecords/C1',card('2026-04-01','09:00','19:00'));const r=JSON.parse((await submit()).body);login('ADMIN');expect((await call('act-overtime-request',await cmd(r,'approve',{intervals:[input]}))).statusCode).toBe(200);fake.data.get('clockRecords/C1').clockOutTime='20:00';const state=JSON.parse((await call('get-overtime-workflow',{empId:'SYNTH'})).body);expect(state.requests[0].sourceChanged).toBe(true);expect(state.requests[0].statutoryPayableMinutes).toBeNull();const first=await call('scan-overtime-candidates',{empId:'SYNTH',yearMonth:month});expect(first.statusCode,first.body).toBe(200);const n=[...fake.data.keys()].filter(k=>k.startsWith('attendanceCaseOutbox/')).length;expect((await call('scan-overtime-candidates',{empId:'SYNTH',yearMonth:month})).statusCode).toBe(200);expect([...fake.data.keys()].filter(k=>k.startsWith('attendanceCaseOutbox/'))).toHaveLength(n);expect([...fake.data.entries()].some(([k,v])=>k.startsWith('attendanceCases/')&&v.anchor==='overtime-candidate:2026-04-01'&&v.observation.payrollDecision==='none')).toBe(true);});
 });
 it('B5a cross-midnight source union deduplicates overlapping records across month boundaries',async()=>{vi.mocked(adminAuth.verifyIdToken).mockResolvedValue({uid:'SYNTH'} as any);fake.data.get('employees/SYNTH').role=UserRole.Employee;const r={...card('2026-04-30','22:00','06:00',false),clockInAt:'2026-04-30T22:00:00+08:00',clockOutAt:'2026-05-01T06:00:00+08:00',workIntervals:[{start:1320,end:1800}]};r.workReview={sourceKey:clockSourceKey(r),reviewedBy:'ADMIN',reviewedAt:review.reviewedAt};fake.data.set('clockRecords/C1',r);fake.data.set('clockRecords/C2',card('2026-05-01','01:00','03:00'));const response=await call('submit-overtime-request',{phase:'after',kind:'offsite',startDate:'2026-04-30T23:00:00+08:00',endDate:'2026-05-01T02:00:00+08:00',reason:'合成跨月去重工作',operationId:'cross-union'});expect(response.statusCode,response.body).toBe(200);expect(JSON.parse(response.body)).toMatchObject({actualWorkMinutes:180,requestedMinutes:180,approvedMinutes:null,statutoryPayableMinutes:null,dayType:'unverified'});expect(JSON.parse(response.body).actualSource.refs).toHaveLength(2);});
+
+describe('salary reads and lock revalidate terminal attendance source evidence',()=>{
+ beforeEach(()=>{vi.mocked(adminAuth.verifyIdToken).mockResolvedValue({uid:'ADMIN'} as any);});
+ const scan=()=>call('scan-attendance-cases',{empId:employee.id,yearMonth:month});
+ const currentCase=()=>[...fake.data.entries()].find(([k,v])=>k.startsWith('attendanceCases/')&&v.type==='missing-in'&&v.anchor==='card:C1')![1];
+ const setupClosed=async()=>{
+  fake.data.set('clockRecords/C1',{...card(),clockInTime:null,clockInAt:null,workReview:null,workIntervals:[]});
+  expect((await scan()).statusCode).toBe(200);
+  fake.data.set('clockRecords/C1',card());expect((await scan()).statusCode).toBe(200);
+  const c=currentCase();expect(c.status).toBe('resolved');return c.id;
+ };
+ const salary=async()=>{const r=await call('get-employee-salary',{empId:employee.id,yearMonth:month});expect(r.statusCode,r.body).toBe(200);return JSON.parse(r.body);};
+ const issue=(s:any,id:string)=>s.preflight.issues.find((i:any)=>i.source==='attendanceCases'&&i.sourceId===id);
+ it('GET is read-only, source changes require retained rescan, then clearance is current again',async()=>{
+  const id=await setupClosed(),original=JSON.stringify([...fake.data]);expect(issue(await salary(),id)).toBeUndefined();expect(JSON.stringify([...fake.data])).toBe(original);
+  fake.data.set('clockRecords/C1',card(undefined,'09:00','18:00'));const before=JSON.stringify([...fake.data]);
+  expect(issue(await salary(),id)?.code).toBe('APPLICATION_UNVERIFIED');expect(JSON.stringify([...fake.data])).toBe(before);
+  expect((await scan()).statusCode).toBe(200);expect(currentCase().history.length).toBeGreaterThan(2);
+  expect(issue(await salary(),id)).toBeUndefined();const rescanned=JSON.stringify([...fake.data]);expect((await scan()).statusCode).toBe(200);expect(currentCase().history.length).toBe(JSON.parse(rescanned).find(([k]:any)=>k==='attendanceCases/'+id)[1].history.length);
+ });
+ it('deleted source stays unknown, and lock receives the same fresh assessment without partial writes',async()=>{
+  const id=await setupClosed();fake.data.delete('clockRecords/C1');expect(issue(await salary(),id)?.code).toBe('APPLICATION_UNVERIFIED');
+  let captured:any;vi.mocked(assertPayrollReady).mockImplementation(r=>{captured=r;throw Object.assign(new Error('synthetic inspection: no formal lock'),{statusCode:409});});
+  const before=JSON.stringify([...fake.data]);expect((await call('lock-month',{yearMonth:month})).statusCode).toBe(409);
+  expect(issue(captured.salaries.find((s:any)=>s.empId===employee.id),id)?.code).toBe('APPLICATION_UNVERIFIED');expect(JSON.stringify([...fake.data])).toBe(before);
+ });
+});
+
+describe('payroll item inventory API evidence boundaries',()=>{
+ const inventory={empId:employee.id,month,mode:'none',sourceRefs:['SYNTH-CHECK'],reason:'合成本月項目盤點',items:[]};
+ const login=(uid='ADMIN')=>vi.mocked(adminAuth.verifyIdToken).mockResolvedValue({uid} as any);
+ beforeEach(()=>{login();fake.data.get('employees/'+employee.id).role=UserRole.Employee;fake.data.set('employees/REVIEWER',{...fake.data.get('employees/ADMIN'),id:'REVIEWER'});});
+ it('missing is not explicit none; independent approval records evidence without salary adoption',async()=>{
+  const get=()=>call('get-payroll-item-inventory',{empId:employee.id,month});
+  expect(JSON.parse((await get()).body).assessment.status).toBe('missing');
+  const proposal={inventory,expectedRevision:0,operationId:'api-items-propose'};
+  expect((await call('propose-payroll-item-inventory',{...proposal,caseId:'client-scope'})).statusCode).toBe(400);
+  const p=await call('propose-payroll-item-inventory',proposal);expect(p.statusCode,p.body).toBe(200);
+  const command={empId:employee.id,month,expectedRevision:1,mode:'approve',reason:'第二人合成來源核定',operationId:'api-items-review'};
+  expect((await call('review-payroll-item-inventory',command)).statusCode).toBe(403);
+  login('REVIEWER');const approved=await call('review-payroll-item-inventory',command);expect(approved.statusCode,approved.body).toBe(200);
+  expect(JSON.parse(approved.body)).toMatchObject({status:'approved',applicationStatus:'not-applied',paymentStatus:'not-paid',legalValidation:'unresolved'});
+  login(employee.id);const read=await get();expect(read.statusCode,read.body).toBe(200);expect(JSON.parse(read.body)).toMatchObject({canManage:false,assessment:{status:'confirmed-none',formalEligibility:'BLOCKED'}});
+  expect([...fake.data.keys()].some(k=>k.startsWith('payrollRuns/')||k.startsWith('monthLocks/'))).toBe(false);
+ });
+ it('missing immutable revision blocks API reads and review without partial writes',async()=>{
+  const p=await call('propose-payroll-item-inventory',{inventory,expectedRevision:0,operationId:'api-items-history'});expect(p.statusCode,p.body).toBe(200);const id=JSON.parse(p.body).id;
+  fake.data.delete('payrollItemInventoryVersions/'+id+'_1');login('REVIEWER');const before=JSON.stringify([...fake.data]);
+  expect((await call('get-payroll-item-inventory',{empId:employee.id,month})).statusCode).toBe(409);
+  expect((await call('review-payroll-item-inventory',{empId:employee.id,month,expectedRevision:1,mode:'approve',reason:'第二人來源核對測試',operationId:'api-items-bad-history'})).statusCode).toBe(409);
+  expect(JSON.stringify([...fake.data])).toBe(before);
+ });
+});
+
+it('modern salary GET and locked calculation preserve identical exact source evidence',async()=>{
+ vi.mocked(adminAuth.verifyIdToken).mockResolvedValue({uid:'ADMIN'} as any);
+ const {seedMasterPayroll}=await import('./fixtures/masterPayroll');
+ fake.data.get('employees/'+employee.id).privateContact='SYNTHETIC_PRIVATE_FIELD';
+ await seedMasterPayroll((path,value)=>{fake.data.set(path,value);},fake.data.get('employees/'+employee.id),'ADMIN');
+ await readyAttendance(month,{'2026-04-01':540});
+ const response=await call('get-employee-salary',{empId:employee.id,yearMonth:month});expect(response.statusCode,response.body).toBe(200);const salary=JSON.parse(response.body);
+ expect(salary.normalPayPreview.combined.status).toBe('ready');expect(salary.normalPayPreview.combined.amount).toBe('1866.67');
+ let captured:any;vi.mocked(assertPayrollReady).mockImplementation(r=>{captured=r;throw Object.assign(new Error('synthetic inspection only'),{statusCode:409});});
+ const before=JSON.stringify([...fake.data]);expect((await call('lock-month',{yearMonth:month})).statusCode).toBe(409);
+ const locked=captured.salaries.find((s:any)=>s.empId===employee.id);expect(locked.normalPayPreview).toEqual(salary.normalPayPreview);expect(locked.insuranceDetail).toEqual(salary.insuranceDetail);expect(locked.withholdingDetail).toEqual(salary.withholdingDetail);expect(JSON.stringify([...fake.data])).toBe(before);
+ vi.mocked(assertPayrollReady).mockImplementation(trialTransactionGate);const result=await call('lock-month',{yearMonth:month});expect(result.statusCode,result.body).toBe(200);const run=fake.data.get('payrollRuns/'+JSON.parse(result.body).payrollRunId);expect(run.salaries.find((s:any)=>s.empId===employee.id).normalPayPreview).toEqual(salary.normalPayPreview);expect(run.inputs.employees.find((e:any)=>e.id===employee.id).normalPayDays).toHaveLength(30);expect(JSON.stringify(run)).not.toContain('SYNTHETIC_PRIVATE_FIELD');
+});
