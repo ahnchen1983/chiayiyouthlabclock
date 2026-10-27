@@ -219,6 +219,7 @@ const AdminDashboard: React.FC = () => {
         onLogout={logout}
         onChangePassword={() => setShowChangePassword(true)}
         toolbar={<NotificationBell />}
+        workbench={currentView === 'overview'}
       >
         <Suspense fallback={<ViewLoadingFallback />}>
           {renderView()}

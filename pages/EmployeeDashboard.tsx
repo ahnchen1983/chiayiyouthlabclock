@@ -24,6 +24,7 @@ const ShiftSwapPage        = lazy(() => import('../components/employee/ShiftSwap
 import ChangePasswordModal from '../components/ChangePasswordModal';
 import NotificationBell from '../components/NotificationBell';
 import { NavShell, type ShellGroup, type ShellLink } from '../components/shell/NavShell';
+import { CalendarIcon, CheckSquareIcon, ClockIcon, DollarIcon, LeafIcon } from '../components/icons';
 
 // View 切換時的 Suspense fallback — 強制保留高度避免主區塊跳動
 const ViewLoadingFallback: React.FC = () => (
@@ -38,31 +39,60 @@ const ViewLoadingFallback: React.FC = () => (
 
 type View = 'home' | 'master' | 'comp' | 'overtime' | 'cases' | 'clock' | 'schedule' | 'records' | 'leave' | 'fullSchedule' | 'salary' | 'makeup' | 'leaveBalance' | 'preferences' | 'openShifts' | 'leaveOfAbsence' | 'shiftSwap';
 
-const EmployeeHome: React.FC<{ onOpen: (view: View) => void }> = ({ onOpen }) => (
-  <section className="yl-home">
-    <p className="yl-home-kicker">WORKSPACE</p>
-    <h1>今天的工作，從這裡開始</h1>
-    <p>出勤、請假、班表與薪資明細分成旁邊的主要項目。這一頁只負責帶路，不計算薪資，也不執行給付。</p>
-    <div className="yl-home-grid">
-      <button type="button" className="yl-home-card" onClick={() => onOpen('clock')}>
-        <strong>去打卡</strong>
-        <span>上班、休息與今日出勤</span>
-      </button>
-      <button type="button" className="yl-home-card" onClick={() => onOpen('leave')}>
-        <strong>去請假</strong>
-        <span>請假、留停、補休與加班</span>
-      </button>
-      <button type="button" className="yl-home-card" onClick={() => onOpen('schedule')}>
-        <strong>看班表</strong>
-        <span>我的班表、總班表與換班</span>
-      </button>
-      <button type="button" className="yl-home-card" onClick={() => onOpen('salary')}>
-        <strong>看薪資明細</strong>
-        <span>只讀明細，不是發薪</span>
-      </button>
-    </div>
-  </section>
-);
+const EmployeeHome: React.FC<{ name: string; onOpen: (view: View) => void }> = ({ name, onOpen }) => {
+  const now = new Date();
+  const hour = now.getHours();
+  const hello = hour < 11 ? '早安' : hour < 18 ? '午安' : '晚安';
+  const eyebrow = new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric' }).format(now).toUpperCase();
+  const who = name.trim() || '同事';
+  return (
+    <section className="yl-workbench">
+      <div className="yl-page-heading">
+        <div>
+          <div className="yl-eyebrow">{eyebrow}</div>
+          <h1>{hello}，{who}。</h1>
+          <p>把出勤、假勤與班表放在一起。薪資明細只供查看，這裡不發薪。</p>
+        </div>
+        <button type="button" className="yl-primary" onClick={() => onOpen('leave')}>前往請假</button>
+      </div>
+      <div className="yl-summary">
+        <button type="button" className="yl-stat is-label" onClick={() => onOpen('clock')}>
+          <span className="yl-stat-icon mint" aria-hidden="true"><ClockIcon /></span>
+          <small>出勤</small>
+          <strong>今日打卡</strong>
+          <span className="yl-stat-foot">紀錄、異常與補打卡</span>
+        </button>
+        <button type="button" className="yl-stat is-label" onClick={() => onOpen('leave')}>
+          <span className="yl-stat-icon sand" aria-hidden="true"><CheckSquareIcon /></span>
+          <small>假勤</small>
+          <strong>請假與簽核</strong>
+          <span className="yl-stat-foot">留停、補休與加班</span>
+        </button>
+        <button type="button" className="yl-stat is-label" onClick={() => onOpen('schedule')}>
+          <span className="yl-stat-icon blue" aria-hidden="true"><CalendarIcon /></span>
+          <small>班表</small>
+          <strong>我的安排</strong>
+          <span className="yl-stat-foot">總班表、換班與認領</span>
+        </button>
+        <button type="button" className="yl-stat is-label" onClick={() => onOpen('salary')}>
+          <span className="yl-stat-icon lilac" aria-hidden="true"><DollarIcon /></span>
+          <small>薪資</small>
+          <strong>明細查看</strong>
+          <span className="yl-stat-foot">只讀，不是給付</span>
+        </button>
+      </div>
+      <section className="yl-welcome">
+        <div>
+          <div className="yl-eyebrow">A LITTLE SPACE</div>
+          <h2>工作有節奏，班表看得到。</h2>
+          <p>休息與班次都在班表裡。正式薪資仍不在這個工作台計算。</p>
+          <button type="button" onClick={() => onOpen('schedule')}>看看班表</button>
+        </div>
+        <div className="yl-welcome-mark" aria-hidden="true"><LeafIcon /></div>
+      </section>
+    </section>
+  );
+};
 
 const EmployeeDashboard: React.FC = () => {
   const { user, logout } = useAuth();
@@ -71,7 +101,7 @@ const EmployeeDashboard: React.FC = () => {
 
   const renderView = () => {
     switch (currentView) {
-      case 'home': return <EmployeeHome onOpen={setCurrentView} />;
+      case 'home': return <EmployeeHome name={user?.name ?? ''} onOpen={setCurrentView} />;
       case 'master': return <PayrollMasterTimeline />;
       case 'comp': return <CompWorkflow />;
       case 'overtime': return <OvertimeWorkflow />;
@@ -161,6 +191,7 @@ const EmployeeDashboard: React.FC = () => {
         onLogout={logout}
         onChangePassword={() => setShowChangePassword(true)}
         toolbar={<NotificationBell />}
+        workbench={currentView === 'home'}
       >
         <Suspense fallback={<ViewLoadingFallback />}>
           {renderView()}

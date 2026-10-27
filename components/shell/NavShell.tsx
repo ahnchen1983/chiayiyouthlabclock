@@ -39,10 +39,31 @@ type NavShellProps<V extends string> = {
   onLogout: () => void;
   onChangePassword: () => void;
   toolbar?: React.ReactNode;
+  workbench?: boolean;
   children: React.ReactNode;
 };
 
 const e2eNav = import.meta.env.VITE_E2E === 'true';
+
+function pageNote(groupId: string | undefined, advanced: boolean) {
+  if (advanced && !groupId) return '設定與覆核放在這裡。這些畫面只核對資料，不執行給付。';
+  switch (groupId) {
+    case 'attendance':
+      return '今日到班、紀錄與待補事項。';
+    case 'leave':
+      return '申請、餘額與簽核放在一起。';
+    case 'schedule':
+      return '班次、認領與換班集中在這裡。';
+    case 'salary':
+      return '只供查看。這裡不計算、也不發薪。';
+    case 'people':
+      return '名冊與在職資料。';
+    default:
+      return advanced
+        ? '設定與覆核放在這裡。這些畫面只核對資料，不執行給付。'
+        : '這一區的工作放在下面。';
+  }
+}
 
 const ICONS: Record<ShellIconName, React.FC<{ className?: string }>> = {
   home: DashboardIcon,
@@ -75,6 +96,7 @@ export function NavShell<V extends string>({
   onLogout,
   onChangePassword,
   toolbar,
+  workbench = false,
   children,
 }: NavShellProps<V>) {
   const groupFor = (view: V) => groups.find((group) => group.links.some((link) => link.view === view));
@@ -132,7 +154,7 @@ export function NavShell<V extends string>({
           </span>
           <span>
             <strong>有事青年</strong>
-            <small>YOUTH LAB</small>
+            <small>YOUTH LAB · PEOPLE</small>
           </span>
         </button>
         <div className="yl-workspace">
@@ -242,7 +264,9 @@ export function NavShell<V extends string>({
           </button>
           <div className="yl-crumb">
             <span>{contextTitle}</span>
-            <span aria-hidden="true">/</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+              <path d="m9 18 6-6-6-6" />
+            </svg>
             <strong>{leaf}</strong>
           </div>
           <div className="yl-top-actions">
@@ -250,7 +274,20 @@ export function NavShell<V extends string>({
             <div className="yl-avatar" aria-hidden="true">{initial}</div>
           </div>
         </header>
-        <main className="yl-content">{children}</main>
+        <div className="yl-content">
+          <div className="yl-canvas">
+            {!workbench && (
+              <div className="yl-page-heading">
+                <div>
+                  <div className="yl-eyebrow">YOUTH LAB / {groupFor(currentView)?.label ?? '進階／設定'}</div>
+                  <p className="yl-title">{leaf}</p>
+                  <p>{pageNote(groupFor(currentView)?.id, advancedLinks.some((link) => link.view === currentView))}</p>
+                </div>
+              </div>
+            )}
+            {children}
+          </div>
+        </div>
         <nav className="yl-bottom" aria-label="手機主要導覽">
           {groups.map((group) => {
             const active = group.links.some((link) => link.view === currentView);

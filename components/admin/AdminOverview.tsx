@@ -3,46 +3,33 @@ import { taipeiDate } from '../../utils/attendance';
 
 import React, { useState, useEffect } from 'react';
 import { apiGetDashboardStats, apiGetAllPartTimeHours } from '../../services/googleAppsScriptAPI';
-import { UsersIcon, ClockIcon, CheckSquareIcon, ListIcon } from '../icons';
+import { UsersIcon, ClockIcon, CheckSquareIcon, ListIcon, LeafIcon } from '../icons';
 import { DashboardStats, TodayAttendanceComparison, PendingItem, PartTimeHourInfo } from '../../types';
 
-// 統計卡片
 const StatCard: React.FC<{
     icon: React.ReactNode;
+    tone: 'mint' | 'sand' | 'lilac' | 'blue';
     title: string;
-    value: string | number;
-    subValue?: string;
-    color: string;
-}> = ({ icon, title, value, subValue, color }) => (
-    <div className="bg-white p-5 rounded-lg shadow-md flex items-center space-x-4">
-        <div className={`p-3 rounded-full ${color}`}>
-            {icon}
-        </div>
-        <div>
-            <p className="text-sm text-gray-500">{title}</p>
-            <p className="text-2xl font-bold text-gray-800">{value}</p>
-            {subValue && <p className="text-xs text-gray-400">{subValue}</p>}
-        </div>
-    </div>
+    value: React.ReactNode;
+    foot: string;
+}> = ({ icon, tone, title, value, foot }) => (
+    <article className="yl-stat">
+        <span className={`yl-stat-icon ${tone}`} aria-hidden="true">{icon}</span>
+        <small>{title}</small>
+        <strong>{value}</strong>
+        <span className="yl-stat-foot">{foot}</span>
+    </article>
 );
 
-// 出勤狀態標籤
 const AttendanceStatusBadge: React.FC<{ status: TodayAttendanceComparison['status'] }> = ({ status }) => {
-    const colorMap: Record<TodayAttendanceComparison['status'], string> = {
-        '已到': 'bg-green-100 text-green-800',
-        '未到': 'bg-red-100 text-red-800',
-        '遲到': 'bg-yellow-100 text-yellow-800',
-        '早退': 'bg-orange-100 text-orange-800',
-        '遲到+早退': 'bg-red-100 text-red-800',
-        '異常': 'bg-red-100 text-red-800',
-        '休假': 'bg-blue-100 text-blue-800',
-        '未排班': 'bg-gray-100 text-gray-500',
-    };
-    return (
-        <span className={`px-2 py-1 rounded-full text-xs font-medium ${colorMap[status]}`}>
-            {status}
-        </span>
-    );
+    const tone = status === '已到' || status === '休假'
+        ? ''
+        : status === '未排班'
+            ? 'muted'
+            : status === '遲到' || status === '早退'
+                ? 'warn'
+                : 'bad';
+    return <span className={tone ? `yl-badge ${tone}` : 'yl-badge'}>{status}</span>;
 };
 
 // 待處理事項優先級標籤
@@ -57,13 +44,13 @@ const PriorityBadge: React.FC<{ priority: PendingItem['priority'] }> = ({ priori
 
 // 待處理事項類型圖示
 const PendingTypeIcon: React.FC<{ type: PendingItem['type'] }> = ({ type }) => {
-    const iconMap: Record<PendingItem['type'], { bg: string; icon: React.ReactNode }> = {
-        '請假審核': { bg: 'bg-blue-100 text-blue-600', icon: <CheckSquareIcon className="w-4 h-4" /> },
-        '時數警示': { bg: 'bg-yellow-100 text-yellow-600', icon: <ClockIcon className="w-4 h-4" /> },
-        '缺勤異常': { bg: 'bg-red-100 text-red-600', icon: <UsersIcon className="w-4 h-4" /> },
+    const iconMap: Record<PendingItem['type'], { tone: string; icon: React.ReactNode }> = {
+        '請假審核': { tone: 'lilac', icon: <CheckSquareIcon /> },
+        '時數警示': { tone: 'sand', icon: <ClockIcon /> },
+        '缺勤異常': { tone: 'mint', icon: <UsersIcon /> },
     };
-    const { bg, icon } = iconMap[type];
-    return <div className={`p-2 rounded-lg ${bg}`}>{icon}</div>;
+    const { tone, icon } = iconMap[type];
+    return <span className={`yl-stat-icon ${tone}`} style={{ position: 'static', width: 32, height: 32 }}>{icon}</span>;
 };
 
 // 兼職時數進度條
@@ -73,38 +60,19 @@ const HoursProgressBar: React.FC<{ info: PartTimeHourInfo }> = ({ info }) => {
     const isWarning = info.status === '接近上限';
 
     return (
-        <div className="mb-3 last:mb-0">
-            <div className="flex justify-between items-center mb-1">
-                <span className="text-sm font-medium text-gray-700">{info.name}</span>
-                <div className="flex items-center gap-2">
-                    <span className="text-xs text-gray-500">
-                        {formatHours(info.workedHours)} / {info.scheduledHours.toFixed(1)} 小時
-                    </span>
-                    {isWarning && (
-                        <span className="px-2 py-0.5 bg-red-100 text-red-700 text-xs rounded-full">
-                            接近上限
-                        </span>
-                    )}
-                </div>
+        <div style={{ marginBottom: 14 }}>
+            <div className="yl-section-top" style={{ marginBottom: 8 }}>
+                <strong style={{ fontSize: 13 }}>{info.name}</strong>
+                <span className="yl-stat-foot" style={{ border: 0, margin: 0, padding: 0 }}>
+                    {formatHours(info.workedHours)} / {info.scheduledHours.toFixed(1)} 小時
+                    {isWarning ? ' · 接近上限' : ''}
+                </span>
             </div>
-            <div className="w-full h-3 bg-gray-200 rounded-full overflow-hidden">
-                <div className="h-full relative">
-                    {/* 已排班（背景） */}
-                    <div
-                        className={`absolute h-full rounded-full ${isWarning ? 'bg-red-200' : 'bg-blue-200'}`}
-                        style={{ width: `${Math.min(percentage, 100)}%` }}
-                    />
-                    {/* 已出勤（前景） */}
-                    <div
-                        className={`absolute h-full rounded-full ${isWarning ? 'bg-red-500' : 'bg-blue-500'}`}
-                        style={{ width: `${Math.min(workedPercentage, 100)}%` }}
-                    />
-                </div>
+            <div className={isWarning ? 'yl-meter warn' : 'yl-meter'} aria-hidden="true">
+                <span style={{ width: `${Math.min(percentage, 100)}%` }} />
+                <span style={{ width: `${Math.min(workedPercentage, 100)}%` }} />
             </div>
-            <div className="flex justify-between text-xs text-gray-400 mt-1">
-                <span>剩餘可排: {info.remainingHours.toFixed(1)} 小時</span>
-                <span>上限 80 小時</span>
-            </div>
+            <div className="yl-stat-foot">剩餘可排 {info.remainingHours.toFixed(1)} 小時 · 上限 80 小時</div>
         </div>
     );
 };
@@ -130,15 +98,11 @@ const AdminOverview: React.FC = () => {
     }, []);
 
     if (loading) {
-        return (
-            <div className="flex justify-center items-center h-full">
-                <div className="w-12 h-12 border-4 border-brand-blue-dark border-t-transparent rounded-full animate-spin"></div>
-            </div>
-        );
+        return <div className="yl-card" style={{ textAlign: 'center', color: '#798781' }}>讀取工作台…</div>;
     }
 
     if (!stats) {
-        return <div className="text-center text-gray-600">無法載入儀表板資訊。</div>;
+        return <div className="yl-card" style={{ textAlign: 'center', color: '#798781' }}>無法載入儀表板資訊。</div>;
     }
 
     const today = new Date();
@@ -147,161 +111,93 @@ const AdminOverview: React.FC = () => {
     // 過濾有排班的員工
     const scheduledEmployees = stats.todayAttendance.filter(e => e.status !== '未排班');
 
+    const eyebrow = new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric' }).format(today).toUpperCase();
+
     return (
-        <div className="space-y-6">
-            {/* 標題區 */}
-            <div className="flex justify-between items-center">
-                <h1 className="text-2xl font-bold text-gray-800">總覽儀表板</h1>
-                <span className="text-gray-500">{formattedDate}</span>
+        <div className="yl-workbench">
+            <div className="yl-page-heading">
+                <div>
+                    <div className="yl-eyebrow">{eyebrow}</div>
+                    <h1>團隊的今天，從這裡看。</h1>
+                    <p>數字來自目前的出勤與待辦。薪資仍只核對、不給付。{formattedDate}</p>
+                </div>
             </div>
-
-            {/* 統計卡片 */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <StatCard
-                    icon={<UsersIcon className="w-6 h-6 text-white" />}
-                    title="今日出勤"
-                    value={`${stats.todayClockedIn} / ${stats.todayScheduled}`}
-                    subValue="已到 / 應到"
-                    color="bg-blue-500"
-                />
-                <StatCard
-                    icon={<ClockIcon className="w-6 h-6 text-white" />}
-                    title="本月總工時"
-                    value={`${formatHours(stats.monthlyTotalHours)}`}
-                    subValue="小時"
-                    color="bg-green-500"
-                />
-                <StatCard
-                    icon={<CheckSquareIcon className="w-6 h-6 text-white" />}
-                    title="待審核請假"
-                    value={stats.pendingLeaves}
-                    subValue="件"
-                    color="bg-yellow-500"
-                />
-                <StatCard
-                    icon={<ListIcon className="w-6 h-6 text-white" />}
-                    title="時數警示"
-                    value={stats.hourWarnings}
-                    subValue="人接近上限"
-                    color="bg-red-500"
-                />
+            <div className="yl-summary">
+                <StatCard tone="blue" icon={<UsersIcon />} title="今日出勤" value={<><span>{stats.todayClockedIn}</span><em> / {stats.todayScheduled}</em></>} foot="已到 / 應到" />
+                <StatCard tone="mint" icon={<ClockIcon />} title="本月總工時" value={<><span>{formatHours(stats.monthlyTotalHours)}</span><em> 小時</em></>} foot="實際彙總，不是試算薪資" />
+                <StatCard tone="sand" icon={<CheckSquareIcon />} title="待審核請假" value={<><span>{stats.pendingLeaves}</span><em> 件</em></>} foot="尚未簽核" />
+                <StatCard tone="lilac" icon={<ListIcon />} title="時數警示" value={<><span>{stats.hourWarnings}</span><em> 人</em></>} foot="接近每月上限" />
             </div>
-
-            {/* 主內容區 */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* 今日排班 vs 實際出勤 */}
-                <div className="lg:col-span-2 bg-white p-6 rounded-lg shadow-md">
-                    <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
-                        <UsersIcon className="w-5 h-5 text-blue-500" />
-                        今日排班 vs 實際出勤
-                    </h2>
+            <section className="yl-welcome">
+                <div>
+                    <div className="yl-eyebrow">TODAY ON THE FLOOR</div>
+                    <h2>先看誰在，再處理待辦。</h2>
+                    <p>下方是今日排班與實際打卡。沒有排班的人不算進應到。</p>
+                </div>
+                <div className="yl-welcome-mark" aria-hidden="true"><LeafIcon /></div>
+            </section>
+            <div className="yl-split">
+                <section className="yl-card">
+                    <div className="yl-section-top"><h2>今日排班與出勤</h2></div>
                     {scheduledEmployees.length > 0 ? (
-                        <div className="overflow-x-auto">
-                            <table className="min-w-full">
+                        <div className="yl-table-wrap">
+                            <table className="yl-table">
                                 <thead>
-                                    <tr className="border-b border-gray-200">
-                                        <th className="py-3 px-4 text-left text-sm font-semibold text-gray-600">員工</th>
-                                        <th className="py-3 px-4 text-left text-sm font-semibold text-gray-600">職位</th>
-                                        <th className="py-3 px-4 text-center text-sm font-semibold text-gray-600">排班時段</th>
-                                        <th className="py-3 px-4 text-center text-sm font-semibold text-gray-600">上班打卡</th>
-                                        <th className="py-3 px-4 text-center text-sm font-semibold text-gray-600">下班打卡</th>
-                                        <th className="py-3 px-4 text-center text-sm font-semibold text-gray-600">狀態</th>
+                                    <tr>
+                                        <th>員工</th>
+                                        <th>職位</th>
+                                        <th>排班</th>
+                                        <th>上班</th>
+                                        <th>下班</th>
+                                        <th>狀態</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     {scheduledEmployees.map(emp => (
-                                        <tr key={emp.empId} className="border-b border-gray-100 hover:bg-gray-50">
-                                            <td className="py-3 px-4 text-sm font-medium text-gray-800">{emp.name}</td>
-                                            <td className="py-3 px-4 text-sm text-gray-600">
-                                                <span className={`px-2 py-0.5 rounded text-xs ${emp.position === '專責人員' ? 'bg-purple-100 text-purple-700' : 'bg-teal-100 text-teal-700'}`}>
-                                                    {emp.position}
-                                                </span>
-                                            </td>
-                                            <td className="py-3 px-4 text-sm text-center text-gray-600">{emp.scheduledShift || '-'}</td>
-                                            <td className="py-3 px-4 text-sm text-center text-gray-600">{emp.clockInTime || '-'}</td>
-                                            <td className="py-3 px-4 text-sm text-center text-gray-600">{emp.clockOutTime || '-'}</td>
-                                            <td className="py-3 px-4 text-center">
-                                                <AttendanceStatusBadge status={emp.status} />
-                                            </td>
+                                        <tr key={emp.empId}>
+                                            <td>{emp.name}</td>
+                                            <td><span className="yl-badge neutral">{emp.position}</span></td>
+                                            <td>{emp.scheduledShift || '—'}</td>
+                                            <td>{emp.clockInTime || '—'}</td>
+                                            <td>{emp.clockOutTime || '—'}</td>
+                                            <td><AttendanceStatusBadge status={emp.status} /></td>
                                         </tr>
                                     ))}
                                 </tbody>
                             </table>
                         </div>
                     ) : (
-                        <div className="text-center py-8 text-gray-500">
-                            今日休館，無排班人員
-                        </div>
+                        <p style={{ color: '#798781' }}>今日休館，無排班人員</p>
                     )}
-                </div>
-
-                {/* 待處理事項 */}
-                <div className="bg-white p-6 rounded-lg shadow-md">
-                    <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
-                        <CheckSquareIcon className="w-5 h-5 text-yellow-500" />
-                        待處理事項
-                        {stats.pendingItems.length > 0 && (
-                            <span className="ml-auto bg-red-500 text-white text-xs px-2 py-1 rounded-full">
-                                {stats.pendingItems.length}
-                            </span>
-                        )}
-                    </h2>
-                    {stats.pendingItems.length > 0 ? (
-                        <div className="space-y-3 max-h-80 overflow-y-auto">
-                            {stats.pendingItems.map(item => (
-                                <div
-                                    key={item.id}
-                                    className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer"
-                                >
-                                    <PendingTypeIcon type={item.type} />
-                                    <div className="flex-1 min-w-0">
-                                        <div className="flex items-center gap-2">
-                                            <PriorityBadge priority={item.priority} />
-                                            <span className="text-xs text-gray-400">{item.type}</span>
-                                        </div>
-                                        <p className="text-sm font-medium text-gray-800 truncate">{item.title}</p>
-                                        <p className="text-xs text-gray-500">{item.description}</p>
-                                    </div>
-                                </div>
-                            ))}
+                </section>
+                <section className="yl-card">
+                    <div className="yl-section-top">
+                        <h2>待處理</h2>
+                        {stats.pendingItems.length > 0 && <span className="yl-badge bad">{stats.pendingItems.length}</span>}
+                    </div>
+                    {stats.pendingItems.length > 0 ? stats.pendingItems.map(item => (
+                        <div className="yl-request" key={item.id}>
+                            <PendingTypeIcon type={item.type} />
+                            <div>
+                                <strong>{item.title}</strong>
+                                <p>{item.type} · {item.description}</p>
+                            </div>
+                            <PriorityBadge priority={item.priority} />
                         </div>
-                    ) : (
-                        <div className="text-center py-8 text-gray-500">
-                            目前沒有待處理事項
-                        </div>
-                    )}
-                </div>
+                    )) : <p style={{ color: '#798781' }}>目前沒有待處理事項</p>}
+                </section>
             </div>
-
-            {/* 兼職時數進度 */}
-            <div className="bg-white p-6 rounded-lg shadow-md">
-                <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
-                    <ClockIcon className="w-5 h-5 text-green-500" />
-                    本月兼職時數進度
-                    <span className="ml-2 text-sm font-normal text-gray-500">
-                        （每人每月上限 80 小時）
-                    </span>
-                </h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <section className="yl-card">
+                <div className="yl-section-top">
+                    <h2>本月兼職時數</h2>
+                    <span className="yl-stat-foot" style={{ border: 0, margin: 0, padding: 0 }}>每人每月上限 80 小時</span>
+                </div>
+                <div className="yl-summary">
                     {partTimeHours.map(info => (
                         <HoursProgressBar key={info.empId} info={info} />
                     ))}
                 </div>
-                <div className="mt-4 flex items-center gap-6 text-xs text-gray-500">
-                    <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 bg-blue-500 rounded" />
-                        <span>已出勤</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 bg-blue-200 rounded" />
-                        <span>已排班</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 bg-red-500 rounded" />
-                        <span>接近上限</span>
-                    </div>
-                </div>
-            </div>
+            </section>
         </div>
     );
 };
