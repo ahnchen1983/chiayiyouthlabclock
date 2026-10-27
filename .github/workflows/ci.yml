@@ -9,7 +9,7 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -26,11 +26,27 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Type check (tsc --noEmit)
-        run: npm run typecheck
+      - name: Setup Java for disposable Firestore emulator
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
 
-      - name: Unit tests (Vitest)
-        run: npm test
+      - name: Install local test tools
+        run: |
+          npm install --global firebase-tools@15.9.1
+          npx playwright install --with-deps chromium
 
-      - name: Production build (Vite)
-        run: npm run build
+      - name: Verify production dependencies, types, API, Firestore, browser and build
+        run: npm run verify:pr13
+
+      - name: Save verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr13-verification-${{ github.sha }}
+          path: |
+            .verification/pr13/
+            playwright-report/
+            test-results/
+          include-hidden-files: true

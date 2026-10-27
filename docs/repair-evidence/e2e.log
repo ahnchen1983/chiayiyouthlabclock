@@ -1,0 +1,30 @@
+
+> chiayiyouthlabclock@0.0.0 test:e2e
+> playwright test --workers=2
+
+[WebServer] (node:53281) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer]
+[WebServer] /index.css doesn't exist at build time, it will remain unchanged to be resolved at runtime
+[WebServer] (node:53312) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+Running 7 tests using 2 workers
+
+(node:53318) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:53319) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:53318) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:53319) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  1 [chromium] › tests/e2e/employee-clock.spec.ts:5:1 › employee can clock in and out (4.3s)
+  ✓  2 [chromium] › tests/e2e/admin-schedule.spec.ts:5:1 › admin sees staff preference warning in schedule modal (4.6s)
+  ✓  4 [chromium] › tests/e2e/login.spec.ts:4:1 › employee can log in (4.2s)
+  ✓  3 [chromium] › tests/e2e/employee-leave.spec.ts:13:1 › employee can submit leave request (4.7s)
+  ✓  5 [chromium] › tests/e2e/payroll-review.spec.ts:5:1 › incomplete salary is visibly pending and cannot print as zero (4.4s)
+  ✓  6 [chromium] › tests/e2e/payroll-review.spec.ts:13:1 › salary screen and printable statement retain identical cents (5.2s)
+  ✓  7 [chromium] › tests/e2e/shift-swap.spec.ts:5:1 › employee can view shift swap list (3.5s)
+
+  7 passed (35.5s)

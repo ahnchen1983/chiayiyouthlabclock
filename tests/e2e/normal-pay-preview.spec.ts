@@ -1,0 +1,27 @@
+import {test,expect,type Page} from '@playwright/test';
+import {seedSession,employeeUser,adminUser} from './helpers/session';
+import {mockApi} from './helpers/apiMock';
+import {normalPayPreview} from '../../netlify/functions/utils/normalPayPreview';
+import {normalDays} from '../fixtures/normalPay';
+// Synthetic: monthly 30000, approved overtime rules, no overtime worked.
+const RULES={schemaVersion:'overtime-rules-v1',weekStartDay:0,wageComponents:'single-contract-amount',monthlyHourlyDivisor:240};
+const days=(rules=true)=>{const d=normalDays();if(rules)d.forEach(x=>(x.policy as any).overtimeRules=RULES);return d;};
+// Synthetic continuing employment on both boundary weeks; no invented termination.
+const context=(rules=true)=>[...normalDays('2026-07').slice(-6),...normalDays('2026-09').slice(0,6)].map(d=>({...d,covered:true,policy:{...d.policy,...(rules?{overtimeRules:RULES}:{})}}));
+const evidence={intervals:[],issues:[],credits:[]};
+const ready=normalPayPreview({id:employeeUser.id,normalPayDays:days(),normalPayContextDays:context(),normalPayCompEvidence:evidence},'2026-08',[],[],()=>true);
+const blocked=normalPayPreview({id:employeeUser.id,normalPayDays:days(false),normalPayContextDays:context(false),normalPayCompEvidence:evidence},'2026-08',[],[],()=>true);
+async function setup(page:Page,preview:any=ready){await seedSession(page,employeeUser);await mockApi(page);await page.route('**/.netlify/functions/api',async route=>{if(route.request().postDataJSON().action==='get-employee-salary')return route.fulfill({json:{empId:employeeUser.id,name:employeeUser.name,position:'專責人員',yearMonth:'2026-08',totalWorkDays:0,totalWorkHours:0,totalLeaveHours:0,leaveDetails:[],overtimeHours:null,baseSalary:null,overtimePay:null,grossSalary:null,laborInsurance:null,healthInsurance:null,laborPensionSelf:null,leaveDeduction:null,totalDeductions:null,netSalary:null,calculationStatus:'needs-review',reviewReasons:['本月投保級距/身分及自付金額待覆核'],normalPayPreview:preview}});await route.fallback();});await page.goto('/');await page.getByRole('button',{name:'薪資明細',exact:true}).click();}
+test('salary detail shows the combined total, exact segments and the same CSV',async({page})=>{await setup(page);await expect(page.getByText('薪資計算明細（正常工資＋加班費）')).toBeVisible();await expect(page.getByText(/本月合計：30000.00/)).toBeVisible();await page.getByText('查看正常工資分段').click();await expect(page.getByText(/精確 30000\/31/).first()).toBeVisible();const download=page.waitForEvent('download');await page.getByRole('button',{name:'下載薪資計算明細 CSV'}).click();const stream=await(await download).createReadStream();let text='';for await(const chunk of stream!)text+=chunk.toString();expect(text).toContain('"30000.00"');expect(text).toContain('薪資計算：正常工資＋加班費');let warning='';page.once('dialog',async d=>{warning=d.message();await d.dismiss();});await page.getByRole('button',{name:'下載 / 列印薪資條'}).click();expect(warning).toContain('待覆核');});
+test('missing overtime rules show what to approve instead of a zero amount',async({page})=>{await setup(page,blocked);await expect(page.getByText(/本月合計：待覆核/)).toBeVisible();await expect(page.getByText(/每週起始日/)).toBeVisible();});
+test('mobile detail keeps source segments readable without approval controls',async({page})=>{await page.setViewportSize({width:390,height:844});await setup(page);await page.getByText('查看正常工資分段').click();expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await expect(page.getByRole('button',{name:/核定|啟用/})).toHaveCount(0);});
+test('manager modal consumes the same API evidence',async({page})=>{await seedSession(page,adminUser);await mockApi(page,{user:adminUser});await page.route('**/.netlify/functions/api',async route=>{if(route.request().postDataJSON().action==='get-month-lock')return route.fulfill({json:null});if(route.request().postDataJSON().action==='get-all-salary-details')return route.fulfill({json:[{empId:employeeUser.id,name:employeeUser.name,position:'專責人員',yearMonth:'2026-08',totalWorkDays:0,totalWorkHours:0,totalLeaveHours:0,leaveDetails:[],overtimeHours:null,baseSalary:null,overtimePay:null,grossSalary:null,laborInsurance:null,healthInsurance:null,laborPensionSelf:null,leaveDeduction:null,totalDeductions:null,netSalary:null,calculationStatus:'needs-review',reviewReasons:['本月投保級距/身分及自付金額待覆核'],normalPayPreview:ready}]});await route.fallback();});await page.goto('/');await page.getByRole('button',{name:'薪資計算',exact:true}).click();await page.getByLabel('薪資月份').fill('2026-08');await page.getByTitle('查看明細').click();await expect(page.getByText(/本月合計：30000.00/)).toBeVisible();});
+
+test('missing cross-month employment evidence blocks the combined total despite known normal pay',async({page})=>{
+ const uncovered=normalPayPreview({id:employeeUser.id,normalPayDays:days(),normalPayContextDays:[],normalPayCompEvidence:evidence},'2026-08',[],[],()=>true);
+ await setup(page,uncovered);
+ await expect(page.getByText(/本月合計：待覆核（正常工資：30000.00/)).toBeVisible();
+ await expect(page.getByText(/2026-07-26 跨月任職來源未完整核定/)).toBeVisible();
+ await expect(page.getByText(/2026-09-05 跨月任職來源未完整核定/)).toBeVisible();
+ await expect(page.getByText(/本月合計：30000.00/)).toHaveCount(0);
+});

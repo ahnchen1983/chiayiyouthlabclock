@@ -1,3 +1,5 @@
+import { sumKnownHours } from '../utils/attendance';
+import { formatHours } from '../utils/format';
 import { ClockRecord } from '../types';
 
 // ==========================================================
@@ -22,7 +24,7 @@ interface AttendanceStats {
 
 const calcStats = (records: ClockRecord[]): AttendanceStats => ({
     recordCount: records.length,
-    totalHours: records.reduce((s, r) => s + (r.workHours || 0), 0),
+    totalHours: sumKnownHours(records),
     normalCount: records.filter(r => r.status === '正常').length,
     lateCount: records.filter(r => r.status === '遲到' || r.status === '遲到+早退').length,
     earlyCount: records.filter(r => r.status === '早退' || r.status === '遲到+早退').length,
@@ -35,7 +37,7 @@ const escapeHtml = (s: string): string =>
 const renderStatsBar = (stats: AttendanceStats): string => `
   <div class="stats">
     <div class="stat"><span class="stat-num">${stats.recordCount}</span><span class="stat-label">總筆數</span></div>
-    <div class="stat"><span class="stat-num">${stats.totalHours.toFixed(1)}</span><span class="stat-label">總工時</span></div>
+    <div class="stat"><span class="stat-num">${formatHours(stats.totalHours)}</span><span class="stat-label">總工時</span></div>
     <div class="stat"><span class="stat-num">${stats.normalCount}</span><span class="stat-label">正常</span></div>
     <div class="stat"><span class="stat-num">${stats.lateCount}</span><span class="stat-label">遲到</span></div>
     <div class="stat"><span class="stat-num">${stats.earlyCount}</span><span class="stat-label">早退</span></div>
@@ -50,7 +52,7 @@ const renderRecordTable = (records: ClockRecord[]): string => {
         <td>${escapeHtml(r.date)}</td>
         <td>${escapeHtml(r.clockInTime || '-')}</td>
         <td>${escapeHtml(r.clockOutTime || '-')}</td>
-        <td class="right">${r.workHours != null ? r.workHours.toFixed(2) : '-'}</td>
+        <td class="right">${formatHours(r.workHours)}</td>
         <td>${escapeHtml(r.status)}</td>
         <td>${escapeHtml(r.note || '')}</td>
       </tr>`).join('');

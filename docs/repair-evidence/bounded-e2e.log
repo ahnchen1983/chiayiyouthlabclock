@@ -1,0 +1,25 @@
+
+> chiayiyouthlabclock@0.0.0 test:e2e
+> playwright test tests/e2e/payroll-review.spec.ts --workers=2
+
+[WebServer] (node:53999) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer]
+[WebServer] /index.css doesn't exist at build time, it will remain unchanged to be resolved at runtime
+[WebServer] (node:54028) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+Running 2 tests using 2 workers
+
+(node:54031) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:54030) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:54031) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:54030) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  1 [chromium] › tests/e2e/payroll-review.spec.ts:5:1 › incomplete salary is visibly pending and cannot print as zero (4.4s)
+  ✓  2 [chromium] › tests/e2e/payroll-review.spec.ts:13:1 › salary screen and printable statement retain identical cents (5.2s)
+
+  2 passed (24.9s)

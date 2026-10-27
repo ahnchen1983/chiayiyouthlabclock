@@ -33,6 +33,8 @@ export interface ApiMockOptions {
 }
 
 export const mockApi = async (page: Page, options: ApiMockOptions = {}) => {
+  // Tests must never reach a real identity, messaging, or backend service.
+  await page.route('https://**', route => route.abort());
   const loginUser = options.user || employeeUser;
   const clockStatus: { clockInTime?: string; clockOutTime?: string } = {};
 
@@ -40,6 +42,8 @@ export const mockApi = async (page: Page, options: ApiMockOptions = {}) => {
     const body = route.request().postDataJSON() as { action?: string; [key: string]: unknown };
 
     switch (body.action) {
+      case 'get-termination-settlement':
+        return route.fulfill({json:{empId:body.empId,month:body.month,records:[],source:null,canManage:false,locked:false,formalEligibility:'BLOCKED'}});
       case 'initialize-database':
         return route.fulfill({ json: true });
       case 'login':
@@ -101,6 +105,14 @@ export const mockApi = async (page: Page, options: ApiMockOptions = {}) => {
             createdAt: new Date().toISOString(),
           }],
         });
+      case 'get-leave-attachment-capability':
+      case 'get-makeup-attachment-capability':
+        return route.fulfill({json:{enabled:true,mode:'test-adapter',reason:'',productionConfigured:false,policy:{version:'synthetic-optional-policy',required:false,maxFiles:2,maxBytes:1024,allowedMime:['application/pdf']},technicalLimits:{bytes:2097152,files:5,grantSeconds:60}}});
+      case 'get-case-explanation-workflow':
+        return route.fulfill({json:{caseId:body.caseId,empId:employeeUser.id,caseRevision:1,evidenceVersion:'synthetic-case-evidence',window:{start:Date.parse('2026-08-01T09:00:00+08:00')/60000,end:Date.parse('2026-08-01T17:00:00+08:00')/60000},explanations:[],leaves:[],policyStatus:'needs-review',settlementEligibility:'BLOCKED'}});
+      case 'get-case-request-links':
+        return route.fulfill({json:{caseId:body.caseId,empId:employeeUser.id,caseRevision:1,window:{start:Date.parse('2026-08-01T09:00:00+08:00')/60000,end:Date.parse('2026-08-01T17:00:00+08:00')/60000},recordId:null,links:[],history:[],historyComplete:true,workflowPolicyStatus:'needs-configuration'}});
+      case 'get-employee-leave-requests':
       case 'get-notifications':
         return route.fulfill({ json: [] });
       default:

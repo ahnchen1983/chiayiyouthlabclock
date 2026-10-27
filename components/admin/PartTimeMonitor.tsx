@@ -1,3 +1,5 @@
+import { formatHours } from '../../utils/format';
+import { taipeiDate } from '../../utils/attendance';
 
 import React, { useState, useEffect } from 'react';
 import { apiGetAllPartTimeHours } from '../../services/googleAppsScriptAPI';
@@ -6,7 +8,7 @@ import { PartTimeHourInfo } from '../../types';
 const PartTimeMonitor: React.FC = () => {
     const [partTimeHours, setPartTimeHours] = useState<PartTimeHourInfo[]>([]);
     const [loading, setLoading] = useState(true);
-    const [month, setMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
+    const [month, setMonth] = useState(taipeiDate().slice(0, 7)); // YYYY-MM
 
     useEffect(() => {
         const fetchHours = async () => {
@@ -49,7 +51,7 @@ const PartTimeMonitor: React.FC = () => {
                                 <tr key={pt.empId} className="hover:bg-gray-50">
                                     <td className="py-2 px-3 border-b">{pt.name}</td>
                                     <td className="py-2 px-3 border-b text-right">{pt.scheduledHours.toFixed(1)}</td>
-                                    <td className="py-2 px-3 border-b text-right">{pt.workedHours.toFixed(1)}</td>
+                                    <td className="py-2 px-3 border-b text-right">{formatHours(pt.workedHours)}</td>
                                     <td className="py-2 px-3 border-b text-right font-medium">{pt.remainingHours.toFixed(1)}</td>
                                     <td className="py-2 px-3 border-b text-center">
                                         <span className={`px-2 py-1 text-xs font-semibold rounded-full ${pt.status === '接近上限' ? 'bg-yellow-200 text-yellow-800' : 'bg-green-200 text-green-800'}`}>

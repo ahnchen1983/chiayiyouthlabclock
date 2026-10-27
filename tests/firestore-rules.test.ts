@@ -19,14 +19,18 @@ import { resolve } from 'path';
 import { setDoc, getDoc, getDocs, collection, doc } from 'firebase/firestore';
 
 let testEnv: RulesTestEnvironment;
+const emulatorHost = process.env.FIRESTORE_EMULATOR_HOST || '';
+if (!/^127\.0\.0\.1:(8086|8087)$/.test(emulatorHost) || process.env.FIREBASE_PROJECT_ID !== 'demo-chiayi-payroll') {
+    throw new Error('Rules tests require the explicit local demo-chiayi-payroll Firestore emulator');
+}
 
 beforeAll(async () => {
     testEnv = await initializeTestEnvironment({
-        projectId: 'chiayiyouthlabclock-rules-test',
+        projectId: 'demo-chiayi-payroll',
         firestore: {
             rules: readFileSync(resolve(__dirname, '../firestore.rules'), 'utf8'),
             host: '127.0.0.1',
-            port: 8080,
+            port: Number(emulatorHost.split(':')[1]),
         },
     });
 });
@@ -75,6 +79,14 @@ describe('Firestore Rules — client 全 deny', () => {
         const db = ctx.firestore();
         await assertFails(getDoc(doc(db, 'staffPreferences', 'EMP001')));
         await assertFails(getDoc(doc(db, 'totpSecrets', 'EMP001')));
+    });
+
+    it('B4a client cannot bypass lifecycle or forge case links/audit/receipts', async () => {
+        const db=testEnv.authenticatedContext('ADMIN',{role:'最高管理者'}).firestore();
+        for(const name of ['payrollItemInventories','payrollItemInventoryVersions','payrollItemCommands','terminationAdjustmentCases','terminationSettlementDrafts','terminationSettlementVersions','terminationSettlementCommands','makeupRequests','makeupRequestEvents','makeupCommands','caseRequestLinks','caseRequestLinkEvents','makeupAttachmentDrafts','makeupAttachments','makeupAttachmentEvents','makeupAttachmentAccess','payrollMasterHeads','payrollMasterVersions','payrollMasterCommands','payrollMasterActivations','payrollPolicyVersions','dayTypeCalendars','compRequests','compLedger','compPolicies','compSourceReviews','compCommands','compSettlementTasks','overtimeRequests','overtimeEvents','overtimeCommands','caseOvertimeLinks','overtimeWorkflowPolicies','leaveWorkflowCommands','leavePolicyVersions','leaveAttachments','leaveAttachmentDrafts','leaveAttachmentEvents','leaveAttachmentAccess','anomalyExplanations','anomalyExplanationEvents','anomalyWorkflowCommands','caseExplanationLinks','caseLeaveLinks','caseLeaveEvents','leaveRevisions','caseLeaveAllocationCommands']) {
+            await assertFails(setDoc(doc(db,name,'forged'),{empId:'EMP001',status:'核准'}));
+            await assertFails(getDoc(doc(db,name,'forged')));
+        }
     });
 
     it('withSecurityRulesDisabled（模擬 service account）讀寫所有 collection → allow', async () => {

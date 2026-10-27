@@ -1,3 +1,4 @@
+import { taipeiDate } from '../../utils/attendance';
 
 import React, { useState, useEffect } from 'react';
 import {
@@ -86,7 +87,7 @@ const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({ employee, onClose
         annualLeaveQuotaHours: employee?.annualLeaveQuotaHours ?? undefined,
         personalLeaveQuotaHours: employee?.personalLeaveQuotaHours ?? 14 * 8,
         sickLeaveQuotaHours: employee?.sickLeaveQuotaHours ?? 30 * 8,
-        hireDate: employee?.hireDate || new Date().toISOString().slice(0, 10),
+        hireDate: employee?.hireDate || taipeiDate(),
         resignDate: employee?.resignDate || undefined,
         status: employee?.status || '在職',
         position: employee?.position || '兼職人員',
@@ -245,7 +246,7 @@ const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({ employee, onClose
                             <option value={0.05}>自提 5%</option>
                             <option value={0.06}>自提 6%</option>
                         </select>
-                        <p className="text-xs text-gray-500 mt-1">薪資計算以員工個人設定為準。</p>
+                        <p className="text-xs text-gray-500 mt-1">以下為 legacy 資料；既有薪資／雇用異動請至「薪資主檔」提出有效期版本核定。新建人員也須核定主檔後才可試算。</p>
                     </div>
 
                     {/* 時薪（僅兼職人員） */}
@@ -280,7 +281,7 @@ const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({ employee, onClose
                                 placeholder="例如 30000"
                                 className="w-full p-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                             />
-                            <p className="text-xs text-gray-500 mt-1">專責人員的月薪將用於薪資計算（基本工資）。</p>
+                            <p className="text-xs text-gray-500 mt-1">此欄不代表已核定薪制；正式試算須使用已核有效期主檔。</p>
                         </div>
                     )}
 

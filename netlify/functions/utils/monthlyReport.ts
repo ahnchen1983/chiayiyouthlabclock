@@ -85,10 +85,10 @@ export const buildSummary = (
 ): MonthlyReportData['summary'] => {
     const totalEmployees = salaries.length;
     const totalWorkDays = salaries.reduce((sum, salary) => sum + salary.totalWorkDays, 0);
-    const totalWorkHours = round1(salaries.reduce((sum, salary) => sum + salary.totalWorkHours, 0));
-    const totalOvertimeHours = round1(salaries.reduce((sum, salary) => sum + salary.overtimeHours, 0));
+    const totalWorkHours = salaries.some(s => s.totalWorkHours == null) ? null : round1(salaries.reduce((sum, salary) => sum + salary.totalWorkHours, 0));
+    const totalOvertimeHours = salaries.some(s => s.overtimeHours == null) ? null : round1(salaries.reduce((sum, salary) => sum + salary.overtimeHours, 0));
     const totalLeaveHours = round1(salaries.reduce((sum, salary) => sum + salary.totalLeaveHours, 0));
-    const avgWorkHoursPerEmployee = totalEmployees > 0 ? round1(totalWorkHours / totalEmployees) : 0;
+    const avgWorkHoursPerEmployee = totalWorkHours === null ? null : totalEmployees > 0 ? round1(totalWorkHours / totalEmployees) : 0;
 
     return {
         totalEmployees,
