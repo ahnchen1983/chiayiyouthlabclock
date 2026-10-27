@@ -125,25 +125,25 @@ const ClockIn: React.FC = () => {
     };
 
     return (
-        <div className="max-w-md mx-auto mt-4">
-            <div className="p-6 bg-white rounded-2xl shadow-lg">
-                <div className="text-center">
+        <div className="yl-clock">
+            <div className="p-6 bg-white rounded-2xl shadow-lg yl-clock-face">
+                <div>
                     <h2 className="text-2xl font-semibold text-gray-700">即時打卡</h2>
-                    <p className="text-5xl font-bold text-gray-900 mt-2">{time.toLocaleTimeString('en-GB')}</p>
-                    <p className="text-gray-500">{time.toLocaleDateString('zh-TW', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })}</p>
+                    <p className="yl-clock-time">{time.toLocaleTimeString('en-GB')}</p>
+                    <p className="yl-clock-meta">{time.toLocaleDateString('zh-TW', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })}</p>
                 </div>
 
-                <div className="mt-6 p-4 bg-gray-50 rounded-lg">
+                <div className="yl-clock-panel">
                     <h3 className="font-semibold text-gray-800">今日打卡狀態</h3>
                     {loading ? <p className="text-center text-gray-500">讀取中...</p> : (
                         <div className="grid grid-cols-2 gap-4 mt-2 text-center">
                             <div>
                                 <p className="text-sm text-gray-500">上班</p>
-                                <p className="text-lg font-semibold text-brand-green-dark">{clockStatus.clockInTime || '--:--'}</p>
+                                <p className="text-lg font-semibold text-brand-green-dark">{clockStatus.clockInTime ? '已記錄' : '--:--'}</p>
                             </div>
                             <div>
                                 <p className="text-sm text-gray-500">下班</p>
-                                <p className="text-lg font-semibold text-status-error">{clockStatus.clockOutTime || '--:--'}</p>
+                                <p className="text-lg font-semibold text-status-error">{clockStatus.clockOutTime ? '已記錄' : '--:--'}</p>
                             </div>
                         </div>
                     )}
@@ -168,7 +168,7 @@ const ClockIn: React.FC = () => {
                 </div>
 
                 <div className="grid grid-cols-2 gap-4 mt-4">
-                    <button onClick={handleClockIn} disabled={(!!clockStatus.clockInTime && !clockStatus.clockOutTime) || isProcessing} className="w-full py-3 text-lg font-bold text-white rounded-lg bg-brand-green-dark hover:bg-brand-green-light disabled:bg-gray-400 transition-colors">
+                    <button onClick={handleClockIn} disabled={(!!clockStatus.clockInTime && !clockStatus.clockOutTime) || isProcessing} className="yl-clock-in w-full py-3 text-lg font-bold text-white rounded-lg bg-brand-green-dark hover:bg-brand-green-light disabled:bg-gray-400 transition-colors">
                         上班打卡
                     </button>
                     <button onClick={handleClockOut} disabled={!clockStatus.clockInTime || !!clockStatus.clockOutTime || isProcessing} className="w-full py-3 text-lg font-bold text-white bg-status-error hover:bg-red-700 disabled:bg-gray-400 transition-colors">
@@ -186,6 +186,25 @@ const ClockIn: React.FC = () => {
                     </p>
                 )}
             </div>
+            <section className="p-6 bg-white rounded-2xl shadow-lg" aria-label="今日打卡時間軸">
+                <h3 className="font-semibold text-gray-800">今日打卡時間軸</h3>
+                <div className="yl-timeline">
+                    <div className="yl-timeline-row">
+                        <span className="yl-timeline-dot" aria-hidden="true" />
+                        <div>
+                            <strong>上班</strong>
+                            <p>{clockStatus.clockInTime || '尚未打卡'}</p>
+                        </div>
+                    </div>
+                    <div className="yl-timeline-row">
+                        <span className="yl-timeline-dot" aria-hidden="true" />
+                        <div>
+                            <strong>下班</strong>
+                            <p>{clockStatus.clockOutTime || '尚未打卡'}</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
         </div>
     );
 };

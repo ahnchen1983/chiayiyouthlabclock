@@ -259,7 +259,7 @@ const AttendanceLog: React.FC = () => {
     };
 
     return (
-        <div className="p-4 bg-white rounded-lg shadow-lg">
+        <div className="p-4 bg-white rounded-lg shadow-lg yl-attendance">
             {/* 標題 */}
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
                 <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
@@ -304,7 +304,7 @@ const AttendanceLog: React.FC = () => {
             </div>
 
             {/* 統計卡片 */}
-            <div className="grid grid-cols-2 md:grid-cols-6 gap-4 mb-6">
+            <div className="yl-kpi gap-4 mb-6">
                 <div className="bg-gray-50 p-4 rounded-lg text-center">
                     <p className="text-2xl font-bold text-gray-800">{stats.total}</p>
                     <p className="text-sm text-gray-500">總筆數</p>
@@ -446,7 +446,7 @@ const AttendanceLog: React.FC = () => {
 
             {/* 表格 */}
             <div className="overflow-x-auto">
-                <table className="min-w-full bg-white">
+                <table className="min-w-full bg-white yl-table">
                     <thead className="bg-gray-100">
                         <tr>
                             <th className="py-3 px-4 border-b text-left text-sm font-semibold text-gray-600">員工</th>

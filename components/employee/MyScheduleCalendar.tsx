@@ -112,7 +112,7 @@ const MyScheduleCalendar: React.FC = () => {
   const weekdays = ['日', '一', '二', '三', '四', '五', '六'];
 
   return (
-    <div className="p-4 bg-white rounded-lg shadow-md">
+    <div className="p-4 bg-white rounded-lg shadow-md yl-schedule">
       <h2 className="text-2xl font-bold text-center mb-4 text-gray-800">我的班表</h2>
       <div className="flex items-center justify-between mb-4">
         <button onClick={() => changeMonth(-1)} className="p-2 rounded-full hover:bg-gray-200"><ChevronLeftIcon /></button>
@@ -124,7 +124,7 @@ const MyScheduleCalendar: React.FC = () => {
           <div className="w-8 h-8 border-4 border-brand-green-dark border-t-transparent rounded-full animate-spin"></div>
         </div>
       ) : (
-        <div className="grid grid-cols-7 border-t border-l">
+        <div className="yl-month grid grid-cols-7 border-t border-l">
           {weekdays.map(day => <div key={day} className="text-center font-bold p-2 border-r border-b bg-gray-50">{day}</div>)}
           {renderCalendar()}
         </div>

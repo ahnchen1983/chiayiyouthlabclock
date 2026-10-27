@@ -26,6 +26,8 @@ import NotificationBell from '../components/NotificationBell';
 import { NavShell, type ShellGroup, type ShellLink } from '../components/shell/NavShell';
 import { usePendingNavCounts } from '../components/shell/pendingNavCounts';
 import { CalendarIcon, CheckSquareIcon, ClockIcon, DollarIcon, LeafIcon } from '../components/icons';
+import { apiGetTodayClockStatus } from '../services/googleAppsScriptAPI';
+import type { ClockStatus } from '../types';
 
 // View 切換時的 Suspense fallback — 強制保留高度避免主區塊跳動
 const ViewLoadingFallback: React.FC = () => (
@@ -40,12 +42,21 @@ const ViewLoadingFallback: React.FC = () => (
 
 type View = 'home' | 'master' | 'comp' | 'overtime' | 'cases' | 'clock' | 'schedule' | 'records' | 'leave' | 'fullSchedule' | 'salary' | 'makeup' | 'leaveBalance' | 'preferences' | 'openShifts' | 'leaveOfAbsence' | 'shiftSwap';
 
-const EmployeeHome: React.FC<{ name: string; onOpen: (view: View) => void }> = ({ name, onOpen }) => {
+const EmployeeHome: React.FC<{ name: string; empId?: string; onOpen: (view: View) => void }> = ({ name, empId, onOpen }) => {
   const now = new Date();
   const hour = now.getHours();
   const hello = hour < 11 ? '早安' : hour < 18 ? '午安' : '晚安';
   const eyebrow = new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric' }).format(now).toUpperCase();
   const who = name.trim() || '同事';
+  const [clock, setClock] = React.useState<ClockStatus | null>(null);
+  React.useEffect(() => {
+    if (!empId) return;
+    let cancel = false;
+    apiGetTodayClockStatus(empId).then((status) => {
+      if (!cancel) setClock(status);
+    }).catch(() => {});
+    return () => { cancel = true; };
+  }, [empId]);
   return (
     <section className="yl-workbench">
       <div className="yl-page-heading">
@@ -55,6 +66,18 @@ const EmployeeHome: React.FC<{ name: string; onOpen: (view: View) => void }> = (
           <p>把出勤、假勤與班表放在一起。薪資明細只供查看，這裡不發薪。</p>
         </div>
         <button type="button" className="yl-primary" onClick={() => onOpen('leave')}>前往請假</button>
+      </div>
+      <div className="yl-home-times">
+        <article className="yl-stat">
+          <small>今日上班</small>
+          <strong>{clock?.clockInTime || '--:--'}</strong>
+          <span className="yl-stat-foot">來自今天的打卡，沒有紀錄就留白</span>
+        </article>
+        <article className="yl-stat">
+          <small>今日下班</small>
+          <strong>{clock?.clockOutTime || '--:--'}</strong>
+          <span className="yl-stat-foot">明細與班表仍在各自的頁面</span>
+        </article>
       </div>
       <div className="yl-summary">
         <button type="button" className="yl-stat is-label" onClick={() => onOpen('clock')}>
@@ -102,7 +125,7 @@ const EmployeeDashboard: React.FC = () => {
 
   const renderView = () => {
     switch (currentView) {
-      case 'home': return <EmployeeHome name={user?.name ?? ''} onOpen={setCurrentView} />;
+      case 'home': return <EmployeeHome name={user?.name ?? ''} empId={user?.id} onOpen={setCurrentView} />;
       case 'master': return <PayrollMasterTimeline />;
       case 'comp': return <CompWorkflow />;
       case 'overtime': return <OvertimeWorkflow />;

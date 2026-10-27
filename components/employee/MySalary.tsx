@@ -52,7 +52,7 @@ const MySalary: React.FC = () => {
     }
 
     return (
-        <div className="max-w-lg mx-auto">
+        <div className="yl-salary">
             {/* 月份切換 */}
             <div className="flex items-center justify-between mb-6">
                 <button onClick={handlePrevMonth} className="p-2 rounded-full hover:bg-gray-100 transition-colors">
@@ -76,10 +76,10 @@ const MySalary: React.FC = () => {
             ) : (
                 <div className="space-y-4">
                     {/* 實發薪資大卡 */}
-                    <div className="bg-gradient-to-br from-green-600 to-emerald-500 rounded-2xl p-6 text-white shadow-lg">
-                        <p className="text-sm opacity-80">實發薪資</p>
-                        <p className="text-4xl font-bold mt-2">{formatCurrency(salary.netSalary)}</p>
-                        <div className="flex justify-between mt-4 text-sm opacity-80">
+                    <div className="yl-salary-hero">
+                        <p className="text-sm">實發薪資</p>
+                        <p className="yl-net">{formatCurrency(salary.netSalary)}</p>
+                        <div className="flex justify-between mt-4 text-sm">
                             <span>應發 {formatCurrency(salary.grossSalary)}</span>
                             <span>扣除 -{formatCurrency(salary.totalDeductions)}</span>
                         </div>

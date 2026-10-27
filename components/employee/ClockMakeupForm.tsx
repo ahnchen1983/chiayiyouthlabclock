@@ -34,7 +34,7 @@ export default function ClockMakeupForm({caseContext,requestId}:{caseContext?:Ca
   finally{gate.current=false;setBusy(false);}
  };
  const reload=async()=>{await load();if(matching)return;if(prior){try{edit(await apiGetMakeupRequestDetail(prior.id));}catch{setError('原版本無法重新讀取。');}}else if(!caseContext){setStale(false);}else setError('案件版本請返回案件重新載入；不自動略過版本檢查。');};
- return <div className="p-4 bg-white rounded space-y-4 min-w-0 break-words">
+ return <div className="p-4 bg-white rounded space-y-4 min-w-0 break-words yl-leave">
   <h1 className="text-2xl font-bold">補打卡申請</h1>
   <p className="text-sm">指定主管、期限與附件政策待設定；正式附件服務尚未配置。已核准版本不能取消；已鎖月份須另走差額覆核。</p>
   {caseContext&&<p className="break-all">關聯案件 {caseContext.caseId}／員工 {caseContext.empId}。僅帶入日期與已知卡 ID，時間必須自行核實。</p>}
@@ -58,7 +58,7 @@ export default function ClockMakeupForm({caseContext,requestId}:{caseContext?:Ca
   </form>
   <button disabled={busy} onClick={()=>void reload()}>重新載入申請紀錄</button>
   <h2 className="font-bold">我的申請紀錄</h2>
-  {history.filter(r=>!requestId||r.id===requestId||r.supersedesRequestId===requestId).map(r=><article key={r.id} className="border rounded p-3 break-words space-y-2"><p>{r.date} · {r.type} · {r.requestedClockInAt||r.requestedClockIn||'—'} / {r.requestedClockOutAt||r.requestedClockOut||'—'}</p><p>{r.reason}</p><MakeupRequestActions request={r} onChanged={()=>void load()} onResubmit={operation.pending?undefined:edit}/></article>)}
+  {history.filter(r=>!requestId||r.id===requestId||r.supersedesRequestId===requestId).map(r=><article key={r.id} className="yl-request-card border rounded p-3 break-words space-y-2"><p>{r.date} · {r.type} · {r.requestedClockInAt||r.requestedClockIn||'—'} / {r.requestedClockOutAt||r.requestedClockOut||'—'}</p><p>{r.reason}</p><MakeupRequestActions request={r} onChanged={()=>void load()} onResubmit={operation.pending?undefined:edit}/></article>)}
   {!history.length&&<p>尚無申請紀錄，不代表出勤異常已解除。</p>}
  </div>;
 }

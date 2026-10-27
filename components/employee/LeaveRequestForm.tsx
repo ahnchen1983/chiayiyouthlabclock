@@ -100,7 +100,7 @@ const LeaveRequestForm: React.FC<{caseContext?:CaseFormContext;explanationId?:st
   };
 
   return (
-    <div className="max-w-2xl mx-auto mt-4 p-6 bg-white rounded-lg shadow-md">
+    <div className="mt-4 p-6 bg-white rounded-lg shadow-md yl-leave">
       <MakeupAttachmentPanel subjectType="leave" date={caseContext?caseStartDay:startDate.slice(0,10)} onSelection={setAttachment} resetKey={attachmentReset} disabled={submitting||!!operation.pending}/>
       <h2 className="text-2xl font-bold text-center mb-6 text-gray-800">請假／外勤申請</h2>
       <AnomalyOperationRecovery onResolved={()=>void loadSource()}/>
@@ -124,7 +124,7 @@ const LeaveRequestForm: React.FC<{caseContext?:CaseFormContext;explanationId?:st
             </optgroup>
           </select>
           {currentBalance && leaveType !== LeaveType.Other && (
-            <div className="mt-1 text-xs text-gray-500 space-y-0.5">
+            <div className="yl-balance text-xs text-gray-500 space-y-0.5">
               <p>
                 本年度{leaveType}剩餘 <span className="font-semibold text-brand-green-dark">{currentBalance.remainingHours}h</span>
                 （配額 {currentBalance.quotaHours}h，已用 {currentBalance.usedHours}h）
@@ -217,7 +217,7 @@ const LeaveRequestForm: React.FC<{caseContext?:CaseFormContext;explanationId?:st
           <button
             type="submit"
             disabled={!attachment.ready||submitting||!!operation.pending||operation.blocked||!!caseContext&&!workflow}
-            className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-brand-green-dark hover:bg-brand-green-light focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:bg-gray-400"
+            className="yl-primary-action w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-brand-green-dark hover:bg-brand-green-light focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:bg-gray-400"
           >
             {submitting ? '送出中...' : '送出申請'}
           </button>

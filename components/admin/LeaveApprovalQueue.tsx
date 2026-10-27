@@ -56,20 +56,20 @@ const LeaveApprovalQueue: React.FC<{caseContext?:CaseFormContext;requestId?:stri
     }
 
     return (
-        <div className="p-4 bg-white rounded-lg shadow-lg">
+        <div className="p-4 bg-white rounded-lg shadow-lg yl-leave">
             <h1 className="text-3xl font-bold text-gray-800 mb-4">請假／外勤審核</h1>
             
             <AnomalyOperationRecovery onResolved={()=>void fetchRequests()}/>
-            <div className="flex space-x-2 mb-4 border-b">
-                <button onClick={() => setFilter(LeaveStatus.Pending)} className={`py-2 px-4 font-semibold ${filter === LeaveStatus.Pending ? 'border-b-2 border-brand-blue-dark text-brand-blue-dark' : 'text-gray-500'}`}>待審核</button>
-                <button onClick={() => setFilter(LeaveStatus.Approved)} className={`py-2 px-4 font-semibold ${filter === LeaveStatus.Approved ? 'border-b-2 border-brand-blue-dark text-brand-blue-dark' : 'text-gray-500'}`}>已核准</button>
-                <button onClick={() => setFilter(LeaveStatus.Rejected)} className={`py-2 px-4 font-semibold ${filter === LeaveStatus.Rejected ? 'border-b-2 border-brand-blue-dark text-brand-blue-dark' : 'text-gray-500'}`}>已駁回</button>
+            <div className="yl-tabs" role="group" aria-label="申請狀態">
+                <button onClick={() => setFilter(LeaveStatus.Pending)} className={`yl-tab py-2 px-4 font-semibold ${filter === LeaveStatus.Pending ? 'is-selected border-b-2 border-brand-blue-dark text-brand-blue-dark' : 'text-gray-500'}`}>待審核</button>
+                <button onClick={() => setFilter(LeaveStatus.Approved)} className={`yl-tab py-2 px-4 font-semibold ${filter === LeaveStatus.Approved ? 'is-selected border-b-2 border-brand-blue-dark text-brand-blue-dark' : 'text-gray-500'}`}>已核准</button>
+                <button onClick={() => setFilter(LeaveStatus.Rejected)} className={`yl-tab py-2 px-4 font-semibold ${filter === LeaveStatus.Rejected ? 'is-selected border-b-2 border-brand-blue-dark text-brand-blue-dark' : 'text-gray-500'}`}>已駁回</button>
             </div>
 
             <div className="space-y-4">
                 {loading ? <p>讀取中...</p> : filteredRequests.length > 0 ? (
                     filteredRequests.map(req => (
-                        <div key={req.id} className="p-4 border rounded-lg shadow-sm bg-gray-50">
+                        <div key={req.id} className="yl-request-card p-4 border rounded-lg shadow-sm bg-gray-50">
                             <div className="flex flex-wrap justify-between items-start">
                                 <div>
                                     <p className="font-bold text-lg">{req.name} - <span className="font-medium text-brand-blue-dark">{req.leaveType}</span></p>
@@ -92,7 +92,7 @@ const LeaveApprovalQueue: React.FC<{caseContext?:CaseFormContext;requestId?:stri
                             {req.schemaVersion==='case-leave-v1'&&<CaseLeaveReviewActions request={req} onChanged={()=>void fetchRequests()}/>}
                             {!req.schemaVersion && req.status === LeaveStatus.Pending && rejectingId !== req.id && (
                                 <div className="flex justify-end space-x-3 mt-4">
-                                    <button onClick={() => handleApprove(req.id)} className="px-4 py-2 text-sm font-medium text-white bg-status-success rounded-lg hover:bg-green-700">核准</button>
+                                    <button onClick={() => handleApprove(req.id)} className="yl-primary-action px-4 py-2 text-sm font-medium text-white bg-status-success rounded-lg hover:bg-green-700">核准</button>
                                     <button onClick={() => { setRejectingId(req.id); setRejectReason(''); }} className="px-4 py-2 text-sm font-medium text-white bg-status-error rounded-lg hover:bg-red-700">駁回</button>
                                 </div>
                             )}

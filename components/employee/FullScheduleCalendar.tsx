@@ -106,7 +106,7 @@ const FullScheduleCalendar: React.FC = () => {
   };
 
   return (
-    <div className="p-4 bg-white rounded-lg shadow-md">
+    <div className="p-4 bg-white rounded-lg shadow-md yl-schedule">
       <h2 className="text-2xl font-bold text-center mb-4 text-gray-800">總班表</h2>
       <div className="flex items-center justify-between mb-4">
         <button onClick={() => changeMonth(-1)} className="p-2 rounded-full hover:bg-gray-200"><ChevronLeftIcon /></button>
@@ -120,7 +120,7 @@ const FullScheduleCalendar: React.FC = () => {
         <div className="flex justify-center items-center h-64">
           <div className="w-8 h-8 border-4 border-brand-green-dark border-t-transparent rounded-full animate-spin"></div>
         </div>
-      ) : <div className="grid grid-cols-7 border-l">{renderCalendar()}</div>}
+      ) : <div className="yl-month grid grid-cols-7">{renderCalendar()}</div>}
        <div className="mt-4 flex flex-wrap gap-4 text-sm">
         <div className="flex items-center"><div className="w-4 h-4 bg-bg-closed mr-2"></div>休館日</div>
         <div className="flex items-center"><div className="w-4 h-4 bg-bg-wed-thu mr-2"></div>週三四班</div>

@@ -647,7 +647,7 @@ const EmployeeManager: React.FC = () => {
     });
 
     return (
-        <div className="p-4 bg-white rounded-lg shadow-lg">
+        <div className="p-4 bg-white rounded-lg shadow-lg yl-people">
             {/* 標題和新增按鈕 */}
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
                 <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
@@ -664,14 +664,15 @@ const EmployeeManager: React.FC = () => {
             </div>
 
             {/* 篩選區 */}
-            <div className="flex flex-wrap items-center gap-4 mb-4 p-4 bg-gray-50 rounded-lg">
+            <div className="yl-people-search flex flex-wrap items-center gap-4 mb-4 p-4">
                 <div>
                     <label className="mr-2 text-sm font-medium text-gray-700">搜尋:</label>
                     <input
                         type="text"
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
-                        placeholder="姓名、電話、Email"
+                        placeholder="搜尋姓名或部門"
+                        aria-label="搜尋人員"
                         className="p-2 border rounded-md w-48"
                     />
                 </div>
@@ -702,9 +703,22 @@ const EmployeeManager: React.FC = () => {
                 </div>
             </div>
 
+            {!loading && filteredEmployees.length > 0 && (
+                <div className="yl-people-grid">
+                    {filteredEmployees.map(emp => (
+                        <button type="button" key={emp.id} className="yl-person" onClick={() => handleEdit(emp)}>
+                            <span className="yl-avatar" aria-hidden="true">{emp.name.trim().charAt(0) || '員'}</span>
+                            <strong>{emp.name}</strong>
+                            <span className="yl-badge neutral">{emp.position}</span>
+                            <small>{emp.status}</small>
+                        </button>
+                    ))}
+                </div>
+            )}
+
             {/* 員工列表 */}
             <div className="overflow-x-auto">
-                <table className="min-w-full bg-white">
+                <table className="min-w-full bg-white yl-table">
                     <thead className="bg-gray-100">
                         <tr>
                             <th className="py-3 px-4 border-b text-left text-sm font-semibold text-gray-600">員工編號</th>

@@ -35,7 +35,7 @@ const MyRecords: React.FC = () => {
   }, [records, sortOrder]);
 
   return (
-    <div className="p-4 bg-white rounded-lg shadow-md">
+    <div className="p-4 bg-white rounded-lg shadow-md yl-attendance">
       <h2 className="text-2xl font-bold text-center mb-4 text-gray-800">我的打卡紀錄</h2>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <div>
@@ -72,7 +72,7 @@ const MyRecords: React.FC = () => {
         </button>
       </div>
       <div className="overflow-x-auto">
-        <table className="min-w-full bg-white">
+        <table className="min-w-full bg-white yl-table">
           <thead className="bg-gray-100">
             <tr>
               <th className="py-2 px-4 border-b">日期</th>
