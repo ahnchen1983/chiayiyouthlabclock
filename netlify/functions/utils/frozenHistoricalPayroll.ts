@@ -10,6 +10,7 @@ import type {PayrollMonthSource} from './payrollSourceReader';
 export interface HistoricalRateProof {sourceRefs:string[];authorityOccurredAt:string;reason:string}
 export interface HistoricalPaymentAllocationDisposition extends HistoricalRateProof {mode:'retain-original-cash'}
 export interface HistoricalCompOriginalWageDisposition extends HistoricalRateProof {mode:'retain-recorded-comp-wage'}
+export interface HistoricalItemInventoryDisposition extends HistoricalRateProof {mode:'exclude-recorded-items-from-rate-correction'}
 export interface HistoricalRateCorrection {
  rates:Array<HistoricalRateProof & {from:string;to:string;payBasis:'monthly'|'hourly';amount:string;originalPayVersion:string}>;
  insuranceUnchanged:HistoricalRateProof;
@@ -17,6 +18,8 @@ export interface HistoricalRateCorrection {
  paymentAllocationDisposition?:HistoricalPaymentAllocationDisposition;
  /** When frozen comp evidence exists: keep recorded original wage / credits; do not recompute comp from the corrected rate. */
  compOriginalWageDisposition?:HistoricalCompOriginalWageDisposition;
+ /** When approved inventory has recorded items still needing classification: exclude them from this rate-correction target; item reclassification stays a separate flow. Not valid when item execution already exists. */
+ itemInventoryDisposition?:HistoricalItemInventoryDisposition;
 }
 const bad=():never=>{throw Object.assign(new Error('歷史費率更正事實、期間或依據無效'),{statusCode:400});};
 function proof(v:any):HistoricalRateProof {
@@ -28,6 +31,7 @@ export function validateHistoricalRateCorrection(value:any,month:string,at:strin
  if(value&&typeof value==='object'&&!Array.isArray(value)){
   if('paymentAllocationDisposition' in value)allowed.push('paymentAllocationDisposition');
   if('compOriginalWageDisposition' in value)allowed.push('compOriginalWageDisposition');
+  if('itemInventoryDisposition' in value)allowed.push('itemInventoryDisposition');
  }
  assertPayrollItemFields(value,allowed);if(!payrollItemMonth(month)||!Number.isFinite(Date.parse(at))||!Array.isArray(value.rates)||!value.rates.length||value.rates.length>31)bad();
  assertPayrollItemFields(value.insuranceUnchanged,['sourceRefs','authorityOccurredAt','reason']);
@@ -48,9 +52,15 @@ export function validateHistoricalRateCorrection(value:any,month:string,at:strin
   if(value.compOriginalWageDisposition.mode!=='retain-recorded-comp-wage')bad();
   compOriginalWageDisposition={mode:'retain-recorded-comp-wage',...proof(value.compOriginalWageDisposition)};
  }
- const proofs:HistoricalRateProof[]=[...rates,insuranceUnchanged,...(paymentAllocationDisposition?[paymentAllocationDisposition]:[]),...(compOriginalWageDisposition?[compOriginalWageDisposition]:[])];
+ let itemInventoryDisposition:HistoricalItemInventoryDisposition|undefined;
+ if('itemInventoryDisposition' in value){
+  assertPayrollItemFields(value.itemInventoryDisposition,['mode','sourceRefs','authorityOccurredAt','reason']);
+  if(value.itemInventoryDisposition.mode!=='exclude-recorded-items-from-rate-correction')bad();
+  itemInventoryDisposition={mode:'exclude-recorded-items-from-rate-correction',...proof(value.itemInventoryDisposition)};
+ }
+ const proofs:HistoricalRateProof[]=[...rates,insuranceUnchanged,...(paymentAllocationDisposition?[paymentAllocationDisposition]:[]),...(compOriginalWageDisposition?[compOriginalWageDisposition]:[]),...(itemInventoryDisposition?[itemInventoryDisposition]:[])];
  if(proofs.some(r=>Date.parse(r.authorityOccurredAt)>Date.parse(at)))bad();
- return {rates,insuranceUnchanged,...(paymentAllocationDisposition?{paymentAllocationDisposition}:{}),...(compOriginalWageDisposition?{compOriginalWageDisposition}:{})};
+ return {rates,insuranceUnchanged,...(paymentAllocationDisposition?{paymentAllocationDisposition}:{}),...(compOriginalWageDisposition?{compOriginalWageDisposition}:{}),...(itemInventoryDisposition?{itemInventoryDisposition}:{})};
 }
 /** Only a server-verified complete ORIGINAL snapshot is accepted. No hydrated
  * employee, ready flag, tax result or target amount comes from the proposal.
@@ -63,12 +73,24 @@ export function calculateFrozenHistoricalRateCorrection(loaded:PayrollMonthSourc
  const tags:string[]=[];
  if(correction.paymentAllocationDisposition?.mode==='retain-original-cash')tags.push('payment-retain');
  if(correction.compOriginalWageDisposition?.mode==='retain-recorded-comp-wage')tags.push('comp-retain');
+ if(correction.itemInventoryDisposition?.mode==='exclude-recorded-items-from-rate-correction')tags.push('items-exclude');
  const adapterVersion=tags.length?`historical-rate-correction-${tags.join('-')}-v1`:'historical-rate-correction-v1';
  const bundleHash=evidenceHash({original,correction,calculatorVersion:PAYROLL_VERSION,adapterVersion});
  const emp=sanitizePayrollSnapshot(originalEmployee),envelope=(loaded.run as any).sourceEvidence,issues:string[]=[];
  if(!Array.isArray(emp.normalPayDays)||!Array.isArray(emp.normalPayContextDays)||!emp.effectiveMasterVersion)issues.push('original-effective-master-and-context-missing');
  const item=envelope?.itemInventories?.[empId];
- if(assessPayrollItemInventory(item?.version).status!=='confirmed-none'||emp.payrollItemExecution||envelope?.itemExecutions?.[empId])issues.push('historical-item-reclassification-unsupported');
+ const itemAssessment=assessPayrollItemInventory(item?.version);
+ const hasItemExecution=!!(emp.payrollItemExecution||envelope?.itemExecutions?.[empId]);
+ const excludeRecordedItems=correction.itemInventoryDisposition?.mode==='exclude-recorded-items-from-rate-correction';
+ if(hasItemExecution){
+  issues.push('historical-item-reclassification-unsupported');
+ }else if(itemAssessment.status==='recorded-items-needs-classification'&&excludeRecordedItems){
+  // Explicit exclude: rate-correction target is contractual/insurance only; recorded items stay on the original envelope for a separate reclassification flow.
+ }else if(itemAssessment.status!=='confirmed-none'){
+  issues.push('historical-item-reclassification-unsupported');
+ }else if(excludeRecordedItems){
+  issues.push('historical-item-inventory-disposition-without-recorded-items');
+ }
  const hasAllocation=!!envelope?.paymentAllocations?.[empId];
  if(hasAllocation){
   if(correction.paymentAllocationDisposition?.mode==='retain-original-cash'){
@@ -105,8 +127,19 @@ export function calculateFrozenHistoricalRateCorrection(loaded:PayrollMonthSourc
   return sanitizePayrollSnapshot({original,correction,bundleHash,calculatorVersion:PAYROLL_VERSION,adapterVersion,status:'needs-review',issues:unique,source:{...content,sourceHash:evidenceHash(content)},salary:null,formalEligibility:'BLOCKED',applicationStatus:'not-applied',paymentStatus:'not-paid'});
  }
  const salary=calculateSalaryForEmployee(emp,month,loaded.run.inputs.schedules,loaded.run.inputs.records,loaded.run.inputs.leaves);
- const sources=[{kind:'payroll-inputs',id:empId,version:bundleHash},...(emp.insuranceSource?.versionId?[{kind:'insurance-timeline',id:emp.insuranceSource.versionId,version:emp.insuranceSource.evidenceVersion}]:[]),...(item?.source?[{kind:'payroll-item-inventory',id:item.source.id,version:String(item.source.revision)}]:[])];
- const source=projectPayrollComparisonSource({salary,sources,inventory:item?.version});
+ const includeInventory=!excludeRecordedItems&&!!item?.version;
+ const sources=[{kind:'payroll-inputs',id:empId,version:bundleHash},...(emp.insuranceSource?.versionId?[{kind:'insurance-timeline',id:emp.insuranceSource.versionId,version:emp.insuranceSource.evidenceVersion}]:[]),...(includeInventory&&item?.source?[{kind:'payroll-item-inventory',id:item.source.id,version:String(item.source.revision)}]:[])];
+ const source=projectPayrollComparisonSource({salary,sources,inventory:includeInventory?item?.version:null});
+ if(excludeRecordedItems){
+  const drop=new Set(['本月其他薪資項目清冊尚未建立','薪資項目清冊版本或範圍未核對']);
+  const kept=source.issues.filter((issue:string)=>!drop.has(issue)&&!issue.includes('清冊尚未'));
+  const {sourceHash:ignored,...content}=source;
+  content.issues=kept;content.inventoryStatus='excluded-recorded-items-from-rate-correction';
+  const complete=!kept.length&&content.totals?.net!=null;
+  content.status=complete?'comparable':'needs-review';
+  if(!complete)content.totals={gross:null,deductions:null,net:null};
+  Object.assign(source,{...content,sourceHash:evidenceHash(content)});
+ }
  issues.push(...source.issues);const unique=[...new Set(issues)];
  if(unique.length){source.status='needs-review';source.issues=unique;source.totals={gross:null,deductions:null,net:null};const {sourceHash:ignored,...content}=source;source.sourceHash=evidenceHash(content);}
  return sanitizePayrollSnapshot({original,correction,bundleHash,calculatorVersion:PAYROLL_VERSION,adapterVersion,status:unique.length?'needs-review':'calculated',issues:unique,source,salary,formalEligibility:'BLOCKED',applicationStatus:'not-applied',paymentStatus:'not-paid'});

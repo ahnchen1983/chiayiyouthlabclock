@@ -18,6 +18,12 @@ const retainComp=()=>({compOriginalWageDisposition:{mode:'retain-recorded-comp-w
 const atMin=(t:string)=>Date.parse(t+'+08:00')/60000;
 const synthCompOutstanding=()=>({id:'LOT',start:atMin('2026-08-01T09:00'),end:atMin('2026-08-01T12:00'),deadline:'2026-12-31',untakenMinutes:60,originalWageBasis:{status:'confirmed',tiers:[{start:atMin('2026-08-01T09:00'),end:atMin('2026-08-01T11:00'),minutes:120,kind:'rest-day-additional',hourlyBasis:{numerator:'200',denominator:'1'},multiplier:{numerator:'4',denominator:'3'}},{start:atMin('2026-08-01T11:00'),end:atMin('2026-08-01T12:00'),minutes:60,kind:'rest-day-additional',hourlyBasis:{numerator:'200',denominator:'1'},multiplier:{numerator:'5',denominator:'3'}}]}});
 const withComp=(input:any)=>{input.run.inputs.employees[0].normalPayCompEvidence.outstanding=[synthCompOutstanding()];return input;};
+const excludeItems=()=>({itemInventoryDisposition:{mode:'exclude-recorded-items-from-rate-correction' as const,...proof(),sourceRefs:['SYNTH-ITEMS-EXCLUDE'],reason:'Synthetic exclude recorded items from rate-correction target; reclassification remains separate'}});
+const withRecordedItems=(input:any)=>{
+ const inv=input.run.sourceEvidence.itemInventories[employee.id].version;
+ inv.inventory={...inv.inventory,mode:'items',items:[{itemCode:'ALLOWANCE',kind:'earning',amount:'1000.25',from:month+'-01',to:month+'-31',sourceRefs:['SYNTH-ITEM'],reason:'Synthetic unclassified allowance evidence'}],sourceRefs:['SYNTH-INVENTORY'],reason:'Synthetic approved recorded items inventory'};
+ return input;
+};
 function original(){
  const days=normalDays(month,{amount:'40000'}),context=[...normalDays('2026-07',{amount:'40000'}).slice(-6),...normalDays('2026-09',{amount:'40000'}).slice(0,6)].map(d=>({...d,covered:true}));
  for(const d of [...days,...context]){(d.policy as any).overtimeRules={schemaVersion:'overtime-rules-v1',weekStartDay:0,wageComponents:'single-contract-amount',monthlyHourlyDivisor:240};d.policy!.rounding.precision=0;}
@@ -89,6 +95,23 @@ describe('frozen original rate correction calculation',()=>{
  });
  it('rejects unknown compOriginalWageDisposition mode',()=>{
   expect(()=>validateHistoricalRateCorrection(correction('50000',{compOriginalWageDisposition:{mode:'recompute',...proof(),sourceRefs:['X'],reason:'Synthetic'}}),month,at)).toThrow();
+ });
+ it('calculates when recorded items are explicitly excluded from rate correction',()=>{
+  const r=calculateFrozenHistoricalRateCorrection(withRecordedItems(original()),employee.id,correction('50000',excludeItems()),at);
+  expect(r.status,r.issues.join()).toBe('calculated');expect(r.adapterVersion).toBe('historical-rate-correction-items-exclude-v1');
+  expect(r.source.inventoryStatus).toBe('excluded-recorded-items-from-rate-correction');
+  expect(r.salary.grossSalary).toBe(50000);
+ });
+ it('still needs review when recorded items exist without disposition',()=>{
+  const r=calculateFrozenHistoricalRateCorrection(withRecordedItems(original()),employee.id,correction(),at);
+  expect(r.status).toBe('needs-review');expect(r.issues).toContain('historical-item-reclassification-unsupported');
+ });
+ it('rejects item disposition when inventory is already confirmed-none',()=>{
+  const r=calculateFrozenHistoricalRateCorrection(original(),employee.id,correction('50000',excludeItems()),at);
+  expect(r.status).toBe('needs-review');expect(r.issues).toContain('historical-item-inventory-disposition-without-recorded-items');
+ });
+ it('rejects unknown itemInventoryDisposition mode',()=>{
+  expect(()=>validateHistoricalRateCorrection(correction('50000',{itemInventoryDisposition:{mode:'reclassify',...proof(),sourceRefs:['X'],reason:'Synthetic'}}),month,at)).toThrow();
  });
 });
 
