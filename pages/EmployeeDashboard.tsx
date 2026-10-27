@@ -23,7 +23,7 @@ const ShiftSwapPage        = lazy(() => import('../components/employee/ShiftSwap
 // 頭部常駐元件、控制元件、icon — 保留 static import
 import ChangePasswordModal from '../components/ChangePasswordModal';
 import NotificationBell from '../components/NotificationBell';
-import { ClockIcon, CalendarIcon, ListIcon, SendIcon, LogOutIcon, UsersIcon, DollarIcon } from '../components/icons';
+import { NavShell, type ShellGroup, type ShellLink } from '../components/shell/NavShell';
 
 // View 切換時的 Suspense fallback — 強制保留高度避免主區塊跳動
 const ViewLoadingFallback: React.FC = () => (
@@ -36,14 +36,33 @@ const ViewLoadingFallback: React.FC = () => (
   </div>
 );
 
-// 鑰匙圖示
-const KeyIcon: React.FC<{ className?: string }> = ({ className }) => (
-  <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-  </svg>
-);
+type View = 'home' | 'master' | 'comp' | 'overtime' | 'cases' | 'clock' | 'schedule' | 'records' | 'leave' | 'fullSchedule' | 'salary' | 'makeup' | 'leaveBalance' | 'preferences' | 'openShifts' | 'leaveOfAbsence' | 'shiftSwap';
 
-type View = 'master' | 'comp' | 'overtime' | 'cases' | 'clock' | 'schedule' | 'records' | 'leave' | 'fullSchedule' | 'salary' | 'makeup' | 'leaveBalance' | 'preferences' | 'openShifts' | 'leaveOfAbsence' | 'shiftSwap';
+const EmployeeHome: React.FC<{ onOpen: (view: View) => void }> = ({ onOpen }) => (
+  <section className="yl-home">
+    <p className="yl-home-kicker">WORKSPACE</p>
+    <h1>今天的工作，從這裡開始</h1>
+    <p>出勤、請假、班表與薪資明細分成旁邊的主要項目。這一頁只負責帶路，不計算薪資，也不執行給付。</p>
+    <div className="yl-home-grid">
+      <button type="button" className="yl-home-card" onClick={() => onOpen('clock')}>
+        <strong>去打卡</strong>
+        <span>上班、休息與今日出勤</span>
+      </button>
+      <button type="button" className="yl-home-card" onClick={() => onOpen('leave')}>
+        <strong>去請假</strong>
+        <span>請假、留停、補休與加班</span>
+      </button>
+      <button type="button" className="yl-home-card" onClick={() => onOpen('schedule')}>
+        <strong>看班表</strong>
+        <span>我的班表、總班表與換班</span>
+      </button>
+      <button type="button" className="yl-home-card" onClick={() => onOpen('salary')}>
+        <strong>看薪資明細</strong>
+        <span>只讀明細，不是發薪</span>
+      </button>
+    </div>
+  </section>
+);
 
 const EmployeeDashboard: React.FC = () => {
   const { user, logout } = useAuth();
@@ -52,6 +71,7 @@ const EmployeeDashboard: React.FC = () => {
 
   const renderView = () => {
     switch (currentView) {
+      case 'home': return <EmployeeHome onOpen={setCurrentView} />;
       case 'master': return <PayrollMasterTimeline />;
       case 'comp': return <CompWorkflow />;
       case 'overtime': return <OvertimeWorkflow />;
@@ -85,81 +105,71 @@ const EmployeeDashboard: React.FC = () => {
     }
   };
 
-  const NavItem: React.FC<{
-    view: View;
-    icon: React.ReactNode;
-    label: string;
-  }> = ({ view, icon, label }) => (
-    <button
-      onClick={() => setCurrentView(view)}
-      className={`flex flex-col items-center justify-center min-w-[72px] flex-shrink-0 py-2 px-2 space-y-1 transition-colors duration-200 ${currentView === view
-        ? 'text-brand-green-dark border-b-4 border-brand-green-dark font-semibold'
-        : 'text-gray-500 hover:bg-green-50'
-        }`}
-    >
-      {icon}
-      <span className="text-xs sm:text-sm">{label}</span>
-    </button>
-  );
+  const link = (view: View, label: string): ShellLink<View> => ({ view, label });
+  const groups: ShellGroup<View>[] = [
+    { id: 'home', label: '工作台', icon: 'home', links: [link('home', '工作台')] },
+    {
+      id: 'attendance',
+      label: '出勤打卡',
+      icon: 'clock',
+      links: [
+        link('clock', '打卡'),
+        link('records', '打卡紀錄'),
+        link('cases', '異常待辦'),
+        link('makeup', '補打卡'),
+      ],
+    },
+    {
+      id: 'leave',
+      label: '請假與簽核',
+      icon: 'leave',
+      links: [
+        link('leave', '請假/外勤'),
+        link('leaveOfAbsence', '留停申請'),
+        link('leaveBalance', '假別餘額'),
+        link('comp', '補休帳本'),
+        link('overtime', '加班申請'),
+      ],
+    },
+    {
+      id: 'schedule',
+      label: '班表',
+      icon: 'calendar',
+      links: [
+        link('schedule', '我的班表'),
+        link('fullSchedule', '總班表'),
+        link('openShifts', '認領班次'),
+        link('shiftSwap', '換班'),
+        link('preferences', '偏好設定'),
+      ],
+    },
+    { id: 'salary', label: '薪資明細', icon: 'salary', links: [link('salary', '薪資明細')] },
+  ];
 
   return (
-    <div className="flex flex-col h-screen bg-gray-50">
-      <header className="flex items-center justify-between p-4 bg-white shadow-md">
-        <div className="flex items-center space-x-3">
-          <div className="w-10 h-10 rounded-full bg-brand-green-dark flex items-center justify-center text-white font-bold">青</div>
-          <h1 className="text-xl font-bold text-gray-800">員工後台</h1>
-        </div>
-        <div className="flex items-center gap-4">
-          <span className="text-sm font-medium text-gray-600 hidden sm:block">
-            {user?.name}
-          </span>
-          <NotificationBell />
-          <button
-            onClick={() => setShowChangePassword(true)}
-            className="p-2 text-gray-500 hover:bg-gray-100 rounded-full transition-colors"
-            title="修改密碼"
-          >
-            <KeyIcon className="w-5 h-5" />
-          </button>
-          <button
-            onClick={logout}
-            className="flex items-center px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-md transition-colors"
-          >
-            <LogOutIcon className="w-4 h-4 mr-2 hidden sm:block" />
-            <span className="hidden sm:block">登出</span>
-          </button>
-        </div>
-      </header>
-
-      <main className="flex-1 overflow-y-auto p-4 sm:p-6">
+    <>
+      <NavShell
+        contextTitle="員工後台"
+        workspaceTitle="嘉義市青年實驗室"
+        workspaceHint="員工工作區"
+        userName={user?.name ?? ''}
+        roleLabel="員工"
+        groups={groups}
+        advancedLinks={[link('master', '薪資有效期主檔')]}
+        currentView={currentView}
+        onNavigate={setCurrentView}
+        onLogout={logout}
+        onChangePassword={() => setShowChangePassword(true)}
+        toolbar={<NotificationBell />}
+      >
         <Suspense fallback={<ViewLoadingFallback />}>
           {renderView()}
         </Suspense>
-      </main>
-
-      <nav className="flex bg-white border-t border-gray-200 shadow-t-lg overflow-x-auto">
-        <NavItem view="clock" icon={<ClockIcon className="w-6 h-6" />} label="打卡" />
-        <NavItem view="schedule" icon={<CalendarIcon className="w-6 h-6" />} label="我的班表" />
-        <NavItem view="fullSchedule" icon={<UsersIcon className="w-6 h-6" />} label="總班表" />
-        <NavItem view="openShifts" icon={<CalendarIcon className="w-6 h-6" />} label="認領班次" />
-        <NavItem view="shiftSwap" icon={<CalendarIcon className="w-6 h-6" />} label="換班" />
-        <NavItem view="cases" icon={<ListIcon className="w-6 h-6" />} label="異常待辦" />
-        <NavItem view="records" icon={<ListIcon className="w-6 h-6" />} label="打卡紀錄" />
-        <NavItem view="master" icon={<SendIcon className="w-6 h-6" />} label="薪資有效期主檔" />
-        <NavItem view="comp" icon={<SendIcon className="w-6 h-6" />} label="補休帳本" />
-        <NavItem view="overtime" icon={<SendIcon className="w-6 h-6" />} label="加班申請" />
-        <NavItem view="leave" icon={<SendIcon className="w-6 h-6" />} label="請假/外勤" />
-        <NavItem view="leaveOfAbsence" icon={<SendIcon className="w-6 h-6" />} label="留停申請" />
-        <NavItem view="leaveBalance" icon={<ListIcon className="w-6 h-6" />} label="假別餘額" />
-        <NavItem view="preferences" icon={<CalendarIcon className="w-6 h-6" />} label="偏好設定" />
-        <NavItem view="makeup" icon={<SendIcon className="w-6 h-6" />} label="補打卡" />
-        <NavItem view="salary" icon={<DollarIcon className="w-6 h-6" />} label="薪資明細" />
-      </nav>
-
+      </NavShell>
       {showChangePassword && (
         <ChangePasswordModal onClose={() => setShowChangePassword(false)} />
       )}
-    </div>
+    </>
   );
 };
 

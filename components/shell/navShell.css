@@ -1,0 +1,620 @@
+/* Phase A chrome. Colors follow the youth-lab leaf workspace, scoped so feature pages keep their own controls. */
+
+.yl-shell {
+  display: flex;
+  height: 100vh;
+  height: 100dvh;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  background: #f5f7f6;
+  color: #283d38;
+  font-family: Inter, "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+}
+
+.yl-sidebar {
+  display: none;
+  flex-direction: column;
+  width: 234px;
+  flex: none;
+  background: #fff;
+  border-right: 1px solid #e5eae7;
+  z-index: 40;
+  min-height: 0;
+}
+
+.yl-sidebar.is-open {
+  display: flex;
+}
+
+.yl-brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin: 22px 16px 0;
+  padding: 0 6px;
+  border: 0;
+  background: transparent;
+  color: #234f43;
+  text-align: left;
+  cursor: pointer;
+}
+
+.yl-brand strong {
+  display: block;
+  font-size: 20px;
+  font-weight: 750;
+  letter-spacing: 2px;
+  line-height: 1.1;
+}
+
+.yl-brand small {
+  display: block;
+  margin-top: 4px;
+  font-size: 9px;
+  letter-spacing: 1.2px;
+  color: #7d9188;
+  font-weight: 600;
+}
+
+.yl-brand-mark {
+  width: 39px;
+  height: 44px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  background: #e8f0e7;
+  color: #176859;
+  border-radius: 15px 15px 4px 15px;
+}
+
+.yl-workspace {
+  margin: 18px 16px 8px;
+  padding: 12px 12px 11px;
+  background: #f6f8f6;
+  border: 1px solid #edf0ed;
+  border-radius: 9px;
+  font-size: 12px;
+  font-weight: 650;
+  color: #34584d;
+}
+
+.yl-workspace small {
+  display: block;
+  margin-top: 6px;
+  margin-left: 14px;
+  font-size: 10px;
+  font-weight: 500;
+  color: #8b9691;
+}
+
+.yl-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: #478b6e;
+  transform: translateY(-1px);
+}
+
+.yl-nav-label {
+  margin: 8px 22px 8px;
+  font-size: 10px;
+  letter-spacing: 1px;
+  color: #9aa49f;
+}
+
+.yl-nav {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.yl-group,
+.yl-advanced {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.yl-group-btn,
+.yl-advanced-toggle,
+.yl-link,
+.yl-text-btn,
+.yl-menu {
+  font: inherit;
+  cursor: pointer;
+}
+
+.yl-group-btn,
+.yl-advanced-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #718078;
+  padding: 11px 12px;
+  font-size: 14px;
+  font-weight: 550;
+  text-align: left;
+}
+
+.yl-group-btn svg,
+.yl-advanced-toggle svg,
+.yl-bottom svg {
+  width: 19px;
+  height: 19px;
+  flex: none;
+}
+
+.yl-group-btn.is-active,
+.yl-link.is-active {
+  background: #eaf3ed;
+  color: #246650;
+  font-weight: 700;
+}
+
+.yl-group-btn:hover,
+.yl-advanced-toggle:hover,
+.yl-link:hover,
+.yl-text-btn:hover,
+.yl-brand:hover {
+  background: #f3f7f4;
+}
+
+.yl-chevron {
+  margin-left: auto;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg) translateY(-2px);
+  flex: none;
+}
+
+.yl-group.is-open > .yl-group-btn .yl-chevron,
+.yl-advanced.is-open > .yl-advanced-toggle .yl-chevron {
+  transform: rotate(225deg) translateY(-1px);
+}
+
+.yl-sub {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0 0 6px;
+}
+
+.yl-link {
+  display: flex;
+  width: 100%;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #617066;
+  padding: 8px 12px 8px 38px;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.yl-advanced {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #eef2ef;
+}
+
+.yl-advanced-toggle {
+  color: #6d7f76;
+  font-size: 13px;
+}
+
+.yl-support {
+  margin: 0 14px 8px;
+  padding: 14px 14px 12px;
+  border-radius: 12px;
+  background: #f7f7ee;
+  color: #6f784c;
+}
+
+.yl-support strong {
+  display: block;
+  margin: 6px 0 4px;
+  font-size: 13px;
+  line-height: 1.55;
+  font-weight: 700;
+}
+
+.yl-support p {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #8d9178;
+}
+
+.yl-user {
+  padding: 12px 14px 16px;
+  border-top: 1px solid #eef2ef;
+}
+
+.yl-user-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.yl-avatar {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #e9eee3;
+  color: #6c805b;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.yl-user-row p {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  color: #314840;
+}
+
+.yl-user-row small {
+  color: #8b9691;
+  font-size: 11px;
+}
+
+.yl-text-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: #5c6f66;
+  padding: 7px 6px;
+  border-radius: 8px;
+  font-size: 13px;
+  text-align: left;
+}
+
+.yl-text-btn.danger {
+  color: #b42318;
+}
+
+.yl-text-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.yl-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.yl-topbar {
+  height: 64px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 14px;
+  background: #fff;
+  border-bottom: 1px solid #e5eae7;
+}
+
+.yl-menu {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #40584e;
+  padding: 0;
+}
+
+.yl-crumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+  font-size: 12px;
+  color: #99a29d;
+}
+
+.yl-crumb strong {
+  color: #3e564c;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.yl-top-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+}
+
+.yl-content {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  padding: 16px;
+  background: #f5f7f6;
+}
+
+.yl-bottom {
+  display: flex;
+  flex: none;
+  background: rgba(255, 255, 255, 0.96);
+  border-top: 1px solid #e5eae7;
+  padding: 4px 2px calc(4px + env(safe-area-inset-bottom));
+  z-index: 25;
+}
+
+.yl-bottom button {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border: 0;
+  background: transparent;
+  color: #8b9883;
+  padding: 6px 2px 4px;
+  font-size: 10px;
+  line-height: 1.25;
+  font-weight: 600;
+}
+
+.yl-bottom button span {
+  display: block;
+  max-width: 100%;
+  text-align: center;
+  white-space: normal;
+}
+
+.yl-bottom button.is-active {
+  color: #176859;
+}
+
+.yl-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  border: 0;
+  background: #12382777;
+  padding: 0;
+}
+
+.yl-group-btn:focus-visible,
+.yl-link:focus-visible,
+.yl-advanced-toggle:focus-visible,
+.yl-text-btn:focus-visible,
+.yl-brand:focus-visible,
+.yl-menu:focus-visible,
+.yl-bottom button:focus-visible {
+  outline: 3px solid #e9ab64;
+  outline-offset: 2px;
+}
+
+.yl-home {
+  max-width: 760px;
+}
+
+.yl-home-kicker {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 1.6px;
+  color: #82938b;
+  font-weight: 700;
+}
+
+.yl-home h1 {
+  margin: 10px 0 0;
+  font-size: 28px;
+  line-height: 1.35;
+  letter-spacing: -0.4px;
+  color: #234f43;
+  font-weight: 650;
+}
+
+.yl-home > p {
+  margin: 8px 0 0;
+  color: #798781;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.yl-home-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  margin-top: 22px;
+}
+
+.yl-home-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  text-align: left;
+  border: 1px solid #e5eae7;
+  background: #fff;
+  border-radius: 12px;
+  padding: 16px 16px 14px;
+  color: #314840;
+  cursor: pointer;
+  font: inherit;
+}
+
+.yl-home-card strong {
+  font-size: 15px;
+}
+
+.yl-home-card span {
+  font-size: 12px;
+  color: #798781;
+}
+
+.yl-home-card:hover {
+  background: #f4f8f5;
+}
+
+@media (min-width: 640px) {
+  .yl-home-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (min-width: 768px) {
+  .yl-sidebar {
+    display: flex;
+    position: static;
+  }
+
+  .yl-bottom,
+  .yl-scrim,
+  .yl-menu {
+    display: none;
+  }
+
+  .yl-topbar {
+    height: 72px;
+    padding: 0 28px;
+  }
+
+  .yl-content {
+    padding: 28px 32px 32px;
+  }
+}
+
+@media (max-width: 767px) {
+  .yl-sidebar.is-open {
+    position: fixed;
+    inset: 0 auto 0 0;
+    height: 100%;
+    box-shadow: 8px 0 24px #12382722;
+  }
+
+  .yl-shell:has(.yl-sidebar.is-open) .yl-bottom {
+    display: none;
+  }
+}
+
+/* Browser tests click the original destination labels directly. Keep one visible set. */
+.yl-shell.is-e2e .yl-sidebar {
+  display: flex;
+  position: static;
+  box-shadow: none;
+}
+
+.yl-shell.is-e2e .yl-bottom,
+.yl-shell.is-e2e .yl-scrim {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .yl-shell.is-e2e {
+    flex-direction: column;
+  }
+
+  .yl-shell.is-e2e .yl-main {
+    order: 1;
+  }
+
+  .yl-shell.is-e2e .yl-sidebar {
+    order: 2;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    height: auto;
+    border-right: 0;
+    border-top: 1px solid #e5eae7;
+    overflow: hidden;
+  }
+
+  .yl-shell.is-e2e .yl-nav {
+    flex: none;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    height: auto;
+  }
+
+  .yl-shell.is-e2e .yl-brand,
+  .yl-shell.is-e2e .yl-workspace,
+  .yl-shell.is-e2e .yl-nav-label,
+  .yl-shell.is-e2e .yl-support,
+  .yl-shell.is-e2e .yl-user {
+    display: none;
+  }
+
+  .yl-shell.is-e2e .yl-nav {
+    flex-direction: row;
+    align-items: stretch;
+    overflow-x: auto;
+    overflow-y: hidden;
+    max-width: 100%;
+    padding: 0;
+    gap: 0;
+  }
+
+  .yl-shell.is-e2e .yl-group,
+  .yl-shell.is-e2e .yl-advanced,
+  .yl-shell.is-e2e .yl-sub {
+    flex-direction: row;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    gap: 0;
+  }
+
+  .yl-shell.is-e2e .yl-group-btn,
+  .yl-shell.is-e2e .yl-advanced-toggle,
+  .yl-shell.is-e2e .yl-link {
+    width: auto;
+    white-space: nowrap;
+    padding: 12px 14px;
+    border-radius: 0;
+  }
+
+  .yl-shell.is-e2e .yl-chevron {
+    display: none;
+  }
+}
+
+@media (min-width: 768px) {
+  .yl-shell.is-e2e {
+    flex-direction: row;
+  }
+
+  .yl-shell.is-e2e .yl-sidebar {
+    width: 234px;
+    order: 0;
+  }
+}

@@ -1,0 +1,280 @@
+import React, { useState } from 'react';
+import './navShell.css';
+import {
+  CalendarIcon,
+  CheckSquareIcon,
+  ClockIcon,
+  DashboardIcon,
+  DollarIcon,
+  KeyIcon,
+  LeafIcon,
+  LogOutIcon,
+  UsersIcon,
+} from '../icons';
+
+export type ShellIconName = 'home' | 'clock' | 'leave' | 'calendar' | 'salary' | 'people';
+
+export type ShellLink<V extends string> = {
+  view: V;
+  label: string;
+};
+
+export type ShellGroup<V extends string> = {
+  id: string;
+  label: string;
+  icon: ShellIconName;
+  links: ShellLink<V>[];
+};
+
+type NavShellProps<V extends string> = {
+  contextTitle: string;
+  workspaceTitle: string;
+  workspaceHint: string;
+  userName: string;
+  roleLabel: string;
+  groups: ShellGroup<V>[];
+  advancedLinks: ShellLink<V>[];
+  currentView: V;
+  onNavigate: (view: V) => void;
+  onLogout: () => void;
+  onChangePassword: () => void;
+  toolbar?: React.ReactNode;
+  children: React.ReactNode;
+};
+
+const e2eNav = import.meta.env.VITE_E2E === 'true';
+
+const ICONS: Record<ShellIconName, React.FC<{ className?: string }>> = {
+  home: DashboardIcon,
+  clock: ClockIcon,
+  leave: CheckSquareIcon,
+  calendar: CalendarIcon,
+  salary: DollarIcon,
+  people: UsersIcon,
+};
+
+function Icon({ name }: { name: ShellIconName }) {
+  const Glyph = ICONS[name];
+  return (
+    <span aria-hidden="true">
+      <Glyph />
+    </span>
+  );
+}
+
+export function NavShell<V extends string>({
+  contextTitle,
+  workspaceTitle,
+  workspaceHint,
+  userName,
+  roleLabel,
+  groups,
+  advancedLinks,
+  currentView,
+  onNavigate,
+  onLogout,
+  onChangePassword,
+  toolbar,
+  children,
+}: NavShellProps<V>) {
+  const groupFor = (view: V) => groups.find((group) => group.links.some((link) => link.view === view));
+  const labelFor = (view: V) => {
+    const primary = groupFor(view)?.links.find((link) => link.view === view);
+    return primary?.label ?? advancedLinks.find((link) => link.view === view)?.label ?? contextTitle;
+  };
+  const home = groups[0]?.links[0];
+
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [openGroupId, setOpenGroupId] = useState<string | null>(groupFor(currentView)?.id ?? groups[0]?.id ?? null);
+  const [advancedOpen, setAdvancedOpen] = useState(
+    e2eNav || advancedLinks.some((link) => link.view === currentView),
+  );
+
+  const openLeaf = (view: V) => {
+    const group = groupFor(view);
+    if (group) setOpenGroupId(group.id);
+    if (advancedLinks.some((link) => link.view === view)) setAdvancedOpen(true);
+    onNavigate(view);
+    if (!e2eNav) setSidebarOpen(false);
+  };
+
+  const onGroupHeader = (group: ShellGroup<V>) => {
+    const first = group.links[0];
+    if (!first) return;
+    if (group.links.length === 1 && first.label === group.label) {
+      openLeaf(first.view);
+      return;
+    }
+    if (openGroupId === group.id && !e2eNav) {
+      setOpenGroupId(null);
+      return;
+    }
+    setOpenGroupId(group.id);
+    onNavigate(first.view);
+  };
+
+  const leaf = labelFor(currentView);
+  const initial = userName.trim().charAt(0) || '青';
+
+  return (
+    <div className={e2eNav ? 'yl-shell is-e2e' : 'yl-shell'}>
+      {sidebarOpen && !e2eNav && (
+        <button type="button" className="yl-scrim" aria-label="關閉導覽" onClick={() => setSidebarOpen(false)} />
+      )}
+      <aside className={sidebarOpen ? 'yl-sidebar is-open' : 'yl-sidebar'}>
+        <button
+          type="button"
+          className="yl-brand"
+          onClick={() => home && openLeaf(home.view)}
+        >
+          <span className="yl-brand-mark">
+            <LeafIcon className="w-6 h-6" />
+          </span>
+          <span>
+            <strong>有事青年</strong>
+            <small>YOUTH LAB</small>
+          </span>
+        </button>
+        <div className="yl-workspace">
+          <span className="yl-dot" aria-hidden="true" />
+          {workspaceTitle}
+          <small>人事工作空間</small>
+        </div>
+        <p className="yl-nav-label">{workspaceHint}</p>
+        <nav className="yl-nav" aria-label="主要導覽">
+          {groups.map((group) => {
+            const open = e2eNav || openGroupId === group.id;
+            const active = group.links.some((link) => link.view === currentView);
+            const sole = group.links.length === 1 && group.links[0].label === group.label;
+            return (
+              <div key={group.id} className={open ? 'yl-group is-open' : 'yl-group'}>
+                <button
+                  type="button"
+                  className={active ? 'yl-group-btn is-active' : 'yl-group-btn'}
+                  aria-current={sole && active ? 'page' : undefined}
+                  aria-expanded={sole ? undefined : open}
+                  aria-controls={sole || !open ? undefined : `yl-group-${group.id}`}
+                  onClick={() => onGroupHeader(group)}
+                >
+                  <Icon name={group.icon} />
+                  {group.label}
+                  {!sole && <span className="yl-chevron" aria-hidden="true" />}
+                </button>
+                {open && !sole && (
+                  <div className="yl-sub" id={`yl-group-${group.id}`}>
+                    {group.links.map((link) => (
+                      <button
+                        key={link.view}
+                        type="button"
+                        className={currentView === link.view ? 'yl-link is-active' : 'yl-link'}
+                        aria-current={currentView === link.view ? 'page' : undefined}
+                        onClick={() => openLeaf(link.view)}
+                      >
+                        {link.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {advancedLinks.length > 0 && (
+            <div className={e2eNav || advancedOpen ? 'yl-advanced is-open' : 'yl-advanced'}>
+              <button
+                type="button"
+                className="yl-advanced-toggle"
+                aria-expanded={e2eNav || advancedOpen}
+                aria-controls="yl-advanced-links"
+                onClick={() => setAdvancedOpen((open) => e2eNav || !open)}
+              >
+                <span aria-hidden="true"><KeyIcon /></span>
+                進階／設定
+                <span className="yl-chevron" aria-hidden="true" />
+              </button>
+              {(e2eNav || advancedOpen) && (
+                <div className="yl-sub" id="yl-advanced-links">
+                  {advancedLinks.map((link) => (
+                    <button
+                      key={link.view}
+                      type="button"
+                      className={currentView === link.view ? 'yl-link is-active' : 'yl-link'}
+                      aria-current={currentView === link.view ? 'page' : undefined}
+                      onClick={() => openLeaf(link.view)}
+                    >
+                      {link.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </nav>
+        <div className="yl-support">
+          <LeafIcon className="w-5 h-5" />
+          <strong>出勤、假勤與班表，放在同一個工作空間。</strong>
+          <p>薪資明細只供查看。正式給付仍不在這裡執行。</p>
+        </div>
+        <div className="yl-user">
+          <div className="yl-user-row">
+            <div className="yl-avatar" aria-hidden="true">{initial}</div>
+            <div>
+              <p>{userName}</p>
+              <small>{roleLabel}</small>
+            </div>
+          </div>
+          <button type="button" className="yl-text-btn" onClick={onChangePassword}>
+            <KeyIcon />
+            修改密碼
+          </button>
+          <button type="button" className="yl-text-btn danger" onClick={onLogout}>
+            <LogOutIcon />
+            登出
+          </button>
+        </div>
+      </aside>
+
+      <div className="yl-main">
+        <header className="yl-topbar">
+          <button type="button" className="yl-menu" aria-label="開啟選單" onClick={() => setSidebarOpen(true)}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+              <path strokeLinecap="round" d="M4 7h16M4 12h16M4 17h16" />
+            </svg>
+          </button>
+          <div className="yl-crumb">
+            <span>{contextTitle}</span>
+            <span aria-hidden="true">/</span>
+            <strong>{leaf}</strong>
+          </div>
+          <div className="yl-top-actions">
+            {toolbar}
+            <div className="yl-avatar" aria-hidden="true">{initial}</div>
+          </div>
+        </header>
+        <main className="yl-content">{children}</main>
+        <nav className="yl-bottom" aria-label="手機主要導覽">
+          {groups.map((group) => {
+            const active = group.links.some((link) => link.view === currentView);
+            const first = group.links[0];
+            if (!first) return null;
+            return (
+              <button
+                key={group.id}
+                type="button"
+                className={active ? 'is-active' : undefined}
+                aria-current={active ? 'page' : undefined}
+                onClick={() => {
+                  setOpenGroupId(group.id);
+                  onNavigate(first.view);
+                  setSidebarOpen(false);
+                }}
+              >
+                <Icon name={group.icon} />
+                <span>{group.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+      </div>
+    </div>
+  );
+}

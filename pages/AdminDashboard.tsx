@@ -46,10 +46,10 @@ const MyPreferences        = lazy(() => import('../components/employee/MyPrefere
 const OpenShiftPicker      = lazy(() => import('../components/employee/OpenShiftPicker'));
 const LeaveOfAbsenceRequestForm = lazy(() => import('../components/employee/LeaveOfAbsenceRequestForm'));
 
-// 頭部常駐元件、控制元件、icon — 保留 static import
+// 頭部常駐元件與殼層 — 保留 static import
 import ChangePasswordModal from '../components/ChangePasswordModal';
 import NotificationBell from '../components/NotificationBell';
-import { DashboardIcon, CalendarIcon, ListIcon, CheckSquareIcon, UsersIcon, LogOutIcon, DollarIcon, ClockIcon, SendIcon } from '../components/icons';
+import { NavShell, type ShellGroup, type ShellLink } from '../components/shell/NavShell';
 
 // View 切換時的 Suspense fallback — 強制保留高度避免主區塊跳動
 const ViewLoadingFallback: React.FC = () => (
@@ -62,20 +62,6 @@ const ViewLoadingFallback: React.FC = () => (
   </div>
 );
 
-// 鑰匙圖示
-const KeyIcon: React.FC<{ className?: string }> = ({ className }) => (
-  <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-  </svg>
-);
-
-// 對照表圖示
-const CompareIcon: React.FC<{ className?: string }> = ({ className }) => (
-  <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-  </svg>
-);
-
 type AdminView = 'historicalPayrollCorrection' | 'payrollReconciliation' | 'payrollItemExecution' | 'payrollAdjustments' | 'master' | 'dayTypes' | 'payrollPolicy' | 'insurance' | 'payrollItems' | 'payrollDifference' | 'historicalDifference' | 'payrollPaymentAllocation' | 'payrollItemTreatment' | 'worktimeDeclaration' | 'attendancePolicy' | 'payrollPayments' | 'comp' | 'overtime' | 'cases' | 'overview' | 'schedule' | 'attendance' | 'leave' | 'employees' | 'monthlyReport' | 'comparison' | 'salary' | 'auditLog' | 'systemSettings' | 'makeupApproval' | 'openShifts' | 'loaApproval' | 'shiftSwapApproval' | 'myClock' | 'myLeave' | 'myRecords' | 'mySalary' | 'myMakeup' | 'myLeaveBalance' | 'myPreferences' | 'myOpenShifts' | 'myLeaveOfAbsence';
 
 const AdminDashboard: React.FC = () => {
@@ -83,7 +69,6 @@ const AdminDashboard: React.FC = () => {
   // 一進入介面即為自己的打卡頁（管理功能仍在側邊選單）
   const [currentView, setCurrentView] = useState<AdminView>('myClock');
   const [showChangePassword, setShowChangePassword] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const renderView = () => {
     switch (currentView) {
@@ -133,148 +118,116 @@ const AdminDashboard: React.FC = () => {
     }
   };
 
-  const NavItem: React.FC<{
-    view: AdminView;
-    icon: React.ReactNode;
-    label: string;
-  }> = ({ view, icon, label }) => (
-    <li>
-      <button
-        onClick={() => { setCurrentView(view); setSidebarOpen(false); }}
-        className={`flex items-center p-3 text-base font-normal rounded-lg transition-all duration-200 w-full ${currentView === view
-          ? 'bg-brand-blue-dark text-white shadow-md'
-          : 'text-gray-700 hover:bg-gray-200'
-          }`}
-      >
-        {icon}
-        <span className="ml-3">{label}</span>
-      </button>
-    </li>
-  );
+  const isSuper = user?.role === UserRole.SuperAdmin;
+  const link = (view: AdminView, label: string): ShellLink<AdminView> => ({ view, label });
+  const groups: ShellGroup<AdminView>[] = [
+    {
+      id: 'home',
+      label: '工作台',
+      icon: 'home',
+      links: [link('overview', '總覽儀表板'), link('monthlyReport', '月結報表')],
+    },
+    {
+      id: 'attendance',
+      label: '出勤打卡',
+      icon: 'clock',
+      links: [
+        link('myClock', '我的打卡'),
+        link('myRecords', '我的出勤紀錄'),
+        link('myMakeup', '補打卡申請'),
+        link('attendance', '出勤紀錄'),
+        link('cases', '異常待辦'),
+        link('makeupApproval', '補打卡審核'),
+      ],
+    },
+    {
+      id: 'leave',
+      label: '請假與簽核',
+      icon: 'leave',
+      links: [
+        link('myLeave', '請假/外勤申請'),
+        link('leave', '請假/外勤審核'),
+        link('myLeaveOfAbsence', '留停申請'),
+        link('loaApproval', '留停審核'),
+        link('shiftSwapApproval', '換班審核'),
+        link('myLeaveBalance', '假別餘額'),
+        link('comp', '補休帳本'),
+        link('overtime', '加班申請'),
+      ],
+    },
+    {
+      id: 'schedule',
+      label: '班表',
+      icon: 'calendar',
+      links: [
+        link('schedule', '排班管理'),
+        link('comparison', '排班對照表'),
+        link('openShifts', '開放排班'),
+        link('myOpenShifts', '認領班次'),
+        link('myPreferences', '偏好設定'),
+      ],
+    },
+    {
+      id: 'salary',
+      label: '薪資明細',
+      icon: 'salary',
+      links: [link('mySalary', '我的薪資')],
+    },
+    {
+      id: 'people',
+      label: '人員',
+      icon: 'people',
+      links: [link('employees', '員工管理')],
+    },
+  ];
+  const advancedLinks: ShellLink<AdminView>[] = [
+    link('master', '薪資有效期主檔'),
+    link('dayTypes', '例假／休息日核定'),
+    link('payrollPolicy', '計薪政策版本'),
+    link('insurance', '投保資料'),
+    ...(isSuper ? [
+      link('payrollItemExecution', '薪資項目計算'),
+      link('payrollAdjustments', '薪資調整'),
+      link('payrollReconciliation', '月薪資對帳'),
+      link('historicalPayrollCorrection', '歷史薪率修正'),
+      link('payrollItemTreatment', '薪資項目處理'),
+      link('worktimeDeclaration', '工時制度聲明'),
+      link('attendancePolicy', '出勤判定政策'),
+      link('payrollPaymentAllocation', '給付金額分配'),
+      link('payrollPayments', '給付證據核對'),
+      link('historicalDifference', '歷史薪資差額'),
+      link('payrollDifference', '薪資差額核對'),
+      link('payrollItems', '其他薪資項目'),
+      link('salary', '薪資計算'),
+      link('auditLog', '系統日誌'),
+      link('systemSettings', '系統設定'),
+    ] : []),
+  ];
 
   return (
-    <div className="flex h-screen bg-gray-100">
-      {/* 行動版背景遮罩 */}
-      {sidebarOpen && (
-        <div
-          className="fixed inset-0 bg-black bg-opacity-50 z-30 md:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
-      <aside className={`fixed md:static z-40 inset-y-0 left-0 w-64 bg-white shadow-xl flex flex-col transform transition-transform md:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}>
-        <div className="flex items-center justify-center p-4 border-b">
-          <div className="w-12 h-12 rounded-full bg-brand-green-dark flex items-center justify-center text-white font-bold text-xl">青</div>
-          <h1 className="ml-3 text-xl font-bold text-gray-800">管理者後台</h1>
-        </div>
-        <nav className="flex-1 p-4 overflow-y-auto">
-          <ul className="space-y-2">
-            <NavItem view="overview" icon={<DashboardIcon className="w-6 h-6" />} label="總覽儀表板" />
-            <NavItem view="schedule" icon={<CalendarIcon className="w-6 h-6" />} label="排班管理" />
-            <NavItem view="comparison" icon={<CompareIcon className="w-6 h-6" />} label="排班對照表" />
-            <NavItem view="cases" icon={<ListIcon className="w-6 h-6" />} label="異常待辦" />
-            <NavItem view="attendance" icon={<ListIcon className="w-6 h-6" />} label="出勤紀錄" />
-            <NavItem view="master" icon={<SendIcon className="w-6 h-6" />} label="薪資有效期主檔" />
-            <NavItem view="dayTypes" icon={<CalendarIcon className="w-6 h-6" />} label="例假／休息日核定" />
-            <NavItem view="payrollPolicy" icon={<SendIcon className="w-6 h-6" />} label="計薪政策版本" />
-            <NavItem view="insurance" icon={<SendIcon className="w-6 h-6" />} label="投保資料" />
-            {user?.role === UserRole.SuperAdmin && <NavItem view="payrollItemExecution" icon={<DollarIcon className="w-6 h-6" />} label="薪資項目計算" />}
-            {user?.role === UserRole.SuperAdmin && <NavItem view="payrollAdjustments" icon={<DollarIcon className="w-6 h-6" />} label="薪資調整" />}
-            {user?.role === UserRole.SuperAdmin && <NavItem view="payrollReconciliation" icon={<DollarIcon className="w-6 h-6" />} label="月薪資對帳" />}
-            {user?.role === UserRole.SuperAdmin && <NavItem view="historicalPayrollCorrection" icon={<DollarIcon className="w-6 h-6" />} label="歷史薪率修正" />}
-            {user?.role === UserRole.SuperAdmin && <NavItem view="payrollItemTreatment" icon={<DollarIcon className="w-6 h-6" />} label="薪資項目處理" />}
-            {user?.role === UserRole.SuperAdmin && <NavItem view="worktimeDeclaration" icon={<ClockIcon className="w-6 h-6" />} label="工時制度聲明" />}
-            {user?.role === UserRole.SuperAdmin && <NavItem view="attendancePolicy" icon={<ClockIcon className="w-6 h-6" />} label="出勤判定政策" />}
-            {user?.role === UserRole.SuperAdmin && <NavItem view="payrollPaymentAllocation" icon={<DollarIcon className="w-6 h-6" />} label="給付金額分配" />}
-            {user?.role === UserRole.SuperAdmin && <NavItem view="payrollPayments" icon={<DollarIcon className="w-6 h-6" />} label="給付證據核對" />}
-            {user?.role === UserRole.SuperAdmin && <NavItem view="historicalDifference" icon={<DollarIcon className="w-6 h-6" />} label="歷史薪資差額" />}
-            {user?.role === UserRole.SuperAdmin && <NavItem view="payrollDifference" icon={<DollarIcon className="w-6 h-6" />} label="薪資差額核對" />}
-            {user?.role === UserRole.SuperAdmin && <NavItem view="payrollItems" icon={<DollarIcon className="w-6 h-6" />} label="其他薪資項目" />}
-        <NavItem view="comp" icon={<SendIcon className="w-6 h-6" />} label="補休帳本" />
-        <NavItem view="overtime" icon={<SendIcon className="w-6 h-6" />} label="加班申請" />
-        <NavItem view="leave" icon={<CheckSquareIcon className="w-6 h-6" />} label="請假/外勤審核" />
-            <NavItem view="shiftSwapApproval" icon={<CalendarIcon className="w-6 h-6" />} label="換班審核" />
-            <NavItem view="loaApproval" icon={<CheckSquareIcon className="w-6 h-6" />} label="留停審核" />
-            <NavItem view="makeupApproval" icon={<CheckSquareIcon className="w-6 h-6" />} label="補打卡審核" />
-            <NavItem view="openShifts" icon={<CalendarIcon className="w-6 h-6" />} label="開放排班" />
-            <NavItem view="employees" icon={<UsersIcon className="w-6 h-6" />} label="員工管理" />
-            <NavItem view="monthlyReport" icon={<ListIcon className="w-6 h-6" />} label="月結報表" />
-            {user?.role === UserRole.SuperAdmin && (
-              <>
-                <NavItem view="salary" icon={<DollarIcon className="w-6 h-6" />} label="薪資計算" />
-                <NavItem view="auditLog" icon={<ListIcon className="w-6 h-6" />} label="系統日誌" />
-                <NavItem view="systemSettings" icon={<KeyIcon className="w-6 h-6" />} label="系統設定" />
-              </>
-            )}
-          </ul>
-
-          {/* 我的功能區 */}
-          <div className="mt-6 pt-4 border-t">
-            <p className="text-xs text-gray-400 uppercase tracking-wider mb-2 px-3">我的功能</p>
-            <ul className="space-y-2">
-              <NavItem view="myClock" icon={<ClockIcon className="w-6 h-6" />} label="我的打卡" />
-              <NavItem view="myRecords" icon={<ListIcon className="w-6 h-6" />} label="我的出勤紀錄" />
-              <NavItem view="myLeave" icon={<SendIcon className="w-6 h-6" />} label="請假/外勤申請" />
-              <NavItem view="myLeaveOfAbsence" icon={<SendIcon className="w-6 h-6" />} label="留停申請" />
-              <NavItem view="myMakeup" icon={<SendIcon className="w-6 h-6" />} label="補打卡申請" />
-              <NavItem view="myLeaveBalance" icon={<CheckSquareIcon className="w-6 h-6" />} label="假別餘額" />
-              <NavItem view="myPreferences" icon={<CalendarIcon className="w-6 h-6" />} label="偏好設定" />
-              <NavItem view="myOpenShifts" icon={<CalendarIcon className="w-6 h-6" />} label="認領班次" />
-              <NavItem view="mySalary" icon={<DollarIcon className="w-6 h-6" />} label="我的薪資" />
-            </ul>
-          </div>
-        </nav>
-        <div className="p-4 border-t">
-          <div className="flex items-center mb-4">
-            <div className="w-10 h-10 rounded-full bg-brand-green flex items-center justify-center text-white font-bold">
-              {user?.name.charAt(0)}
-            </div>
-            <div className="ml-3">
-              <p className="text-sm font-medium text-gray-700">{user?.name}</p>
-              <p className="text-xs text-gray-500">{user?.role === UserRole.SuperAdmin ? '最高管理者' : '系統管理員'}</p>
-            </div>
-          </div>
-          <button
-            onClick={() => setShowChangePassword(true)}
-            className="flex items-center w-full p-2 mb-2 text-sm text-gray-600 rounded hover:bg-gray-200 transition-colors"
-          >
-            <KeyIcon className="w-5 h-5 mr-3" />
-            修改密碼
-          </button>
-          <button
-            onClick={logout}
-            className="flex items-center w-full p-2 text-sm text-red-600 rounded hover:bg-red-50 transition-colors"
-          >
-            <LogOutIcon className="w-5 h-5 mr-3" />
-            登出
-          </button>
-        </div>
-      </aside>
-
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <header className="flex items-center justify-between px-4 md:px-6 py-3 bg-white border-b">
-          <button
-            className="md:hidden p-2 rounded hover:bg-gray-100"
-            onClick={() => setSidebarOpen(true)}
-            aria-label="開啟選單"
-          >
-            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-            </svg>
-          </button>
-          <div className="flex-1" />
-          <NotificationBell />
-        </header>
-        <main className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-100 p-6">
-          <Suspense fallback={<ViewLoadingFallback />}>
-            {renderView()}
-          </Suspense>
-        </main>
-      </div>
-
+    <>
+      <NavShell
+        contextTitle="管理者後台"
+        workspaceTitle="嘉義市青年實驗室"
+        workspaceHint="管理工作區"
+        userName={user?.name ?? ''}
+        roleLabel={isSuper ? '最高管理者' : '系統管理員'}
+        groups={groups}
+        advancedLinks={advancedLinks}
+        currentView={currentView}
+        onNavigate={setCurrentView}
+        onLogout={logout}
+        onChangePassword={() => setShowChangePassword(true)}
+        toolbar={<NotificationBell />}
+      >
+        <Suspense fallback={<ViewLoadingFallback />}>
+          {renderView()}
+        </Suspense>
+      </NavShell>
       {showChangePassword && (
         <ChangePasswordModal onClose={() => setShowChangePassword(false)} />
       )}
-    </div>
+    </>
   );
 };
 
