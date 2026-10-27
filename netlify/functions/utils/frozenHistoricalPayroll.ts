@@ -9,11 +9,14 @@ import type {PayrollMonthSource} from './payrollSourceReader';
 
 export interface HistoricalRateProof {sourceRefs:string[];authorityOccurredAt:string;reason:string}
 export interface HistoricalPaymentAllocationDisposition extends HistoricalRateProof {mode:'retain-original-cash'}
+export interface HistoricalCompOriginalWageDisposition extends HistoricalRateProof {mode:'retain-recorded-comp-wage'}
 export interface HistoricalRateCorrection {
  rates:Array<HistoricalRateProof & {from:string;to:string;payBasis:'monthly'|'hourly';amount:string;originalPayVersion:string}>;
  insuranceUnchanged:HistoricalRateProof;
  /** When original envelope has payment allocation: retain cash on frozen run; corrected target is comparison/D only. Rebinding is a separate adapter. */
  paymentAllocationDisposition?:HistoricalPaymentAllocationDisposition;
+ /** When frozen comp evidence exists: keep recorded original wage / credits; do not recompute comp from the corrected rate. */
+ compOriginalWageDisposition?:HistoricalCompOriginalWageDisposition;
 }
 const bad=():never=>{throw Object.assign(new Error('歷史費率更正事實、期間或依據無效'),{statusCode:400});};
 function proof(v:any):HistoricalRateProof {
@@ -22,7 +25,10 @@ function proof(v:any):HistoricalRateProof {
 }
 export function validateHistoricalRateCorrection(value:any,month:string,at:string):HistoricalRateCorrection {
  const allowed=['rates','insuranceUnchanged'];
- if(value&&typeof value==='object'&&!Array.isArray(value)&&'paymentAllocationDisposition' in value)allowed.push('paymentAllocationDisposition');
+ if(value&&typeof value==='object'&&!Array.isArray(value)){
+  if('paymentAllocationDisposition' in value)allowed.push('paymentAllocationDisposition');
+  if('compOriginalWageDisposition' in value)allowed.push('compOriginalWageDisposition');
+ }
  assertPayrollItemFields(value,allowed);if(!payrollItemMonth(month)||!Number.isFinite(Date.parse(at))||!Array.isArray(value.rates)||!value.rates.length||value.rates.length>31)bad();
  assertPayrollItemFields(value.insuranceUnchanged,['sourceRefs','authorityOccurredAt','reason']);
  const rates=value.rates.map((r:any)=>{assertPayrollItemFields(r,['from','to','payBasis','amount','originalPayVersion','sourceRefs','authorityOccurredAt','reason']);
@@ -36,9 +42,15 @@ export function validateHistoricalRateCorrection(value:any,month:string,at:strin
   if(value.paymentAllocationDisposition.mode!=='retain-original-cash')bad();
   paymentAllocationDisposition={mode:'retain-original-cash',...proof(value.paymentAllocationDisposition)};
  }
- const proofs:HistoricalRateProof[]=[...rates,insuranceUnchanged,...(paymentAllocationDisposition?[paymentAllocationDisposition]:[])];
+ let compOriginalWageDisposition:HistoricalCompOriginalWageDisposition|undefined;
+ if('compOriginalWageDisposition' in value){
+  assertPayrollItemFields(value.compOriginalWageDisposition,['mode','sourceRefs','authorityOccurredAt','reason']);
+  if(value.compOriginalWageDisposition.mode!=='retain-recorded-comp-wage')bad();
+  compOriginalWageDisposition={mode:'retain-recorded-comp-wage',...proof(value.compOriginalWageDisposition)};
+ }
+ const proofs:HistoricalRateProof[]=[...rates,insuranceUnchanged,...(paymentAllocationDisposition?[paymentAllocationDisposition]:[]),...(compOriginalWageDisposition?[compOriginalWageDisposition]:[])];
  if(proofs.some(r=>Date.parse(r.authorityOccurredAt)>Date.parse(at)))bad();
- return paymentAllocationDisposition?{rates,insuranceUnchanged,paymentAllocationDisposition}:{rates,insuranceUnchanged};
+ return {rates,insuranceUnchanged,...(paymentAllocationDisposition?{paymentAllocationDisposition}:{}),...(compOriginalWageDisposition?{compOriginalWageDisposition}:{})};
 }
 /** Only a server-verified complete ORIGINAL snapshot is accepted. No hydrated
  * employee, ready flag, tax result or target amount comes from the proposal.
@@ -48,7 +60,10 @@ export function calculateFrozenHistoricalRateCorrection(loaded:PayrollMonthSourc
  const month=loaded.run.yearMonth,correction=validateHistoricalRateCorrection(raw,month,at),originalEmployee=loaded.run.inputs.employees.find((e:any)=>e.id===empId) as any;
  const originalSalary=loaded.salaries.find(s=>s.empId===empId);if(!originalEmployee||!originalSalary)bad();
  const original={runId:loaded.run.id,inputHash:loaded.originalInputHash,sourceHash:loaded.sourceHash,runHash:evidenceHash(loaded.run),lockHash:evidenceHash(loaded.lock),salaryHash:evidenceHash(originalSalary)};
- const adapterVersion=correction.paymentAllocationDisposition?.mode==='retain-original-cash'?'historical-rate-correction-payment-retain-v1':'historical-rate-correction-v1';
+ const tags:string[]=[];
+ if(correction.paymentAllocationDisposition?.mode==='retain-original-cash')tags.push('payment-retain');
+ if(correction.compOriginalWageDisposition?.mode==='retain-recorded-comp-wage')tags.push('comp-retain');
+ const adapterVersion=tags.length?`historical-rate-correction-${tags.join('-')}-v1`:'historical-rate-correction-v1';
  const bundleHash=evidenceHash({original,correction,calculatorVersion:PAYROLL_VERSION,adapterVersion});
  const emp=sanitizePayrollSnapshot(originalEmployee),envelope=(loaded.run as any).sourceEvidence,issues:string[]=[];
  if(!Array.isArray(emp.normalPayDays)||!Array.isArray(emp.normalPayContextDays)||!emp.effectiveMasterVersion)issues.push('original-effective-master-and-context-missing');
@@ -64,7 +79,16 @@ export function calculateFrozenHistoricalRateCorrection(loaded:PayrollMonthSourc
  }else if(correction.paymentAllocationDisposition){
   issues.push('historical-payment-allocation-disposition-without-allocation');
  }
- if(emp.normalPayCompEvidence?.outstanding?.length||emp.normalPayCompEvidence?.credits?.length||emp.normalPayCompEvidence?.intervals?.length)issues.push('historical-comp-original-wage-review-required');
+ const hasComp=!!(emp.normalPayCompEvidence?.outstanding?.length||emp.normalPayCompEvidence?.credits?.length||emp.normalPayCompEvidence?.intervals?.length);
+ if(hasComp){
+  if(correction.compOriginalWageDisposition?.mode==='retain-recorded-comp-wage'){
+   // Explicit retain: frozen comp credits/intervals keep their recorded original wage; rate correction does not recompute them.
+  }else{
+   issues.push('historical-comp-original-wage-review-required');
+  }
+ }else if(correction.compOriginalWageDisposition){
+  issues.push('historical-comp-original-wage-disposition-without-comp');
+ }
  if(!emp.insuranceSource?.versionId||!emp.insuranceSource?.evidenceVersion||!Array.isArray(emp.insurancePeriods))issues.push('original-insurance-evidence-missing');
  for(const rate of correction.rates){
   const affected=(emp.normalPayDays||[]).filter((d:any)=>d.date>=rate.from&&d.date<=rate.to);

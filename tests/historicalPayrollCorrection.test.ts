@@ -14,6 +14,10 @@ const month='2026-08',at='2026-10-01T00:00:00Z';
 const proof=()=>({sourceRefs:['SYNTH-CONTRACT'],authorityOccurredAt:'2026-07-01T00:00:00Z',reason:'Synthetic historical contractual evidence'});
 const correction=(amount='50000',extra:Record<string,unknown>={})=>({rates:[{...proof(),from:month+'-01',to:month+'-31',payBasis:'monthly',amount,originalPayVersion:'synthetic-master-v1'}],insuranceUnchanged:{...proof(),sourceRefs:['SYNTH-ENROLLMENT'],reason:'Synthetic explicit verification enrollment remains unchanged'},...extra});
 const retainCash=()=>({paymentAllocationDisposition:{mode:'retain-original-cash' as const,...proof(),sourceRefs:['SYNTH-ALLOC-RETAIN'],reason:'Synthetic retain original cash allocation; corrected target is comparison only'}});
+const retainComp=()=>({compOriginalWageDisposition:{mode:'retain-recorded-comp-wage' as const,...proof(),sourceRefs:['SYNTH-COMP-RETAIN'],reason:'Synthetic retain recorded comp original wage; rate correction does not recompute credits'}});
+const atMin=(t:string)=>Date.parse(t+'+08:00')/60000;
+const synthCompOutstanding=()=>({id:'LOT',start:atMin('2026-08-01T09:00'),end:atMin('2026-08-01T12:00'),deadline:'2026-12-31',untakenMinutes:60,originalWageBasis:{status:'confirmed',tiers:[{start:atMin('2026-08-01T09:00'),end:atMin('2026-08-01T11:00'),minutes:120,kind:'rest-day-additional',hourlyBasis:{numerator:'200',denominator:'1'},multiplier:{numerator:'4',denominator:'3'}},{start:atMin('2026-08-01T11:00'),end:atMin('2026-08-01T12:00'),minutes:60,kind:'rest-day-additional',hourlyBasis:{numerator:'200',denominator:'1'},multiplier:{numerator:'5',denominator:'3'}}]}});
+const withComp=(input:any)=>{input.run.inputs.employees[0].normalPayCompEvidence.outstanding=[synthCompOutstanding()];return input;};
 function original(){
  const days=normalDays(month,{amount:'40000'}),context=[...normalDays('2026-07',{amount:'40000'}).slice(-6),...normalDays('2026-09',{amount:'40000'}).slice(0,6)].map(d=>({...d,covered:true}));
  for(const d of [...days,...context]){(d.policy as any).overtimeRules={schemaVersion:'overtime-rules-v1',weekStartDay:0,wageComponents:'single-contract-amount',monthlyHourlyDivisor:240};d.policy!.rounding.precision=0;}
@@ -62,6 +66,29 @@ describe('frozen original rate correction calculation',()=>{
  });
  it('rejects unknown paymentAllocationDisposition mode',()=>{
   expect(()=>validateHistoricalRateCorrection(correction('50000',{paymentAllocationDisposition:{mode:'rebinding',...proof(),sourceRefs:['X'],reason:'Synthetic'}}),month,at)).toThrow();
+ });
+ it('calculates with retain-recorded-comp-wage when comp evidence exists',()=>{
+  const r=calculateFrozenHistoricalRateCorrection(withComp(original()),employee.id,correction('50000',retainComp()),at);
+  expect(r.status,r.issues.join()).toBe('calculated');expect(r.adapterVersion).toBe('historical-rate-correction-comp-retain-v1');
+  expect(r.salary.grossSalary).toBe(50000);expect(original().salaries[0].grossSalary).toBe(40000);
+ });
+ it('still needs review when comp exists without disposition',()=>{
+  const r=calculateFrozenHistoricalRateCorrection(withComp(original()),employee.id,correction(),at);
+  expect(r.status).toBe('needs-review');expect(r.issues).toContain('historical-comp-original-wage-review-required');
+ });
+ it('rejects comp disposition when no comp evidence exists',()=>{
+  const r=calculateFrozenHistoricalRateCorrection(original(),employee.id,correction('50000',retainComp()),at);
+  expect(r.status).toBe('needs-review');expect(r.issues).toContain('historical-comp-original-wage-disposition-without-comp');
+ });
+ it('combines payment-retain and comp-retain adapter version',()=>{
+  const input=withComp(original());
+  input.run.sourceEvidence.paymentAllocations={[employee.id]:{result:{status:'ready'}}};
+  const r=calculateFrozenHistoricalRateCorrection(input,employee.id,correction('50000',{...retainCash(),...retainComp()}),at);
+  expect(r.status,r.issues.join()).toBe('calculated');
+  expect(r.adapterVersion).toBe('historical-rate-correction-payment-retain-comp-retain-v1');
+ });
+ it('rejects unknown compOriginalWageDisposition mode',()=>{
+  expect(()=>validateHistoricalRateCorrection(correction('50000',{compOriginalWageDisposition:{mode:'recompute',...proof(),sourceRefs:['X'],reason:'Synthetic'}}),month,at)).toThrow();
  });
 });
 
