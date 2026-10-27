@@ -17,12 +17,14 @@ export type ShellIconName = 'home' | 'clock' | 'leave' | 'calendar' | 'salary' |
 export type ShellLink<V extends string> = {
   view: V;
   label: string;
+  count?: number;
 };
 
 export type ShellGroup<V extends string> = {
   id: string;
   label: string;
   icon: ShellIconName;
+  entry?: V;
   links: ShellLink<V>[];
 };
 
@@ -74,6 +76,19 @@ const ICONS: Record<ShellIconName, React.FC<{ className?: string }>> = {
   people: UsersIcon,
 };
 
+function entryOf<V extends string>(group: ShellGroup<V>) {
+  return group.links.find((link) => link.view === group.entry) ?? group.links[0];
+}
+
+function groupCount<V extends string>(group: ShellGroup<V>) {
+  return group.links.reduce((sum, link) => sum + (link.count && link.count > 0 ? link.count : 0), 0);
+}
+
+function Count({ value }: { value: number }) {
+  if (value <= 0) return null;
+  return <span className="yl-nav-count" aria-hidden="true">{value > 99 ? '99+' : value}</span>;
+}
+
 function Icon({ name }: { name: ShellIconName }) {
   const Glyph = ICONS[name];
   return (
@@ -104,7 +119,7 @@ export function NavShell<V extends string>({
     const primary = groupFor(view)?.links.find((link) => link.view === view);
     return primary?.label ?? advancedLinks.find((link) => link.view === view)?.label ?? contextTitle;
   };
-  const home = groups[0]?.links[0];
+  const home = groups[0] ? entryOf(groups[0]) : undefined;
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [openGroupId, setOpenGroupId] = useState<string | null>(groupFor(currentView)?.id ?? groups[0]?.id ?? null);
@@ -121,10 +136,10 @@ export function NavShell<V extends string>({
   };
 
   const onGroupHeader = (group: ShellGroup<V>) => {
-    const first = group.links[0];
-    if (!first) return;
-    if (group.links.length === 1 && first.label === group.label) {
-      openLeaf(first.view);
+    const entry = entryOf(group);
+    if (!entry) return;
+    if (group.links.length === 1 && entry.label === group.label) {
+      openLeaf(entry.view);
       return;
     }
     if (openGroupId === group.id && !e2eNav) {
@@ -132,7 +147,7 @@ export function NavShell<V extends string>({
       return;
     }
     setOpenGroupId(group.id);
-    onNavigate(first.view);
+    onNavigate(entry.view);
   };
 
   const leaf = labelFor(currentView);
@@ -168,6 +183,7 @@ export function NavShell<V extends string>({
             const open = e2eNav || openGroupId === group.id;
             const active = group.links.some((link) => link.view === currentView);
             const sole = group.links.length === 1 && group.links[0].label === group.label;
+            const pending = groupCount(group);
             return (
               <div key={group.id} className={open ? 'yl-group is-open' : 'yl-group'}>
                 <button
@@ -179,7 +195,8 @@ export function NavShell<V extends string>({
                   onClick={() => onGroupHeader(group)}
                 >
                   <Icon name={group.icon} />
-                  {group.label}
+                  <span className="yl-item-label">{group.label}</span>
+                  <Count value={pending} />
                   {!sole && <span className="yl-chevron" aria-hidden="true" />}
                 </button>
                 {open && !sole && (
@@ -192,7 +209,8 @@ export function NavShell<V extends string>({
                         aria-current={currentView === link.view ? 'page' : undefined}
                         onClick={() => openLeaf(link.view)}
                       >
-                        {link.label}
+                        <span className="yl-item-label">{link.label}</span>
+                        <Count value={link.count ?? 0} />
                       </button>
                     ))}
                   </div>
@@ -291,8 +309,8 @@ export function NavShell<V extends string>({
         <nav className="yl-bottom" aria-label="手機主要導覽">
           {groups.map((group) => {
             const active = group.links.some((link) => link.view === currentView);
-            const first = group.links[0];
-            if (!first) return null;
+            const entry = entryOf(group);
+            if (!entry) return null;
             return (
               <button
                 key={group.id}
@@ -301,12 +319,13 @@ export function NavShell<V extends string>({
                 aria-current={active ? 'page' : undefined}
                 onClick={() => {
                   setOpenGroupId(group.id);
-                  onNavigate(first.view);
+                  onNavigate(entry.view);
                   setSidebarOpen(false);
                 }}
               >
                 <Icon name={group.icon} />
                 <span>{group.label}</span>
+                <Count value={groupCount(group)} />
               </button>
             );
           })}

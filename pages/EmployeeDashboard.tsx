@@ -24,6 +24,7 @@ const ShiftSwapPage        = lazy(() => import('../components/employee/ShiftSwap
 import ChangePasswordModal from '../components/ChangePasswordModal';
 import NotificationBell from '../components/NotificationBell';
 import { NavShell, type ShellGroup, type ShellLink } from '../components/shell/NavShell';
+import { usePendingNavCounts } from '../components/shell/pendingNavCounts';
 import { CalendarIcon, CheckSquareIcon, ClockIcon, DollarIcon, LeafIcon } from '../components/icons';
 
 // View 切換時的 Suspense fallback — 強制保留高度避免主區塊跳動
@@ -135,13 +136,19 @@ const EmployeeDashboard: React.FC = () => {
     }
   };
 
-  const link = (view: View, label: string): ShellLink<View> => ({ view, label });
+  const pending = usePendingNavCounts('employee', user?.id);
+  const link = (view: View, label: string): ShellLink<View> => ({
+    view,
+    label,
+    ...(pending[view] ? { count: pending[view] } : {}),
+  });
   const groups: ShellGroup<View>[] = [
-    { id: 'home', label: '工作台', icon: 'home', links: [link('home', '工作台')] },
+    { id: 'home', label: '工作台', icon: 'home', entry: 'home', links: [link('home', '工作台')] },
     {
       id: 'attendance',
       label: '出勤打卡',
       icon: 'clock',
+      entry: 'clock',
       links: [
         link('clock', '打卡'),
         link('records', '打卡紀錄'),
@@ -153,6 +160,7 @@ const EmployeeDashboard: React.FC = () => {
       id: 'leave',
       label: '請假與簽核',
       icon: 'leave',
+      entry: 'leave',
       links: [
         link('leave', '請假/外勤'),
         link('leaveOfAbsence', '留停申請'),
@@ -165,6 +173,7 @@ const EmployeeDashboard: React.FC = () => {
       id: 'schedule',
       label: '班表',
       icon: 'calendar',
+      entry: 'schedule',
       links: [
         link('schedule', '我的班表'),
         link('fullSchedule', '總班表'),
@@ -173,7 +182,7 @@ const EmployeeDashboard: React.FC = () => {
         link('preferences', '偏好設定'),
       ],
     },
-    { id: 'salary', label: '薪資明細', icon: 'salary', links: [link('salary', '薪資明細')] },
+    { id: 'salary', label: '薪資明細', icon: 'salary', entry: 'salary', links: [link('salary', '薪資明細')] },
   ];
 
   return (

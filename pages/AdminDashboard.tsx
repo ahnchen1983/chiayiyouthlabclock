@@ -50,6 +50,7 @@ const LeaveOfAbsenceRequestForm = lazy(() => import('../components/employee/Leav
 import ChangePasswordModal from '../components/ChangePasswordModal';
 import NotificationBell from '../components/NotificationBell';
 import { NavShell, type ShellGroup, type ShellLink } from '../components/shell/NavShell';
+import { usePendingNavCounts } from '../components/shell/pendingNavCounts';
 
 // View 切換時的 Suspense fallback — 強制保留高度避免主區塊跳動
 const ViewLoadingFallback: React.FC = () => (
@@ -119,37 +120,45 @@ const AdminDashboard: React.FC = () => {
   };
 
   const isSuper = user?.role === UserRole.SuperAdmin;
-  const link = (view: AdminView, label: string): ShellLink<AdminView> => ({ view, label });
+  const pending = usePendingNavCounts('admin');
+  const link = (view: AdminView, label: string): ShellLink<AdminView> => ({
+    view,
+    label,
+    ...(pending[view] ? { count: pending[view] } : {}),
+  });
   const groups: ShellGroup<AdminView>[] = [
     {
       id: 'home',
       label: '工作台',
       icon: 'home',
+      entry: 'overview',
       links: [link('overview', '總覽儀表板'), link('monthlyReport', '月結報表')],
     },
     {
       id: 'attendance',
       label: '出勤打卡',
       icon: 'clock',
+      entry: 'attendance',
       links: [
-        link('myClock', '我的打卡'),
-        link('myRecords', '我的出勤紀錄'),
-        link('myMakeup', '補打卡申請'),
         link('attendance', '出勤紀錄'),
         link('cases', '異常待辦'),
         link('makeupApproval', '補打卡審核'),
+        link('myClock', '我的打卡'),
+        link('myRecords', '我的出勤紀錄'),
+        link('myMakeup', '補打卡申請'),
       ],
     },
     {
       id: 'leave',
       label: '請假與簽核',
       icon: 'leave',
+      entry: 'leave',
       links: [
-        link('myLeave', '請假/外勤申請'),
         link('leave', '請假/外勤審核'),
-        link('myLeaveOfAbsence', '留停申請'),
         link('loaApproval', '留停審核'),
         link('shiftSwapApproval', '換班審核'),
+        link('myLeave', '請假/外勤申請'),
+        link('myLeaveOfAbsence', '留停申請'),
         link('myLeaveBalance', '假別餘額'),
         link('comp', '補休帳本'),
         link('overtime', '加班申請'),
@@ -159,6 +168,7 @@ const AdminDashboard: React.FC = () => {
       id: 'schedule',
       label: '班表',
       icon: 'calendar',
+      entry: 'schedule',
       links: [
         link('schedule', '排班管理'),
         link('comparison', '排班對照表'),
@@ -171,12 +181,14 @@ const AdminDashboard: React.FC = () => {
       id: 'salary',
       label: '薪資明細',
       icon: 'salary',
+      entry: 'mySalary',
       links: [link('mySalary', '我的薪資')],
     },
     {
       id: 'people',
       label: '人員',
       icon: 'people',
+      entry: 'employees',
       links: [link('employees', '員工管理')],
     },
   ];

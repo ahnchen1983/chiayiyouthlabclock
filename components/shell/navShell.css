@@ -186,14 +186,35 @@
   background: #f3f7f4;
 }
 
-.yl-chevron {
+.yl-item-label {
+  min-width: 0;
+}
+
+.yl-nav-count {
   margin-left: auto;
+  flex: none;
+  font-size: 10px;
+  line-height: 1.4;
+  padding: 2px 6px;
+  background: #dfece3;
+  color: #497358;
+  border-radius: 4px;
+  font-weight: 650;
+}
+
+.yl-chevron {
+  margin-left: 8px;
   width: 6px;
   height: 6px;
   border-right: 1.5px solid currentColor;
   border-bottom: 1.5px solid currentColor;
   transform: rotate(45deg) translateY(-1px);
   flex: none;
+}
+
+.yl-group-btn:not(:has(.yl-nav-count)) .yl-chevron,
+.yl-advanced-toggle .yl-chevron {
+  margin-left: auto;
 }
 
 .yl-group.is-open > .yl-group-btn .yl-chevron,
@@ -732,6 +753,7 @@ button.yl-stat { cursor: pointer; }
   font-size: 9px;
   line-height: 1.25;
   font-weight: 650;
+  position: relative;
 }
 
 .yl-bottom button span {
@@ -742,6 +764,14 @@ button.yl-stat { cursor: pointer; }
 
 .yl-bottom button.is-active {
   color: var(--yl-orange);
+}
+
+.yl-bottom .yl-nav-count {
+  position: absolute;
+  top: 0;
+  right: 6px;
+  margin-left: 0;
+  padding: 1px 4px;
 }
 
 .yl-scrim {
