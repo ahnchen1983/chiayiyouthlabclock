@@ -22,21 +22,23 @@ export default function MakeupRequestActions({request,onChanged,onResubmit}:{req
  };
  const refresh=async()=>{if(gate.current)return;gate.current=true;setBusy(true);try{setR(await apiGetMakeupRequestDetail(r.id));setStale(false);if(!matching)setReason('');setError('');}catch{setError('讀取失敗，不能假設已更新。');setStale(true);}finally{gate.current=false;setBusy(false);}};
  const active=['待審核','待補件'].includes(r.status);
- return <section className="space-y-2 text-sm" aria-label={`申請處理 ${r.id}`}>
-  <p>申請 {r.id} · 版本 {r.revision??0} · {r.status}</p>
-  {r.returnReason&&<p>退回補件：{r.returnReason}</p>}{r.supersedesRequestId&&<p className="break-all">前版：{r.supersedesRequestId}</p>}{r.supersededByRequestId&&<p className="break-all">後版：{r.supersededByRequestId}</p>}
+ const statusLabel=r.status==='核准'?'已核准':r.status==='駁回'?'已退回':r.status==='已取消'?'已撤回':'待簽核';
+ return <section className="space-y-2 text-sm" aria-label="申請處理">
+  <p><span className="yl-badge">{statusLabel}</span></p>
+  {manager&&!own&&r.status==='待審核'&&<p>核准後會寫入出勤紀錄</p>}
+  {r.returnReason&&<p>退回補件：{r.returnReason}</p>}
   {error&&<p role="alert">{error}</p>}{(otherPending||operation.blocked)&&<p>另有未確認操作或暫存不可用，請先返回原申請核實；不能建立新操作。</p>}
-  {(own&&active||manager&&!own&&r.status==='待審核')&&<label>操作原因<input className="w-full border rounded p-2" value={reason} maxLength={2000} disabled={busy||operation.blocked||otherPending||stale||uncertain} onChange={e=>setReason(e.target.value)}/></label>}
+  {(own&&active||manager&&!own&&r.status==='待審核')&&<label>操作原因<input className="w-full border rounded p-2" placeholder="請說明退回原因" value={reason} maxLength={2000} disabled={busy||operation.blocked||otherPending||stale||uncertain} onChange={e=>setReason(e.target.value)}/></label>}
   <div className="flex flex-wrap gap-2">
    {uncertain?<button disabled={busy} onClick={()=>matching&&void run(matching.command.mode as any)}>重試原操作</button>:<>
-    {own&&active&&<button disabled={busy||operation.blocked||otherPending||stale||!reason.trim()} onClick={()=>void run('cancel')}>取消未核申請</button>}
+    {own&&active&&<button disabled={busy||operation.blocked||otherPending||stale||!reason.trim()} onClick={()=>void run('cancel')}>撤回</button>}
     {own&&onResubmit&&['待補件','駁回','已取消'].includes(r.status)&&<button disabled={busy||operation.blocked||otherPending||stale} onClick={()=>onResubmit(r)}>編輯並重送新版本</button>}
-    {manager&&!own&&r.status==='待審核'&&(['return','approve','reject'] as const).map(mode=><button key={mode} disabled={busy||operation.blocked||otherPending||stale||!reason.trim()} onClick={()=>void run(mode)}>{({return:'退回補件',approve:'核准補卡',reject:'駁回補卡'})[mode]}</button>)}
+    {manager&&!own&&r.status==='待審核'&&<><button className="yl-primary-action" disabled={busy||operation.blocked||otherPending||stale||!reason.trim()} onClick={()=>void run('approve')}>核准</button><button disabled={busy||operation.blocked||otherPending||stale||!reason.trim()} onClick={()=>void run('return')}>退回</button></>}
    </>}
    <button disabled={busy} onClick={()=>void refresh()}>重新載入申請</button>
   </div>
-  {manager&&own&&<p>本人申請不可自行審核；指定主管政策仍待設定。</p>}
+  {manager&&own&&<p>本人申請不能自己審。</p>}
   {!!r.attachments?.length&&<MakeupAttachmentPanel requestId={r.id}/>}
-  <details><summary>申請歷程</summary>{r.history?.length?r.history.map(h=><p key={h.id}>{h.at} · {h.actor} · {h.from||'建立'} → {h.to}：{h.reason}</p>):<p>舊資料無版本歷程，不捏造還原。</p>}</details>
+  <details><summary>申請歷程</summary>{r.history?.length?r.history.map(h=><p key={h.id}>{h.reason}</p>):<p>還沒有處理紀錄。</p>}</details>
  </section>;
 }

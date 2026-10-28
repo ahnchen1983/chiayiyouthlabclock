@@ -15,8 +15,8 @@ export default function OvertimeCompPolicyPanel({empId}:{empId:string}){
  const send=async(action:'propose-overtime-comp-policy'|'agree-overtime-comp-policy'|'review-overtime-comp-policy',extra:any={})=>{setBusy(true);try{await op.attempt({action,command:{caseId:'overtime-comp-policy:'+empId,empId,operationId:crypto.randomUUID(),expectedRevision:p?.revision||0,...extra}});setReason('');await load();}catch{setMsg('操作未通過或結果未知（版本變更、權限）；請重新讀取核實。');}finally{setBusy(false);}};
  return <section className="border rounded p-3 space-y-2 break-words"><h3 className="font-semibold">加班／補休政策</h3>
   <p className="text-sm text-gray-600">平日延長工時與休息日工作可依員工選擇按 1:1 轉補休（勞基法第32條之1）；補休期限為加班當年 12/31（特休曆年制，施行細則第22條之2），到期或離職未休依原加班日標準發給工資。例假、國定假日出勤不適用。</p>
-  {data?.current?<p className="text-sm">目前生效：{data.current.effectiveFrom}–{data.current.effectiveTo}；覆核人 {data.current.reviewerIds.join('、')}；核定 {data.current.approvedBy}（{data.current.approvedAt.slice(0,10)}）</p>:<p className="text-sm">尚未核定，加班改補休暫不可用。</p>}
-  {p&&<p className="text-sm">提案：{STATUS[p.status]||p.status} · v{p.revision} · {p.effectiveFrom}–{p.effectiveTo} · 覆核人 {p.reviewerIds.join('、')} · 提出 {p.proposedBy}</p>}
+  {data?.current?<p className="text-sm">目前生效：{data.current.effectiveFrom}–{data.current.effectiveTo}</p>:<p className="text-sm">尚未核定，加班改補休暫不可用。</p>}
+  {p&&<p className="text-sm">提案：{STATUS[p.status]||p.status} · {p.effectiveFrom}–{p.effectiveTo}</p>}
   {p?.status==='awaiting-employee'&&empId===me&&<button type="button" disabled={blocked} onClick={()=>void send('agree-overtime-comp-policy')} className="px-3 py-1 rounded bg-brand-blue-dark text-white disabled:opacity-50">我同意此加班／補休安排</button>}
   {manager&&empId!==me&&<>
    {p&&['awaiting-employee','awaiting-approval'].includes(p.status)&&p.proposedBy!==me&&<div className="space-y-1"><label className="block text-sm">核定／退回原因（至少5字）<textarea className="border block w-full" value={reason} disabled={blocked} onChange={e=>setReason(e.target.value)}/></label>
