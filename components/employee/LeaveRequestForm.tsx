@@ -122,6 +122,7 @@ const LeaveRequestForm: React.FC<{caseContext?:CaseFormContext;explanationId?:st
       <h2 className="text-2xl font-bold text-gray-800 mb-2">{caseContext ? '請假／外勤申請' : '請假申請'}</h2>
       <p className="text-sm text-gray-600 mb-4">特休送出後會先預留時數；退回或撤回後自動釋放。</p>
       <AnomalyOperationRecovery onResolved={()=>void loadSource()}/>
+      {explanationId&&<p>來源說明 {explanationId}</p>}
       {caseContext&&<button type="button" disabled={submitting} onClick={()=>void loadSource()}>重新讀取追補來源</button>}
       <form onSubmit={handleSubmit} className="space-y-6">
         <div>
