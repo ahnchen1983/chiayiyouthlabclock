@@ -32,7 +32,7 @@
 | **FCM Push** | 程式保留，但部署決策為暫不設定 `VITE_FCM_VAPID_KEY`；站內通知與 fallback polling 仍可用 |
 | **Firestore Rules** | ✅ 已部署 client-side deny all；Netlify Functions 使用 service account 代寫 |
 | **CI / Pages** | ✅ PAT workflow scope 已解卡；CI 改 Node 24；GitHub Pages 用 `.nojekyll` 避免 Jekyll build 誤跑 |
-| **Admin 密碼** | ✅ 已依需求重設為 `admin1234`；請登入後改成正式強密碼 |
+| **Admin 密碼** | ✅ 已依需求重設為 `[已移除的舊預設密碼；禁止使用]`；請登入後改成正式強密碼 |
 
 ---
 
@@ -131,7 +131,7 @@
 ## 7. 建議下一步
 
 1. 用真實管理者/員工資料跑一次手動煙霧測試，重點放在「排班對照表、請假勾稽、休館值班、兼職時數、忘記打卡補救」。
-2. 登入 `ADMIN / admin1234` 後立即改正式強密碼。
+2. 登入 `ADMIN / [已移除的舊預設密碼；禁止使用]` 後立即改正式強密碼。
 3. 若後續確定需要即時手機推播，再回頭啟用 FCM；若需要錯誤追蹤，再回頭設定 Sentry DSN。
 
 ---

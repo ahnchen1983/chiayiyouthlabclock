@@ -234,7 +234,7 @@ const ScheduleManager: React.FC = () => {
   };
 
   return (
-    <div className="p-4 bg-white rounded-lg shadow-lg">
+    <div className="p-4 bg-white rounded-lg shadow-lg yl-schedule">
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-4">
         <h1 className="text-3xl font-bold text-gray-800">排班管理</h1>
         <div className="flex flex-wrap gap-2">

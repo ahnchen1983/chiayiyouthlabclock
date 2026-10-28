@@ -1,0 +1,163 @@
+vi.mock('../netlify/functions/utils/makeupAttachmentRuntime', async importOriginal => ({...await importOriginal<typeof import('../netlify/functions/utils/makeupAttachmentRuntime')>(),getMakeupAttachmentRuntime:vi.fn(),getLeaveAttachmentRuntime:vi.fn()}));
+import {getMakeupAttachmentRuntime,getLeaveAttachmentRuntime} from '../netlify/functions/utils/makeupAttachmentRuntime';
+import {syntheticAttachmentRuntime,syntheticPdf} from './fixtures/makeupAttachments';
+let attachmentFixture:ReturnType<typeof syntheticAttachmentRuntime>;
+beforeEach(()=>{attachmentFixture=syntheticAttachmentRuntime(false);vi.mocked(getMakeupAttachmentRuntime).mockReturnValue(attachmentFixture.runtime);vi.mocked(getLeaveAttachmentRuntime).mockReturnValue(attachmentFixture.runtime);});
+import { hasAppliedMakeup } from '../netlify/functions/utils/makeupEvidence';
+// Snapshot transaction contract tests isolate formal eligibility below. Separate
+// unmocked eligibility regressions assert that production lock-month always blocks.
+vi.mock('../netlify/functions/utils/payrollPreflight', async importOriginal => {
+    const actual = await importOriginal<typeof import('../netlify/functions/utils/payrollPreflight')>();
+    return { ...actual, assertPayrollReady: vi.fn() };
+});
+import { assertPayrollReady } from '../netlify/functions/utils/payrollPreflight';
+const trialTransactionGate = (r: any) => { if (r.trialStatus !== 'READY') { const e: any = new Error('BLOCKED trial inputs'); e.statusCode = 409; throw e; } };
+import { randomUUID } from 'node:crypto';
+import { hashPassword } from '../netlify/functions/utils/calculations';
+import { adminAuth } from '../netlify/functions/utils/firebaseAdmin';
+import { clockSourceKey } from '../utils/attendance';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { card, employee, review, month, schedule, leave } from './fixtures/payrollV2';
+import { UserRole, LeaveStatus, LeaveType } from '../types';
+
+const fake = vi.hoisted(() => {
+    const data = new Map<string, any>(); let sequence = 0;
+    const clone = (x: any) => x === undefined ? undefined : JSON.parse(JSON.stringify(x));
+    const doc = (path: string): any => ({ path, id: path.split('/').pop(),
+        async get() { return snapshot(path); },
+        async set(value: any) { data.set(path, clone(value)); },
+        async update(value: any) { if (!data.has(path)) throw Error('missing doc'); data.set(path, {...data.get(path),...clone(value)}); },
+        async delete() { data.delete(path); },
+    });
+    const snapshot = (path: string): any => ({ ref: doc(path), id:path.split('/').pop(), exists:data.has(path), data:()=>clone(data.get(path)) });
+    const collection = (path: string, filters: any[] = [], limit=Infinity): any => ({
+        path, doc:(id?:string)=>doc(path+'/'+(id||`AUTO${++sequence}`)),
+        where:(field:string,op:string,value:any)=>collection(path,[...filters,[field,op,value]],limit),
+        limit:(value:number)=>collection(path,filters,value),
+        orderBy:()=>collection(path,filters,limit),
+        async add(value:any){ const ref=doc(path+`/AUTO${++sequence}`);await ref.set(value);return ref; },
+        async get(){const docs=[...data.keys()].filter(k=>k.startsWith(path+'/')&&k.split('/').length===path.split('/').length+1).map(snapshot).filter(d=>filters.every(([f,op,v])=>op==='in'?v.includes(f==='__name__'?d.id:d.data()[f]):op==='=='?d.data()[f]===v:op==='>='?d.data()[f]>=v:op==='<='?d.data()[f]<=v:false)).slice(0,limit);return {docs,empty:!docs.length,size:docs.length};}
+    });
+    const db:any={collection,async runTransaction(fn:any){const writes:any[]=[];let wrote=false;const tx:any={get:async(ref:any)=>{if(wrote)throw Error('read after write');return ref.get();}};for(const method of ['set','update','delete','create'])tx[method]=(ref:any,value:any)=>{wrote=true;writes.push([method,ref,value]);};const result=await fn(tx);for(const [method,ref,value]of writes){if(method==='create'){if(data.has(ref.path))throw Error('exists');await ref.set(value);}else await ref[method](value);}return result;}};
+    return {data,db};
+});
+vi.mock('../netlify/functions/utils/firebaseAdmin',()=>({db:fake.db,adminAuth:{verifyIdToken:vi.fn().mockResolvedValue({uid:'ADMIN'}),createCustomToken:vi.fn().mockResolvedValue('synthetic-token')},adminMessaging:()=>({sendEachForMulticast:vi.fn().mockResolvedValue({responses:[]})})}));
+import {handler} from '../netlify/functions/api';
+const call=async(action:string,body:any={})=>await handler({httpMethod:'POST',headers:{authorization:'Bearer synthetic'},body:JSON.stringify({action,...body})} as any,{} as any) as any;
+const lock=(m=month)=>fake.data.set(`monthLocks/${m}`,{yearMonth:m,lockedAt:review.reviewedAt,lockedBy:'ADMIN',lockedByName:'synthetic',employeeCount:1,totalAmount:1600});
+beforeEach(()=>{vi.mocked(assertPayrollReady).mockImplementation(trialTransactionGate);fake.data.clear();fake.data.set('employees/ADMIN',{id:'ADMIN',name:'reviewer',role:UserRole.SuperAdmin,hireDate:'2020-01-01',accountKind:'system-account',hourlyRate:0,monthlySalary:0});fake.data.set(`employees/${employee.id}`,{...employee,status:'在職',hireDate:'2026-01-01'});fake.data.set('clockRecords/C1',card());});
+afterEach(()=>vi.useRealTimers());
+
+import {validateMaster,assertFutureMaster,effectiveMasterForMonth,masterDays} from '../netlify/functions/utils/effectiveMaster';
+import {calculateSalaryForEmployee} from '../netlify/functions/utils/payroll';
+import {evidenceHash} from '../netlify/functions/utils/attendanceCaseLifecycle';
+import {overtimeActualSource} from '../netlify/functions/utils/overtimeWorkflow';
+// Explicit per-test attendance evidence for happy salary fixtures only. Master
+// proposals remain on their original April clock; scan after all source setup.
+const readyAttendanceFixture=async(selectedMonth:string,date:string,minutes:480|540)=>{
+ const {seedAttendanceReady}=await import('./fixtures/attendanceReady');
+ const at='2026-06-02T00:00:00Z';vi.setSystemTime(new Date(at));
+ fake.data.set('dailySchedule/'+date,schedule(date,minutes===540?'08:00':'09:00','17:00'));
+ return seedAttendanceReady(fake.db,{syntheticOnly:true,empId:'SYNTH',month:selectedMonth,proposer:'ADMIN',reviewer:'SECOND',at,expectedMinutesByDate:{[date]:minutes},operationPrefix:'effective-master-attendance-'+selectedMonth});
+};
+const timeline=(extra:any={})=>({accountKind:'employee',from:'2026-05-01',to:'2026-05-31',periods:[{from:'2026-05-01',to:'2026-05-31',employmentState:'active',employmentType:'part-time',payBasis:'monthly',amount:30000,policyVersionId:'P',dayTypeCalendarId:'D',...extra}]});
+const as=async(uid:string,action:string,data:any={})=>{vi.mocked(adminAuth.verifyIdToken).mockResolvedValue({uid} as any);return call(action,data);};
+const propose=(t=timeline(),extra:any={})=>as('ADMIN','propose-payroll-master',{empId:'SYNTH',expectedHeadRevision:0,operationId:randomUUID(),reason:'合成主檔未來異動',timeline:t,...extra});
+const approve=(v:any,extra:any={})=>as('SECOND','review-payroll-master',{empId:'SYNTH',expectedHeadRevision:0,expectedRevision:1,versionId:v.id,operationId:randomUUID(),mode:'approve',reason:'合成第二人主檔核定',...extra});
+beforeEach(()=>{vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2026-04-10T00:00:00Z'));fake.data.set('employees/SECOND',{id:'SECOND',role:UserRole.SuperAdmin,accountKind:'system-account',hireDate:'2020-01-01'});});
+describe('C1 explicit effective master cases',()=>{
+ it.each([['part-time','monthly'],['full-time','hourly'],['fixed-term','daily']])('employment %s does not imply pay basis %s',async(employmentType,payBasis)=>{const r=await propose(timeline({employmentType,payBasis}));expect(r.statusCode,r.body).toBe(200);expect((await approve(JSON.parse(r.body))).statusCode).toBe(200);expect(fake.data.get('employees/SYNTH').hourlyRate).toBe(employee.hourlyRate);expect(fake.data.get('payrollMasterVersions/'+JSON.parse(r.body).id).timeline.periods[0].payBasis).toBe(payBasis);});
+ it('proposal does not activate, own proposal and own salary cannot be approved',async()=>{const r=JSON.parse((await propose()).body);expect(fake.data.has('payrollMasterHeads/SYNTH')).toBe(false);expect((await as('ADMIN','review-payroll-master',{empId:'SYNTH',versionId:r.id,expectedRevision:1,expectedHeadRevision:0,operationId:'self',mode:'approve',reason:'合成不可自己核定'})).statusCode).toBe(403);expect((await as('SYNTH','get-payroll-master',{empId:'SECOND'})).statusCode).toBe(403);expect(JSON.parse((await as('SYNTH','get-payroll-master')).body).versions).toEqual([]);});
+ it.each(['gap','overlap','missing-pay-basis'])('%s is rejected without partial proposal',async(kind)=>{const t=timeline();if(kind==='missing-pay-basis')t.periods[0].payBasis='';else t.periods=[{...t.periods[0],to:'2026-05-10'},{...t.periods[0],from:kind==='gap'?'2026-05-12':'2026-05-10'}];const before=JSON.stringify([...fake.data]);expect((await propose(t)).statusCode).toBe(409);expect(JSON.stringify([...fake.data])).toBe(before);});
+ it('month lock and retrospective initial dates refuse without activation',async()=>{lock('2026-05');expect((await propose()).statusCode).toBe(423);fake.data.delete('monthLocks/2026-05');const t=timeline();t.from=t.periods[0].from='2026-04-01';expect((await propose(t)).statusCode).toBe(409);});
+ it('head versions serialize competing proposals and replay returns the same approved document',async()=>{const a=JSON.parse((await propose()).body),b=JSON.parse((await propose(timeline({amount:31000}))).body);const command={operationId:'approved-once'};expect((await approve(a,command)).statusCode).toBe(200);expect((await approve(a,command)).statusCode).toBe(200);expect((await approve(b)).statusCode).toBe(409);expect([...fake.data.keys()].filter(k=>k.startsWith('payrollMasterActivations/'))).toHaveLength(1);});
+ it('full timeline captures hire/exit/LOA/rejoin/raise but monthly trial stays unresolved for C2',async()=>{const t=timeline();t.periods=[{...t.periods[0],to:'2026-05-05',employmentState:'not-employed'},{...t.periods[0],from:'2026-05-06',to:'2026-05-10'},{...t.periods[0],from:'2026-05-11',to:'2026-05-15',employmentState:'loa'},{...t.periods[0],from:'2026-05-16',to:'2026-05-25',amount:32000},{...t.periods[0],from:'2026-05-26',employmentState:'not-employed'}];const p=JSON.parse((await propose(t)).body);await approve(p);const e=await effectiveMasterForMonth(fake.db,null,{...employee,payrollReview:{...review,yearMonth:'2026-05'}},'2026-05',{masterVersionId:p.id});expect(e.masterAssessment.issues).toContain('多段雇用／留停／調薪或部分月折算待C2');const result=calculateSalaryForEmployee(e,'2026-05',[],[],[]);expect(result.baseSalary).toBeNull();expect(masterDays(validateMaster(t))).toHaveLength(31);});
+ it('future revision retains the effective prefix and immutable earlier version',async()=>{const p=JSON.parse((await propose()).body);await approve(p);vi.setSystemTime(new Date('2026-05-10T00:00:00Z'));const t=timeline();t.periods=[{...t.periods[0],to:'2026-05-10'},{...t.periods[0],from:'2026-05-11',amount:32000}];const before=fake.data.get('payrollMasterVersions/'+p.id);expect((await propose(t,{expectedHeadRevision:1})).statusCode).toBe(200);expect(fake.data.get('payrollMasterVersions/'+p.id)).toEqual(before);t.periods[0].amount=40000;expect((await propose(t,{expectedHeadRevision:1})).statusCode).toBe(409);});
+ it('effective master missing policy/day references and monthly binding stays blocked; legacy field edits cannot bypass it',async()=>{const p=JSON.parse((await propose()).body);await approve(p);const e=await effectiveMasterForMonth(fake.db,null,employee,'2026-05',null);expect(e.payBasis).toBe('monthly');expect(e.masterAssessment.issues).toContain('本月薪資覆核尚未綁定有效期主檔版本');expect(e.masterAssessment.issues).toContain('日期日別參照未核定');expect((await as('ADMIN','update-employee',{empId:'SYNTH',updates:{monthlySalary:50000}})).statusCode).toBe(409);});
+ it('system account classification is explicit, not inferred from zero salary',async()=>{const t={...timeline(),accountKind:'system-account',periods:[]};const p=JSON.parse((await propose(t)).body);expect((await approve(p)).statusCode).toBe(200);const e=await effectiveMasterForMonth(fake.db,null,employee,'2026-05',null);expect(e.accountKind).toBe('system-account');expect(e.masterAssessment.status).toBe('confirmed-system-account');});
+ it('explicit legacy monthly review cannot pay full month when hire is midmonth',()=>{const e={...employee,position:'專責人員',monthlySalary:30000,hireDate:'2026-04-15',payrollReview:{...review,payBasis:'monthly' as const}};expect(calculateSalaryForEmployee(e,'2026-04',[],[],[]).reviewReasons).toContain('部分月到離職／留停折算待C2，不能直接給整月月薪');});
+ it('fully covered explicit hourly master preserves a 1600 trial despite full-time employment type',async()=>{const p=JSON.parse((await propose(timeline({employmentType:'full-time',payBasis:'hourly',amount:200}))).body);await approve(p);const monthlyReview={...review,yearMonth:'2026-05',policy:{...review.policy,regularDates:['2026-05-01']}};fake.data.set('payrollPolicyVersions/P',{status:'approved',version:review.policy.version,approvedBy:'ADMIN',approvedAt:review.reviewedAt,employeeIds:['SYNTH'],from:'2026-05-01',to:'2026-05-31'});fake.data.set('dayTypeCalendars/D',{status:'approved',version:'day-v1',approvedBy:'ADMIN',approvedAt:review.reviewedAt,employeeIds:['SYNTH'],days:Object.fromEntries(masterDays(validateMaster(timeline())).map(d=>[d.date,'normal']))});const e=await effectiveMasterForMonth(fake.db,null,{...employee,payrollReview:monthlyReview},'2026-05',{masterVersionId:p.id});expect(e.masterAssessment.issues).toEqual([]);const result=calculateSalaryForEmployee(e,'2026-05',[schedule('2026-05-01')],[card('2026-05-01')],[]);expect(result.calculationStatus).toBe('needs-review');expect(result.baseSalary).toBeNull();expect(result.normalPayPreview?.issues.some(i=>i.includes('政策尚未核定'))).toBe(true);});
+ it('monthly payroll review cannot silently bind a stale UI to a newer master',async()=>{const p=JSON.parse((await propose()).body);await approve(p);const reviewInput={...review,payBasis:'monthly',yearMonth:'2026-05',policy:{...review.policy,regularDates:['2026-05-01']}};expect((await as('ADMIN','review-payroll-inputs',{empId:'SYNTH',review:reviewInput})).statusCode).toBe(409);expect((await as('ADMIN','review-payroll-inputs',{empId:'SYNTH',expectedMasterVersion:p.id,review:reviewInput})).statusCode).toBe(200);expect(fake.data.get('payrollReviews/SYNTH_2026-05').masterVersionId).toBe(p.id);});
+
+ it('future extension can preserve a locked historical prefix without rewriting its snapshot or version',async()=>{const first=JSON.parse((await propose()).body);await approve(first);vi.setSystemTime(new Date('2026-05-10T00:00:00Z'));lock('2026-05');fake.data.set('payrollRuns/2026-05',{immutable:'synthetic-settled-snapshot'});const original=JSON.stringify(fake.data.get('payrollMasterVersions/'+first.id));const t=timeline();t.to='2026-06-30';t.periods.push({...t.periods[0],from:'2026-06-01',to:'2026-06-30',amount:32000});const next=await propose(t,{expectedHeadRevision:1});expect(next.statusCode,next.body).toBe(200);expect((await approve(JSON.parse(next.body),{expectedHeadRevision:1})).statusCode).toBe(200);expect(JSON.stringify(fake.data.get('payrollMasterVersions/'+first.id))).toBe(original);expect(fake.data.get('payrollRuns/2026-05')).toEqual({immutable:'synthetic-settled-snapshot'});});
+
+});
+
+it('legacy salary is read-only before adoption while unchanged fields permit identity edits and preserve review',async()=>{const original=structuredClone(fake.data.get('employees/SYNTH'));expect((await as('ADMIN','update-employee',{empId:'SYNTH',updates:{hourlyRate:999}})).statusCode).toBe(409);expect(fake.data.get('employees/SYNTH')).toEqual(original);expect((await as('ADMIN','update-employee',{empId:'SYNTH',updates:{hourlyRate:original.hourlyRate,name:'synthetic updated',payBasis:'monthly',masterAssessment:{issues:[]},payrollMasterRequired:false}})).statusCode).toBe(200);expect(fake.data.get('employees/SYNTH').name).toBe('synthetic updated');expect(fake.data.get('employees/SYNTH').payBasis).toBeUndefined();expect(fake.data.get('employees/SYNTH').masterAssessment).toBeUndefined();});
+it('new personnel cannot acquire a legacy salary baseline by omitting the effective master',async()=>{const response=await as('ADMIN','create-employee',{employee:{...employee,name:'synthetic new',payrollMasterRequired:false},initialPassword:randomUUID()});expect(response.statusCode,response.body).toBe(200);const created=JSON.parse(response.body);expect(created.payrollMasterRequired).toBe(true);const e=await effectiveMasterForMonth(fake.db,null,{...created,payrollReview:review},month,null);expect(e.masterAssessment.issues).toContain('新建員工尚未核定有效期主檔');expect(calculateSalaryForEmployee(e,month,[],[],[]).baseSalary).toBeNull();});
+
+it('reviewed regular dates cannot override a referenced rest day',async()=>{const p=JSON.parse((await propose(timeline({payBasis:'hourly',amount:200}))).body);await approve(p);const r={...review,yearMonth:'2026-05',policy:{...review.policy,regularDates:['2026-05-01']}};fake.data.set('payrollPolicyVersions/P',{status:'approved',version:review.policy.version,approvedBy:'ADMIN',approvedAt:review.reviewedAt,employeeIds:['SYNTH'],from:'2026-05-01',to:'2026-05-31'});fake.data.set('dayTypeCalendars/D',{status:'approved',version:'day-v1',approvedBy:'ADMIN',approvedAt:review.reviewedAt,employeeIds:['SYNTH'],days:Object.fromEntries(masterDays(validateMaster(timeline())).map(d=>[d.date,d.date==='2026-05-01'?'rest':'normal']))});const e=await effectiveMasterForMonth(fake.db,null,{...employee,payrollReview:r},'2026-05',{masterVersionId:p.id});expect(e.masterAssessment.issues).toContain('月覆核一般工作日與有效日別衝突，待C2覆核');expect(calculateSalaryForEmployee(e,'2026-05',[schedule('2026-05-01')],[card('2026-05-01')],[]).baseSalary).toBeNull();});
+
+it.each([undefined,null,'','unsupported'])('C1 fix missing/invalid pay basis %s is rejected and historic generic review stays unknown',async basis=>{Object.assign(fake.data.get('employees/SYNTH'),{position:'專責人員',monthlySalary:30000,hourlyRate:200});const unknown={...review,payBasis:basis};expect((await as('ADMIN','review-payroll-inputs',{empId:'SYNTH',review:unknown})).statusCode).toBe(400);fake.data.get('employees/SYNTH').payrollReview=unknown;const r=JSON.parse((await as('SYNTH','get-employee-salary',{empId:'SYNTH',yearMonth:month})).body);expect(r.payBasis).toBeNull();expect(r.calculationStatus).toBe('needs-review');expect(r.baseSalary).toBeNull();});
+it('C1 fix explicitly reviewed hourly basis overrides a monthly-looking job title',async()=>{Object.assign(fake.data.get('employees/SYNTH'),{position:'專責人員',monthlySalary:30000,hourlyRate:200});expect((await as('ADMIN','review-payroll-inputs',{empId:'SYNTH',review:{...review,payBasis:'hourly'}})).statusCode).toBe(200);await readyAttendanceFixture(month,'2026-04-01',480);const r=JSON.parse((await as('SYNTH','get-employee-salary',{empId:'SYNTH',yearMonth:month})).body);expect(r.payBasis).toBe('hourly');expect(r.baseSalary).toBe(1600);});
+import {normalPolicy} from './fixtures/normalPay';
+it('C2a API returns shared normal-pay segments while final payslip remains blocked',async()=>{
+ const p=JSON.parse((await propose(timeline({payBasis:'hourly',amount:200}))).body);await approve(p);
+ fake.data.set('payrollPolicyVersions/P',{status:'approved',version:review.policy.version,approvedBy:'ADMIN',approvedAt:review.reviewedAt,employeeIds:['SYNTH'],from:'2026-05-01',to:'2026-05-31',normalPay:normalPolicy()});
+ fake.data.set('dayTypeCalendars/D',{status:'approved',version:'day-v1',approvedBy:'ADMIN',approvedAt:review.reviewedAt,employeeIds:['SYNTH'],days:Object.fromEntries(masterDays(validateMaster(timeline())).map(d=>[d.date,'normal']))});
+ const r={...review,yearMonth:'2026-05',policy:{...review.policy,regularDates:['2026-05-01']}};
+ expect((await as('ADMIN','review-payroll-inputs',{empId:'SYNTH',expectedMasterVersion:p.id,review:r})).statusCode).toBe(200);
+ fake.data.set('clockRecords/MAY',card('2026-05-01'));
+ const result=JSON.parse((await as('SYNTH','get-employee-salary',{empId:'SYNTH',yearMonth:'2026-05'})).body);
+ expect(result.normalPayPreview).toMatchObject({status:'ready',scope:'normal-pay-only',amount:'1600.00',exactTotal:{numerator:'1600',denominator:'1'}});
+ expect(result.normalPayPreview.segments[0].sourceIds[0]).toBe('MAY');
+ expect(result.netSalary).toBeNull();expect(result.calculationStatus).toBe('needs-review');
+ fake.data.get('payrollPolicyVersions/P').status='draft';
+ const blocked=JSON.parse((await as('SYNTH','get-employee-salary',{empId:'SYNTH',yearMonth:'2026-05'})).body);expect(blocked.normalPayPreview.amount).toBeNull();fake.data.get('payrollPolicyVersions/P').status='approved';fake.data.delete('clockRecords/MAY');const empty=JSON.parse((await as('SYNTH','get-employee-salary',{empId:'SYNTH',yearMonth:'2026-05'})).body);expect(empty.normalPayPreview.amount).toBeNull();expect(empty.normalPayPreview.issues).toContain('本月沒有已核工作／給薪來源，不能視為已核零工時');fake.data.set('clockRecords/MAY',card('2026-05-01'));fake.data.get('payrollPolicyVersions/P').normalPay.rounding.stage='per-item';const wrongStage=JSON.parse((await as('SYNTH','get-employee-salary',{empId:'SYNTH',yearMonth:'2026-05'})).body);expect(wrongStage.normalPayPreview.amount).toBeNull();expect(wrongStage.normalPayPreview.issues).toContain('公司已確認最後合計才進位；逐項進位政策不可作為本次試算依據');
+});
+
+it('C2a fix handler cannot ready split overnight work across a break',async()=>{
+ const p=JSON.parse((await propose(timeline({payBasis:'hourly',amount:200}))).body);await approve(p);
+ fake.data.set('payrollPolicyVersions/P',{status:'approved',version:review.policy.version,approvedBy:'ADMIN',approvedAt:review.reviewedAt,employeeIds:['SYNTH'],from:'2026-05-01',to:'2026-05-31',normalPay:normalPolicy()});
+ fake.data.set('dayTypeCalendars/D',{status:'approved',version:'day-v1',approvedBy:'ADMIN',approvedAt:review.reviewedAt,employeeIds:['SYNTH'],days:Object.fromEntries(masterDays(validateMaster(timeline())).map(d=>[d.date,'normal']))});
+ const r={...review,yearMonth:'2026-05',policy:{...review.policy,regularDates:['2026-05-01','2026-05-02']}};
+ expect((await as('ADMIN','review-payroll-inputs',{empId:'SYNTH',expectedMasterVersion:p.id,review:r})).statusCode).toBe(200);
+ fake.data.set('clockRecords/FIRST',card('2026-05-01','20:00','23:30'));fake.data.set('clockRecords/SECOND',card('2026-05-02','00:30','06:00'));const response=await as('SYNTH','get-employee-salary',{empId:'SYNTH',yearMonth:'2026-05'});expect(response.statusCode,response.body).toBe(200);const result=JSON.parse(response.body);expect(result.normalPayPreview.status,JSON.stringify(result.normalPayPreview)).toBe('needs-review');expect(result.normalPayPreview.amount).toBeNull();
+ const assignments=['FIRST','SECOND'].map((id,n)=>{const c=fake.data.get('clockRecords/'+id),base=Date.parse(c.date+'T00:00:00+08:00')/60000,w=c.workIntervals[0];return {sourceId:id,sourceVersion:evidenceHash([clockSourceKey(c),c.workIntervals,c.workReview.reviewedBy+'@'+c.workReview.reviewedAt]),workApprovalId:c.workReview.reviewedBy+'@'+c.workReview.reviewedAt,start:base+w.start,end:base+w.end,workdayId:'approved-shift',workdayDate:'2026-05-01'};});fake.data.get('payrollPolicyVersions/P').normalPay.workdayAssignments=assignments;
+ const mapped=JSON.parse((await as('SYNTH','get-employee-salary',{empId:'SYNTH',yearMonth:'2026-05'})).body);expect(mapped.normalPayPreview.extraWorkMinutes).toBe(60);expect(mapped.normalPayPreview.amount).toBe('1600.00');expect(mapped.normalPayPreview.combined.amount).toBeNull();expect(mapped.normalPayPreview.combined.issues.join()).toContain('加班計算規則');expect(mapped.netSalary).toBeNull();
+ assignments[1].workdayId='separate-shift';assignments[1].workdayDate='2026-05-02';const separate=JSON.parse((await as('SYNTH','get-employee-salary',{empId:'SYNTH',yearMonth:'2026-05'})).body);expect(separate.normalPayPreview.amount).toBe('1800.00');expect(separate.netSalary).toBeNull();fake.data.get('clockRecords/SECOND').workIntervals[0].end-=10;const changedWork=JSON.parse((await as('SYNTH','get-employee-salary',{empId:'SYNTH',yearMonth:'2026-05'})).body);expect(changedWork.normalPayPreview.amount).toBeNull();fake.data.get('clockRecords/SECOND').workIntervals[0].end+=10;
+ assignments[1].workApprovalId='stale';const stale=JSON.parse((await as('SYNTH','get-employee-salary',{empId:'SYNTH',yearMonth:'2026-05'})).body);expect(stale.normalPayPreview.amount).toBeNull();
+ fake.data.get('payrollPolicyVersions/P').normalPay.workdayAssignments={invalid:true};const malformed=await as('SYNTH','get-employee-salary',{empId:'SYNTH',yearMonth:'2026-05'});expect(malformed.statusCode).toBe(200);expect(JSON.parse(malformed.body).normalPayPreview.amount).toBeNull();
+ });
+describe('C2b overtime joins the official salary through the real handler',()=>{
+ // Synthetic hourly 200, approved overtime rules (Sunday week start), all days normal.
+ const RULES={schemaVersion:'overtime-rules-v1',weekStartDay:0,wageComponents:'single-contract-amount',monthlyHourlyDivisor:240};
+ const seed=async(rules:any=RULES,pay:any={payBasis:'hourly',amount:200})=>{
+  // Explicit synthetic pre-hire nonemployment and continuing employment cover
+  // May's boundary weeks. Missing coverage is never verified zero work; June
+  // remains active so this fixture does not invent a May termination.
+  const t=timeline(pay),active=t.periods[0];t.from='2026-04-25';t.to='2026-06-06';
+  t.periods=[{...active,from:t.from,to:'2026-04-30',employmentState:'not-employed'},{...active,to:t.to}];
+  const p=JSON.parse((await propose(t)).body);await approve(p);
+  fake.data.set('payrollPolicyVersions/P',{status:'approved',version:review.policy.version,approvedBy:'ADMIN',approvedAt:review.reviewedAt,employeeIds:['SYNTH'],from:'2026-05-01',to:t.to,normalPay:{...normalPolicy(),...(rules?{overtimeRules:rules}:{})}});
+  fake.data.set('dayTypeCalendars/D',{status:'approved',version:'day-v1',approvedBy:'ADMIN',approvedAt:review.reviewedAt,employeeIds:['SYNTH'],days:Object.fromEntries(masterDays(validateMaster(t)).map(d=>[d.date,'normal']))});
+  const r={...review,payBasis:pay.payBasis,yearMonth:'2026-05',policy:{...review.policy,regularDates:[]}};expect((await as('ADMIN','review-payroll-inputs',{empId:'SYNTH',expectedMasterVersion:p.id,review:r})).statusCode).toBe(200);
+  fake.data.set('clockRecords/OT',{...card('2026-05-04','08:00','17:00'),id:'OT'});insured(false);};
+ // Approved insurance timeline; synthetic person not enrolled here unless asked.
+ const insured=(here:boolean)=>{fake.data.set('insuranceTimelineHeads/SYNTH',{currentVersionId:'INS',revision:1});fake.data.set('insuranceTimelineVersions/INS',{empId:'SYNTH',status:'approved',approvedBy:'SECOND',approvedAt:'2026-04-01T00:00:00Z',periods:[{from:'2026-01-01',to:'2026-12-31',laborInsured:here,laborSalary:here?29500:0,employmentInsured:here,healthInsuredHere:here,healthAmount:here?29500:0,healthDependants:0,pensionWage:here?30300:0,pensionSelfPercent:here?6:0,withholdingMethod:'table'}]});};
+ it('9h weekday: base 1600 + overtime 266.67 = gross 1866.67, rounded once',async()=>{await seed();await readyAttendanceFixture('2026-05','2026-05-04',540);const s=JSON.parse((await as('SYNTH','get-employee-salary',{empId:'SYNTH',yearMonth:'2026-05'})).body);
+  expect(s.normalPayPreview.combined.status,JSON.stringify(s.normalPayPreview.combined.issues)).toBe('ready');expect(s.normalPayPreview.combined.amount).toBe('1866.67');
+  expect(s.reviewReasons.filter((x:string)=>!/投保|保費|排班/.test(x))).toEqual([]);
+  expect(s.calculationStatus,JSON.stringify(s.reviewReasons)).toBe('ready');expect(s.baseSalary).toBe(1600);expect(s.overtimePay).toBe(266.67);expect(s.grossSalary).toBe(1866.67);expect(s.overtimeHours).toBe(1);expect(s.leaveDeduction).toBe(0);});
+ it('comp time expiring this month is paid at its bound original 5/3 rate, while stale sources block',async()=>{await seed();
+  // An earlier rest-day third hour: outside May's boundary window, with its
+  // retained card, approved overtime and explicit original-day source review.
+  const at=(t:string)=>Date.parse(t+'+08:00')/60000,start=at('2026-04-20T11:00'),end=at('2026-04-20T12:00');
+  const original={...card('2026-04-20','09:00','12:00'),id:'ORIGINAL'};fake.data.set('clockRecords/ORIGINAL',original);
+  const actual=await overtimeActualSource(fake.db,{get:(r:any)=>r.get()},'SYNTH',{start,end});
+  const ot={id:'OT0',empId:'SYNTH',status:'approved',revision:1,startDate:'2026-04-20T11:00:00+08:00',endDate:'2026-04-20T12:00:00+08:00',approvedMinutes:60,approvedIntervals:[{start,end}],actualSource:actual,approvalSourceVersion:actual.version};
+  const basis={status:'confirmed',originalDate:'2026-04-20',rate:200,version:'original-basis-v1',reviewedBy:'ADMIN',reviewedAt:'2026-04-21T00:00:00Z',tiers:[{start,end,minutes:60,kind:'rest-day-additional',hourlyBasis:{numerator:'200',denominator:'1'},multiplier:{numerator:'5',denominator:'3'}}]};
+  const eligibility={id:'OT0',empId:'SYNTH',status:'approved',version:'original-review-v1',approvedBy:'ADMIN',approvedAt:'2026-04-21T00:00:00Z',overtimeVersion:evidenceHash(ot),dayType:'rest',eligibleMinutes:60,originalWageBasis:basis};
+  fake.data.set('overtimeRequests/OT0',ot);fake.data.set('compSourceReviews/OT0',eligibility);
+  fake.data.set('compLedger/E1',{id:'E1',empId:'SYNTH',sequence:1,type:'credit',requestId:'CR',actor:'ADMIN',at:'2026-04-21T00:00:00Z',reason:'合成補休入帳',allocations:[{lotId:'LOT',minutes:60}],lot:{sourceRoot:'OT0',overtimeId:'OT0',overtimeVersion:evidenceHash(ot),actualVersion:actual.version,eligibilityVersion:evidenceHash(eligibility),employeeChoice:{actor:'SYNTH'},employerConsent:{actor:'ADMIN'},policyVersion:'cp',dayType:'rest',start,end,deadline:'2026-05-31',originalWageBasis:basis}});
+  const salary=async()=>JSON.parse((await as('SYNTH','get-employee-salary',{empId:'SYNTH',yearMonth:'2026-05'})).body);
+  await readyAttendanceFixture('2026-05','2026-05-04',540);
+  const s=await salary();expect(s.calculationStatus,JSON.stringify(s.reviewReasons)).toBe('ready');expect(s.normalPayPreview.compSettlement.items[0]).toMatchObject({reason:'expired',minutes:60});expect(s.grossSalary).toBe(2200);expect(s.baseSalary).toBe(1600);expect(s.overtimePay).toBe(266.67);expect(s.compSettlementPay).toBe(333.33);
+  const ledger=structuredClone(fake.data.get('compLedger/E1'));fake.data.get('clockRecords/ORIGINAL').clockOutTime='13:00';
+  const stale=await salary();expect(stale.calculationStatus).toBe('needs-review');expect(stale.reviewReasons.join()).toContain('補休未休批次原來源待覆核');expect(stale.grossSalary).toBeNull();expect(stale.compSettlementPay).toBeNull();expect(fake.data.get('compLedger/E1')).toEqual(ledger);
+ });
+ it('approved insurance timeline replaces hand-entered amounts: 679+59, 458, 6% of 30,300',async()=>{await seed();insured(true);await readyAttendanceFixture('2026-05','2026-05-04',540);const s=JSON.parse((await as('SYNTH','get-employee-salary',{empId:'SYNTH',yearMonth:'2026-05'})).body);expect(s.calculationStatus,JSON.stringify(s.reviewReasons)).toBe('ready');expect(s.laborInsurance).toBe(738);expect(s.healthInsurance).toBe(458);expect(s.laborPensionSelf).toBe(1818);expect(s.netSalary).toBe(1866.67-738-458-1818);expect(s.insuranceDetail.lines.map((l:any)=>l.item)).toEqual(['labor','employment','pension-self','health']);});
+ it('monthly 30,000 insured elsewhere remains pending without payment and exemption evidence',async()=>{await seed(RULES,{payBasis:'monthly',amount:30000});fake.data.delete('clockRecords/OT');const s=JSON.parse((await as('SYNTH','get-employee-salary',{empId:'SYNTH',yearMonth:'2026-05'})).body);expect(s.calculationStatus).toBe('needs-review');expect(s.reviewReasons.join()).toContain('補充保費');expect(s.supplementaryPremium).toBeNull();expect(s.netSalary).toBeNull();});
+ it('without an approved insurance timeline the salary is held with the reason',async()=>{await seed();fake.data.delete('insuranceTimelineHeads/SYNTH');const s=JSON.parse((await as('SYNTH','get-employee-salary',{empId:'SYNTH',yearMonth:'2026-05'})).body);expect(s.netSalary).toBeNull();expect(s.reviewReasons).toContain('投保資料（勞健保、勞退自提）尚未核定');});
+ it('without approved overtime rules the official salary stays pending with the reason',async()=>{await seed(null);const s=JSON.parse((await as('SYNTH','get-employee-salary',{empId:'SYNTH',yearMonth:'2026-05'})).body);expect(s.grossSalary).toBeNull();expect(s.reviewReasons.join()).toContain('每週起始日');});
+});

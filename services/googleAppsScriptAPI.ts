@@ -2,18 +2,21 @@ import { auth } from './firebaseConfig';
 import { signInWithCustomToken, signOut } from 'firebase/auth';
 import {
     User, ClockStatus, ScheduleEvent, ClockRecord,
-    LeaveRequest, LeaveStatus, PartTimeHourInfo,
+    LeaveRequest, LeaveStatus, LeaveType, PartTimeHourInfo,
     Employee, TodayAttendanceComparison, DashboardStats, SalaryDetail,
     SystemConfig, ClockMakeupRequest, Notification,
     LeaveBalance, OpenShift, MonthLock, LoginResult,
     MonthlyReportData, LeaveOfAbsenceRequest,
     ScheduleVersion, ShiftSwapRequest, StaffPreference,
+    PayrollReviewInputs, PayrollReviewSubmission,
 } from '../types';
 
 // ==================== API 呼叫 Helper ====================
 
 const API_URL = '/.netlify/functions/api';
 const isE2E = import.meta.env.VITE_E2E === 'true';
+
+export class APIError extends Error { constructor(public status: number, message: string) { super(message); } }
 
 const callAPI = async (action: string, data: Record<string, unknown> = {}): Promise<any> => {
     const idToken = auth.currentUser ? await auth.currentUser.getIdToken() : null;
@@ -28,7 +31,7 @@ const callAPI = async (action: string, data: Record<string, unknown> = {}): Prom
 
     if (!res.ok) {
         const text = await res.text();
-        throw new Error(text || `API 錯誤 ${res.status}`);
+        throw new APIError(res.status, text || `API 錯誤 ${res.status}`);
     }
     return res.json();
 };
@@ -65,7 +68,7 @@ export const apiGetTodayClockStatus = async (empId: string): Promise<ClockStatus
 };
 
 export const apiClockIn = async (empId: string, name: string, verificationMethod: 'IP' | 'GPS', verificationData: string): Promise<boolean> => {
-    return callAPI('clock-in', { empId, name, verificationMethod, verificationData });
+    return callAPI('clock-in', { empId, name, verificationMethod, verificationData, requestId: crypto.randomUUID() });
 };
 
 export const apiClockOut = async (empId: string): Promise<boolean> => {
@@ -211,6 +214,10 @@ export const apiGetMonthlyReport = async (yearMonth: string): Promise<MonthlyRep
     return callAPI('get-monthly-report', { yearMonth });
 };
 
+export const apiGetPayrollReviewInputs = (yearMonth: string): Promise<PayrollReviewInputs> => callAPI('get-payroll-review-inputs', { yearMonth });
+export const apiReviewPayrollInputs = (empId: string, review: PayrollReviewSubmission, expectedEmployeeSourceKey?: string, expectedMasterVersion?: string|null): Promise<boolean> => callAPI('review-payroll-inputs', { empId, review, ...(expectedMasterVersion?{expectedMasterVersion}:{}), ...(expectedEmployeeSourceKey ? { expectedEmployeeSourceKey } : {}) });
+export const apiReviewLeaveAllocation = (requestId: string, allocations: NonNullable<LeaveRequest['payrollAllocations']>, expectedRevision?:number): Promise<boolean> => callAPI('review-leave-allocation', { requestId, allocations,...(expectedRevision===undefined?{}:{expectedRevision}) });
+
 // ==================== 稽核日誌 ====================
 
 export interface AuditLog {
@@ -240,7 +247,7 @@ export const apiUpdateSystemConfig = async (config: Partial<SystemConfig>): Prom
 
 export const apiUpdateClockRecord = async (
     recordId: string,
-    updates: { clockInTime?: string; clockOutTime?: string; status?: string; note?: string }
+    updates: { clockInTime?: string | null; clockOutTime?: string | null; clockInAt?: string | null; clockOutAt?: string | null; workIntervals?: { start: number; end: number }[]; status?: string; note?: string }
 ): Promise<boolean> => {
     return callAPI('update-clock-record', { recordId, ...updates });
 };
@@ -248,7 +255,7 @@ export const apiUpdateClockRecord = async (
 // ==================== 補打卡申請（Phase 3.3）====================
 
 export const apiSubmitMakeupRequest = async (
-    request: { date: string; type: '上班' | '下班' | '上下班'; requestedClockIn?: string; requestedClockOut?: string; reason: string }
+    request: { date: string; recordId?: string; type: '上班' | '下班' | '上下班'; requestedClockIn?: string; requestedClockOut?: string; reason: string }
 ): Promise<ClockMakeupRequest> => {
     return callAPI('submit-makeup-request', request);
 };
@@ -453,3 +460,100 @@ export const apiApproveLeaveOfAbsenceRequest = async (
 ): Promise<boolean> => {
     return callAPI('approve-leave-of-absence-request', { requestId, status, approverName, rejectReason });
 };
+
+// Cases use the authenticated API; no client detector proof or delivery action.
+export const apiListAttendanceCases = (query: import('./attendanceCaseContract').CaseQuery): Promise<import('./attendanceCaseContract').CasePage> => callAPI('list-attendance-cases', {...query});
+export const apiGetAttendanceCase = (caseId: string): Promise<import('./attendanceCaseContract').CaseDetail> => callAPI('get-attendance-case', {caseId});
+export const apiActAttendanceCase = (command: import('./attendanceCaseContract').CaseCommand): Promise<{id:string;revision:number;status:string}> => callAPI('act-attendance-case', {...command});
+
+export interface MakeupDraft {attachmentDraftId?:string;expectedAttachmentDraftRevision?:number;date:string;type:'上班'|'下班'|'上下班';reason:string;recordId?:string;requestedClockIn?:string;requestedClockOut?:string;requestedClockInAt?:string;requestedClockOutAt?:string}
+export interface MakeupCaseContext {history?:{requestId:string;revision:number;state:string;actor:string;at:string;reason:string}[];historyComplete?:boolean;caseId:string;empId:string;caseRevision:number;window:{start:number;end:number};recordId:string|null;links:CaseRequestLink[];workflowPolicyStatus:'needs-configuration'}
+export interface CaseRequestLink {id:string;caseId:string;requestId:string;empId:string;state:'active'|'inactive';revision:number;requestRevision:number;caseRevision:number;reason:string;actor:string;at:string}
+export const apiSubmitMakeupVersion=(request:MakeupDraft & {operationId:string;caseId?:string;expectedCaseRevision?:number}):Promise<ClockMakeupRequest>=>callAPI('submit-makeup-version',{...request});
+export const apiActMakeupRequest=(command:{requestId:string;mode:'cancel'|'return'|'resubmit'|'approve'|'reject';expectedRevision:number;operationId:string;reason:string;patch?:MakeupDraft}):Promise<ClockMakeupRequest>=>callAPI('act-makeup-request',{...command});
+export const apiGetMakeupRequestDetail=(requestId:string):Promise<ClockMakeupRequest>=>callAPI('get-makeup-request-detail',{requestId});
+export const apiGetCaseRequestLinks=(caseId:string):Promise<MakeupCaseContext>=>callAPI('get-case-request-links',{caseId});
+export const apiLinkCaseRequest=(command:{caseId:string;requestId:string;mode:'link'|'unlink';expectedRevision:number;expectedCaseRevision:number;expectedLinkRevision:number;operationId:string;reason:string}):Promise<CaseRequestLink>=>callAPI('link-case-request',{...command});
+
+export interface MakeupAttachment {id:string;draftId:string;requestId:string|null;owner:string;name:string;mime:string;size:number;sha256:string;status:string;uploadComplete:boolean;scan:{verdict:string;engine:string;version:string}|null;revision:number;createdAt:string;updatedAt:string}
+export interface MakeupAttachmentCapability {enabled:boolean;mode:string;reason:string;productionConfigured:false;policy:{version:string;required:boolean;maxFiles:number;maxBytes:number;allowedMime:string[]}|null;technicalLimits:{bytes:number;files:number;grantSeconds:number}}
+export const apiAttachmentCapability=():Promise<MakeupAttachmentCapability>=>callAPI('get-makeup-attachment-capability');
+export const apiAttachmentDraft=(date:string,operationId:string):Promise<{id:string;date:string;revision:number;status:string}>=>callAPI('create-makeup-attachment-draft',{date,operationId});
+export const apiListAttachments=(query:{draftId?:string;makeupRequestId?:string}):Promise<{draft?:{id:string;date:string;status:string;revision:number};items:MakeupAttachment[];legacyUnverified?:boolean}>=>callAPI('list-makeup-attachments',{...query});
+export const apiUploadAttachment=(command:{draftId:string;expectedDraftRevision:number;operationId:string;name:string;mime:string;contentBase64:string}):Promise<MakeupAttachment>=>callAPI('upload-makeup-attachment',{...command});
+export const apiWithdrawAttachment=(command:{attachmentId:string;expectedRevision:number;expectedDraftRevision:number;operationId:string;reason:string}):Promise<MakeupAttachment>=>callAPI('withdraw-makeup-attachment',{...command});
+export const apiAttachmentAccess=(attachmentId:string):Promise<{accessToken:string;expiresAt:number}>=>callAPI('issue-makeup-attachment-access',{attachmentId});
+export const apiDownloadAttachment=(accessToken:string):Promise<{name:string;mime:string;size:number;contentBase64:string;disposition:string}>=>callAPI('download-makeup-attachment',{accessToken});
+
+export interface CaseExplanationWorkflow {caseStatus?:string;sourceFreshness?:'verified'|'unknown';explanationInventoryStatus?:'complete'|'unknown';resubmittableAcceptedIds?:string[];resubmittableReplacementIds?:string[];reviewableReplacementIds?:string[];caseId:string;empId:string;caseRevision:number;evidenceVersion:string;window:{start:number;end:number};explanations:import('../netlify/functions/utils/anomalyExplanationTypes').AnomalyExplanation[];leaves:LeaveRequest[];policyStatus:'needs-review';settlementEligibility:'BLOCKED'}
+export interface ExplanationCommand {caseId:string;expectedCaseRevision:number;expectedEvidenceVersion:string;operationId:string;reason:string;mode?:'request-info'|'accept'|'reject'|'cancel'|'resubmit';text?:string;explanationId?:string;expectedRevision?:number}
+export const apiExplanationWorkflow=(caseId:string):Promise<CaseExplanationWorkflow>=>callAPI('get-case-explanation-workflow',{caseId});
+export const apiSubmitExplanation=(command:ExplanationCommand):Promise<import('../netlify/functions/utils/anomalyExplanationTypes').AnomalyExplanation>=>callAPI('submit-anomaly-explanation',{...command});
+export const apiActExplanation=(command:ExplanationCommand):Promise<import('../netlify/functions/utils/anomalyExplanationTypes').AnomalyExplanation>=>callAPI('act-anomaly-explanation',{...command});
+export const apiSubmitCaseLeave=(command:ExplanationCommand & {leaveType:LeaveType;startDate:string;endDate:string}):Promise<LeaveRequest>=>callAPI('submit-case-leave',{...command});
+export const apiLinkCaseLeave=(command:ExplanationCommand & {leaveRequestId:string}):Promise<unknown>=>callAPI('link-case-leave',{...command});
+export const apiReviewCaseLeave=(command:Omit<ExplanationCommand,'mode'> & {leaveRequestId:string;mode:'approve'|'reject'}):Promise<LeaveRequest>=>callAPI('review-case-leave',{...command});
+export type AnomalyMutationAction='open-termination-adjustment'| 'save-termination-draft'|'submit-termination-draft'|'review-termination-draft'|'propose-payroll-master'|'review-payroll-master'|'submit-comp-request'|'act-comp-request'|'scan-comp-settlement'|'submit-overtime-request'|'act-overtime-request'|'act-leave-version'|'submit-anomaly-explanation'|'act-anomaly-explanation'|'submit-case-leave'|'link-case-leave'|'review-case-leave'|'submit-daytype-designation'|'review-daytype-designation'|'propose-overtime-comp-policy'|'agree-overtime-comp-policy'|'review-overtime-comp-policy'|'propose-payroll-policy-version'|'review-payroll-policy-version'|'propose-insurance-timeline'|'review-insurance-timeline'|'propose-payroll-item-inventory'|'review-payroll-item-inventory'|'propose-payroll-difference'|'review-payroll-difference'|'adopt-payroll-difference'|'propose-attendance-policy-declaration'|'review-attendance-policy-declaration'|'propose-payroll-payment-evidence'|'review-payroll-payment-evidence'|'propose-historical-payroll-difference'|'review-historical-payroll-difference'|'adopt-historical-payroll-difference'|'propose-worktime-declaration'|'review-worktime-declaration'|'propose-payroll-item-treatment'|'review-payroll-item-treatment'|'propose-payroll-payment-allocation'|'review-payroll-payment-allocation'|'propose-payroll-item-execution'|'review-payroll-item-execution'|'propose-payroll-adjustment'|'review-payroll-adjustment'|'adopt-payroll-adjustment'|'apply-payroll-adjustment'|'propose-payroll-reconciliation'|'review-payroll-reconciliation'|'propose-historical-payroll-correction'|'review-historical-payroll-correction'|'adopt-historical-payroll-correction';
+export const apiAnomalyMutation=(action:AnomalyMutationAction,command:Record<string,unknown>):Promise<any>=>{
+ // Recovery scope is client metadata, not authority accepted by the strict item API.
+ if(['propose-payroll-item-inventory','review-payroll-item-inventory','propose-payroll-difference','review-payroll-difference','adopt-payroll-difference','propose-attendance-policy-declaration','review-attendance-policy-declaration','propose-payroll-payment-evidence','review-payroll-payment-evidence','propose-historical-payroll-difference','review-historical-payroll-difference','adopt-historical-payroll-difference','propose-worktime-declaration','review-worktime-declaration','propose-payroll-item-treatment','review-payroll-item-treatment','propose-payroll-payment-allocation','review-payroll-payment-allocation','propose-payroll-item-execution','review-payroll-item-execution','propose-payroll-adjustment','review-payroll-adjustment','adopt-payroll-adjustment','apply-payroll-adjustment','propose-payroll-reconciliation','review-payroll-reconciliation','propose-historical-payroll-correction','review-historical-payroll-correction','adopt-historical-payroll-correction'].includes(action)){
+  const {caseId:_scope,...payload}=command;return callAPI(action,payload);
+ }
+ return callAPI(action,command);
+};
+export const apiPayrollItemInventory=(empId:string,month:string):Promise<any>=>callAPI('get-payroll-item-inventory',{empId,month});
+
+export const apiLeaveWorkflow=(requestId:string):Promise<{request:LeaveRequest;sourceVersion:string;caseRevision?:number;caseEvidenceVersion?:string;policyStatus:string}>=>callAPI('get-leave-workflow',{requestId});
+export const subjectAttachmentAPI=(subject:'makeup'|'leave')=>{
+ const invoke=<T,>(action:string,data:Record<string,unknown>={}):Promise<T>=>callAPI(action.replace('makeup',subject),{...data,subjectType:subject});
+ return {
+  capability:()=>invoke<MakeupAttachmentCapability>('get-makeup-attachment-capability'),
+  draft:(date:string,operationId:string)=>invoke<{id:string;date:string;revision:number;status:string}>('create-makeup-attachment-draft',{date,operationId}),
+  list:(q:{draftId?:string;makeupRequestId?:string})=>invoke<{draft?:{id:string;date:string;revision:number;status:string};items:MakeupAttachment[]}>('list-makeup-attachments',subject==='leave'?{draftId:q.draftId,leaveRequestId:q.makeupRequestId}:q),
+  upload:(c:any)=>invoke<MakeupAttachment>('upload-makeup-attachment',c),withdraw:(c:any)=>invoke<MakeupAttachment>('withdraw-makeup-attachment',c),
+  access:(attachmentId:string)=>invoke<{accessToken:string;expiresAt:number}>('issue-makeup-attachment-access',{attachmentId}),
+  download:(accessToken:string)=>invoke<{name:string;mime:string;size:number;contentBase64:string}>('download-makeup-attachment',{accessToken})
+ };
+};
+
+export const apiOvertimeWorkflow=(empId:string):Promise<{empId:string;requests:any[];workflowPolicy:any;settlementEligibility:'BLOCKED'}>=>callAPI('get-overtime-workflow',{empId});
+
+export const apiCompWorkflow=(empId:string):Promise<{empId:string;requests:any[];ledger:any[];tasks:any[];balance:any;issues:string[];policy:any;settlementEligibility:'BLOCKED'}>=>callAPI('get-comp-workflow',{empId});
+
+export const apiPayrollMaster=(empId:string):Promise<any>=>callAPI('get-payroll-master',{empId});
+
+export const apiDayTypeDesignation=(yearMonth:string,empId?:string):Promise<any>=>callAPI('get-daytype-designation',{yearMonth,...(empId?{empId}:{})});
+
+export const apiInsuranceTimeline=(empId:string):Promise<any>=>callAPI('get-insurance-timeline',{empId});
+
+export const apiPayrollPolicyVersions=():Promise<{versions:any[];proposals:any[]}>=>callAPI('list-payroll-policy-versions',{});
+
+export const apiOvertimeCompPolicy=(empId:string):Promise<any>=>callAPI('get-overtime-comp-policy',{empId});
+
+export const apiDayTypeDesignations=(yearMonth:string):Promise<{yearMonth:string;designations:any[]}>=>callAPI('list-daytype-designations',{yearMonth});
+
+export const apiTerminationSettlement=(empId:string,month:string,exitDate?:string):Promise<any>=>callAPI('get-termination-settlement',{empId,month,...(exitDate?{exitDate}:{})});
+
+export const apiTerminationSettlementVersion=(empId:string,month:string,draftId:string,revision:number):Promise<any>=>callAPI('get-termination-settlement-version',{empId,month,draftId,revision});
+
+export const apiPayrollDifference=(data:{empId:string;month:string}):Promise<any>=>callAPI('get-payroll-difference',data);
+
+export const apiAttendancePolicyDeclaration=(data:{empId:string;month:string}):Promise<any>=>callAPI('get-attendance-policy-declaration',data);
+export const apiPayrollPaymentEvidence=(data:{empId:string;month:string}):Promise<any>=>callAPI('get-payroll-payment-evidence',data);
+
+export const apiHistoricalPayrollDifference=(data:{empId:string;month:string;correctionRef?:{id:string;revision:number;evidenceVersion:string;calculatorVersion:string;adapterVersion:string}}):Promise<any>=>callAPI('get-historical-payroll-difference',data);
+
+export const apiWorktimeDeclaration=(data:{empId:string;month:string}):Promise<any>=>callAPI('get-worktime-declaration',data);
+
+export const apiPayrollItemTreatment=(data:{empId:string;month:string}):Promise<any>=>callAPI('get-payroll-item-treatment',data);
+
+export const apiPayrollPaymentAllocation=(data:{empId:string;month:string}):Promise<any>=>callAPI('get-payroll-payment-allocation',data);
+
+export const apiWorktimeAssessment=(data:{empId:string;month:string}):Promise<any>=>callAPI('get-worktime-assessment',data);
+
+export const getPayrollItemExecution=(data:{empId:string;month:string}):Promise<any>=>callAPI('get-payroll-item-execution',data);
+export const getPayrollAdjustment=(data:{scope:'current'|'historical';empId:string;month:string}):Promise<any>=>callAPI('get-payroll-adjustment',data);
+
+export const getPayrollReconciliation=(data:{month:string}):Promise<any>=>callAPI('get-payroll-reconciliation',data);
+
+export const getHistoricalPayrollCorrection=(data:{empId:string;month:string}):Promise<any>=>callAPI('get-historical-payroll-correction',data);

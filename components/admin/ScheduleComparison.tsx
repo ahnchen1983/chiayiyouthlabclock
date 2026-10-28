@@ -1,3 +1,5 @@
+import { formatHours } from '../../utils/format';
+import { taipeiDate } from '../../utils/attendance';
 
 import React, { useState, useEffect } from 'react';
 import { apiGetScheduleAttendanceComparison, ScheduleAttendanceComparison } from '../../services/googleAppsScriptAPI';
@@ -85,7 +87,7 @@ const DayCard: React.FC<DayCardProps> = ({ data, isSelected, onClick }) => {
 };
 
 const ScheduleComparison: React.FC = () => {
-    const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+    const [month, setMonth] = useState(taipeiDate().slice(0, 7));
     const [data, setData] = useState<ScheduleAttendanceComparison[]>([]);
     const [loading, setLoading] = useState(true);
     const [selectedDate, setSelectedDate] = useState<string | null>(null);
@@ -324,7 +326,7 @@ const ScheduleComparison: React.FC = () => {
                                                                 {emp.clockOutTime || '-'}
                                                             </td>
                                                             <td className="py-3 px-4 text-center text-sm font-medium text-gray-800">
-                                                                {emp.workHours?.toFixed(1) || '-'}
+                                                                {formatHours(emp.workHours)}
                                                             </td>
                                                             <td className="py-3 px-4 text-center">
                                                                 <AttendanceStatusBadge status={emp.attendanceStatus} />
